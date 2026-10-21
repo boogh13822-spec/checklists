@@ -305,10 +305,12 @@ export const CORE_JS = `
     }
     var payload = null;
     try { payload = await response.json(); } catch (error) { payload = null; }
-    if (response.status === 401) {
+    // فقط وقتی سرور می‌گوید «نیاز به ورود» (کد UNAUTHORIZED) نشست منقضی تلقی می‌شود.
+    // ۴۰۱ صفحهٔ ورود (رمز اشتباه) باید پیام واقعی خودش را نشان دهد، نه «نشست منقضی».
+    if (response.status === 401 && payload && payload.code === 'UNAUTHORIZED') {
       toast('نشست شما منقضی شده است. در حال انتقال به صفحه ورود…', 'error');
       setTimeout(function () {
-        window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname + window.location.search);
+        window.location.href = '/login?expired=1&next=' + encodeURIComponent(window.location.pathname + window.location.search);
       }, 900);
       throw new Error('UNAUTHORIZED');
     }

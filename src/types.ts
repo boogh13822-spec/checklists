@@ -11,6 +11,8 @@ export type Bindings = {
   JWT_SECRET: string;
   /** منطقه زمانی (پیش‌فرض Asia/Tehran) */
   TZ_NAME?: string;
+  /** طول عمر نشست ورود به ساعت (پیش‌فرض ۱۲، حداکثر ۱۶۸) */
+  SESSION_HOURS?: string;
   /** کلید OpenWeather — در صورت تنظیم، بر مقدار ذخیره‌شده در تنظیمات اولویت دارد */
   OPENWEATHER_API_KEY?: string;
   /** کلید API کاوه‌نگار (اختیاری — بر مقدار ذخیره‌شده در تنظیمات اولویت دارد) */

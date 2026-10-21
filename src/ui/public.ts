@@ -404,7 +404,7 @@ export function registerPage(
  *  صفحه‌ی ورود
  * ========================================================================== */
 
-export function loginPage(settings: AppSettings, next: string): string {
+export function loginPage(settings: AppSettings, next: string, expired = false): string {
   const cafe = escapeHtml(settings.cafe_name);
   const safeNext = next.startsWith('/') && !next.startsWith('//') ? next : '';
 
@@ -454,6 +454,18 @@ export function loginPage(settings: AppSettings, next: string): string {
           <h1 class="text-xl font-extrabold mb-1.5">ورود به پنل</h1>
           <p class="text-[12px] text-cream/45">شماره موبایل و رمز عبور خود را وارد کنید.</p>
         </div>
+
+        ${
+          expired
+            ? `<div class="mb-5 rounded-xl border border-amber-500/25 bg-amber-500/[0.07] p-3.5 flex items-start gap-2.5">
+                <span class="text-amber-300 mt-0.5">${icon('clock', 'w-3.5 h-3.5')}</span>
+                <p class="text-[11px] text-amber-100/70 leading-6">
+                  نشست قبلی شما منقضی شده است (یا رمز امنیتی سرور تغییر کرده).
+                  لطفاً یک‌بار دیگر وارد شوید.
+                </p>
+              </div>`
+            : ''
+        }
 
         <form id="login-form" class="space-y-4" novalidate>
           <div>
@@ -522,7 +534,10 @@ export function loginPage(settings: AppSettings, next: string): string {
                    : data.redirect;
         window.location.href = target;
       } catch (error) {
-        toast(error.message, 'error');
+        // خطای «نیاز به ورود» خودش هندل شده و صفحه در حال تغییر است
+        if (error && error.message !== 'UNAUTHORIZED') {
+          toast(error.message, 'error');
+        }
         setLoading(btn, false);
       }
     });

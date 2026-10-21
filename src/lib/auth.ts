@@ -10,12 +10,20 @@ import type { AppEnv, JwtPayload, Role, UserRow, Bindings } from '../types';
 import { fail } from './utils';
 
 export const SESSION_COOKIE = 'cc_session';
-export const SESSION_TTL_SECONDS = 12 * 60 * 60; // ۱۲ ساعت
+export const SESSION_TTL_SECONDS = 12 * 60 * 60; // ۱۲ ساعت (پیش‌فرض)
+
+/** طول عمر نشست بر اساس متغیر محیطی SESSION_HOURS (۱ تا ۱۶۸ ساعت) */
+export function sessionTtl(env: Bindings): number {
+  const hours = Number(env.SESSION_HOURS);
+  if (!Number.isFinite(hours) || hours <= 0) return SESSION_TTL_SECONDS;
+  return Math.min(168, Math.max(1, Math.floor(hours))) * 3600;
+}
 
 /** ساخت توکن JWT برای کاربر */
 export async function createToken(
   secret: string,
-  user: Pick<UserRow, 'id' | 'role' | 'name'>
+  user: Pick<UserRow, 'id' | 'role' | 'name'>,
+  ttlSeconds: number = SESSION_TTL_SECONDS
 ): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   const payload: JwtPayload = {
@@ -24,7 +32,7 @@ export async function createToken(
     role: user.role,
     name: user.name,
     iat: now,
-    exp: now + SESSION_TTL_SECONDS,
+    exp: now + ttlSeconds,
   };
   return sign(payload as unknown as Record<string, unknown>, secret, 'HS256');
 }
@@ -33,14 +41,15 @@ export async function createToken(
 export function setSessionCookie(
   c: Context<AppEnv>,
   token: string,
-  isSecure: boolean
+  isSecure: boolean,
+  ttlSeconds: number = SESSION_TTL_SECONDS
 ): void {
   setCookie(c, SESSION_COOKIE, token, {
     httpOnly: true,
     secure: isSecure,
     sameSite: 'Lax',
     path: '/',
-    maxAge: SESSION_TTL_SECONDS,
+    maxAge: ttlSeconds,
   });
 }
 
@@ -119,6 +128,11 @@ export const attachUser: MiddlewareHandler<AppEnv> = async (c, next) => {
   }
   const payload = await readSession(c, secret);
   if (!payload) {
+    // کوکی نامعتبر/منقضی باید پاک شود؛ وگرنه با هر درخواست دوباره پردازش می‌شود
+    // و کاربر در چرخهٔ «نشست منقضی» گیر می‌کند.
+    if (getCookie(c, SESSION_COOKIE)) {
+      clearSessionCookie(c, isSecureRequest(c));
+    }
     c.set('user', null);
     await next();
     return;

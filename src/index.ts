@@ -22,6 +22,7 @@ import {
   requireApiRole,
   requirePageRole,
   resetRateLimit,
+  sessionTtl,
   setSessionCookie,
 } from './lib/auth';
 import {
@@ -156,6 +157,13 @@ app.use('/api/*', async (c, next) => {
     } catch {
       return c.json({ ok: false, error: 'مبدأ درخواست نامعتبر است.' }, 403);
     }
+  } else {
+    // برخی مرورگرها Origin را برای درخواست‌های هم‌مبدأ نمی‌فرستند؛
+    // در این حالت از هدر استاندارد Fetch Metadata استفاده می‌کنیم.
+    const site = c.req.header('Sec-Fetch-Site');
+    if (site && site !== 'same-origin' && site !== 'none') {
+      return c.json({ ok: false, error: 'درخواست غیرمجاز (CSRF).' }, 403);
+    }
   }
 
   await next();
@@ -202,7 +210,8 @@ app.get('/login', (c) => {
   const user = c.get('user');
   if (user) return c.redirect(homeForRole(user.role), 302);
   const next = (c.req.query('next') ?? '').slice(0, 200);
-  return c.html(loginPage(settings, next));
+  const expired = c.req.query('expired') === '1';
+  return c.html(loginPage(settings, next, expired));
 });
 
 /* ==========================================================================
@@ -618,8 +627,9 @@ app.post('/api/auth/login', async (c) => {
 
   resetRateLimit(rateKey);
 
-  const token = await createToken(secret, user);
-  setSessionCookie(c, token, isSecureRequest(c));
+  const ttl = sessionTtl(c.env);
+  const token = await createToken(secret, user, ttl);
+  setSessionCookie(c, token, isSecureRequest(c), ttl);
 
   return ok(c, {
     name: user.name,

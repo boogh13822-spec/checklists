@@ -1,2 +1,4 @@
 # کپی کنید به .dev.vars و یک رشته تصادفی حداقل ۳۲ کاراکتری قرار دهید.
 JWT_SECRET=change-me-to-a-long-random-string-at-least-32-chars
+# طول عمر نشست ورود به ساعت (اختیاری؛ پیش‌فرض ۱۲)
+SESSION_HOURS=12
