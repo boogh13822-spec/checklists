@@ -8,6 +8,7 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "deploy:setup": "bash scripts/deploy.sh",
+    "update": "bash scripts/update.sh",
     "typecheck": "tsc --noEmit",
     "db:init:local": "wrangler d1 execute cafe-club-db --local --file=./schema.sql",
     "db:init:remote": "wrangler d1 execute cafe-club-db --remote --file=./schema.sql",

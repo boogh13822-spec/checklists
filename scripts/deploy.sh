@@ -13,12 +13,14 @@
 #    ۵) گذاشتن database_id واقعی داخل wrangler.toml
 #    ۶) اجرای schema.sql روی دیتابیس ابری
 #    ۷) ساخت JWT_SECRET (تصادفی و امن) و ذخیره به‌عنوان Secret
+#       — اگر از قبل تنظیم شده باشد، دست نمی‌خورد (وگرنه همه از حساب خارج می‌شدند)
 #    ۸) دیپلوی نهایی
 #
 #  متغیرهای اختیاری:
 #      JWT_SECRET="..."   از این مقدار به‌جای ساخت تصادفی استفاده می‌کند
 #      DB_NAME="..."      نام دیتابیس (پیش‌فرض: cafe-club-db)
 #      DRY_RUN=1          فقط بررسی‌ها را انجام می‌دهد و چیزی را تغییر نمی‌دهد
+#      ROTATE_SECRET=1    JWT_SECRET موجود را عمداً با مقدار تازه جایگزین می‌کند
 # =============================================================================
 set -euo pipefail
 
@@ -167,21 +169,50 @@ info "ساخت جدول‌ها و داده‌های اولیه (schema.sql)..."
 run "${WRANGLER[@]}" d1 execute "$DB_NAME" --remote --file=./schema.sql
 
 # --- ۶) Secret مربوط به JWT --------------------------------------------------
-info "تنظیم JWT_SECRET به‌عنوان Secret..."
+ROTATE_SECRET="${ROTATE_SECRET:-0}"
+WORKER_NAME="$(node -e '
+  try {
+    const src = require("fs").readFileSync("wrangler.toml", "utf8");
+    const m = /^\s*name\s*=\s*"([^"]+)"/m.exec(src);
+    if (m) process.stdout.write(m[1]);
+  } catch (e) {}
+')"
+WORKER_NAME="${WORKER_NAME:-cafe-club}"
+
+# خواندن فهرست Secretها فقط‌خواندنی است و در حالت dry-run هم بی‌خطر است
+SECRET_KEYS="$("${WRANGLER[@]}" secret list --name "$WORKER_NAME" --format json 2>/dev/null || echo '[]')" 
+
+HAS_JWT_SECRET=0
+if printf '%s' "$SECRET_KEYS" | grep -q '"JWT_SECRET"'; then
+  HAS_JWT_SECRET=1
+fi
+
 if [[ -n "${JWT_SECRET:-}" ]]; then
+  info "تنظیم JWT_SECRET از متغیر محیطی..."
   SECRET="$JWT_SECRET"
-  ok "از JWT_SECRET داده‌شده در محیط استفاده می‌شود."
+  SHOULD_SET_SECRET=1
+elif [[ "$HAS_JWT_SECRET" == "1" && "$ROTATE_SECRET" != "1" ]]; then
+  info "JWT_SECRET از قبل روی Worker تنظیم شده است؛ دست نمی‌خورد."
+  ok "برای چرخش عمدی کلید: ROTATE_SECRET=1 bash scripts/deploy.sh"
+  SHOULD_SET_SECRET=0
+elif [[ "$ROTATE_SECRET" == "1" ]]; then
+  warn "چرخش JWT_SECRET درخواست شده است؛ همهٔ نشست‌های فعال باطل می‌شوند."
+  SECRET="$(node -e 'process.stdout.write(require("crypto").randomBytes(48).toString("base64url"))')"
+  SHOULD_SET_SECRET=1
 else
   SECRET="$(node -e 'process.stdout.write(require("crypto").randomBytes(48).toString("base64url"))')"
   warn "یک JWT_SECRET تصادفی ساخته شد. آن را جایی امن نگه دارید (با تغییر آن همهٔ نشست‌ها باطل می‌شوند)."
   printf '   JWT_SECRET=%s\n' "$SECRET"
+  SHOULD_SET_SECRET=1
 fi
 
-if [[ "$DRY_RUN" == "1" ]]; then
-  printf '   [dry-run] npx wrangler secret put JWT_SECRET  (مقدار تصادفی)\n'
-else
-  printf '%s' "$SECRET" | "${WRANGLER[@]}" secret put JWT_SECRET
-  ok "Secret ذخیره شد."
+if [[ "$SHOULD_SET_SECRET" == "1" ]]; then
+  if [[ "$DRY_RUN" == "1" ]]; then
+    printf '   [dry-run] npx wrangler secret put JWT_SECRET  (مقدار تصادفی)\n'
+  else
+    printf '%s' "$SECRET" | "${WRANGLER[@]}" secret put JWT_SECRET --name "$WORKER_NAME"
+    ok "Secret ذخیره شد."
+  fi
 fi
 
 # --- ۷) دیپلوی ----------------------------------------------------------------

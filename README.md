@@ -169,7 +169,38 @@ npx wrangler deploy --config ./wrangler.toml
 npx wrangler deploy --name cafe-club --config ./wrangler.toml
 ```
 
-### ۶) اتصال دامنه (اختیاری)
+### ۶) به‌روزرسانی نسخهٔ منتشرشده
+
+وقتی نسخهٔ تازه‌ای از کد منتشر می‌شود، **دیتابیس و داده‌ها را دست نزنید**؛ فقط کد را جایگزین کنید:
+
+```bash
+cd cafe-club          # همان پوشه‌ای که wrangler.toml دارد
+bash scripts/update.sh
+```
+
+این اسکریپت به‌ترتیب: `git pull` → `npm install` → بررسی TypeScript → ساخت بستهٔ تک‌فایلی → `wrangler deploy`.
+**نه `schema.sql` را اجرا می‌کند و نه `JWT_SECRET` را عوض می‌کند**، پس مشتریان، امتیازها و نشست‌ها سالم می‌مانند.
+
+معادل دستی همان کار:
+
+```bash
+cd cafe-club
+git pull origin arena/ba9e1761-checklists
+npm install
+npx wrangler deploy
+```
+
+اگر از **Quick Edit** استفاده می‌کنید (پیست یک فایل):
+
+```bash
+npm run build:single      # ساخت single-file/worker.js
+# سپس محتوای این فایل را کامل در ادیتور Cloudflare جای‌گذاری و Deploy کنید
+```
+
+> اگر تغییرات محلی خودتان را دارید، قبل از pull آن‌ها را نگه دارید: `git stash -u` … و بعد `git stash pop`.
+> برای چرخش عمدی `JWT_SECRET` (باطل‌کردن همهٔ نشست‌ها): `ROTATE_SECRET=1 bash scripts/deploy.sh`.
+
+### ۷) اتصال دامنه (اختیاری)
 
 در داشبورد Cloudflare → Workers & Pages → `cafe-club` → Settings → Domains & Routes، دامنه‌ی خود را اضافه کنید.
 
@@ -397,6 +428,7 @@ npm run hash-password -- 'MyPassword'   # ساخت هش برای seed
 | --- | --- |
 | `Unable to read SQL text file "schema.sql"` | دستور از پوشهٔ اشتباه اجرا شده؛ `cd` به ریشهٔ پروژه‌ای که `schema.sql` در آن است (`ls wrangler.toml schema.sql`) |
 | `Required Worker name missing` | `wrangler.toml` در پوشهٔ جاری نیست؛ یا `npx wrangler deploy --config ./wrangler.toml` بزنید یا فایل را کنار دستور بیاورید |
+| بعد از آپدیت، صفحه‌ها نسخهٔ قدیمی را نشان می‌دهند | `npx wrangler deployments list` را ببینید؛ اگر آخرین انتشار تازه است، کش مرورگر/سرویس‌ورکر را با `Ctrl+Shift+R` پاک کنید |
 | `no such table: users` | `schema.sql` اجرا نشده؛ `npm run db:init:remote` |
 | «کلید JWT تنظیم نشده است» | `npx wrangler secret put JWT_SECRET` (حداقل ۳۲ کاراکتر) |
 | ورود با خطای CPU | پلن رایگان Workers سقف CPU کمی دارد؛ مقدار `PBKDF2_ITERATIONS` را کم کنید یا به پلن Paid ارتقا دهید |
