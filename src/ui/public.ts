@@ -20,236 +20,99 @@ export function landingPage(settings: AppSettings): string {
   const unit = formatNumberFa(settings.currency_unit);
   const ratio = toPersianDigits(settings.points_per_currency);
   const reward = toPersianDigits(settings.referral_reward_points);
+  const birthday = toPersianDigits(settings.birthday_coupon_percent);
+
+  const benefits = [
+    {
+      icon: 'star',
+      title: 'با هر خرید امتیاز بگیر',
+      desc: `هر ${unit} تومان خرید = ${ratio} امتیاز؛ امتیازها جمع می‌شوند و سطحت را بالا می‌برند.`,
+    },
+    {
+      icon: 'gift',
+      title: 'هدیه تولد',
+      desc: `در روز تولدت یک کد تخفیف ${birthday} درصدی اختصاصی برایت پیامک می‌شود.`,
+    },
+    {
+      icon: 'users',
+      title: 'معرفی دوستان',
+      desc: `دوستانت را دعوت کن؛ بعد از اولین خریدشان ${reward} امتیاز هدیه می‌گیری.`,
+    },
+  ];
+
+  const steps = [
+    { n: '۱', t: 'ثبت‌نام' },
+    { n: '۲', t: 'خرید' },
+    { n: '۳', t: 'امتیاز' },
+  ];
 
   const body = `
-  <!-- Hero -->
   <section class="relative overflow-hidden">
-    <div class="absolute -top-32 -left-24 w-80 h-80 rounded-full bg-amber-500/10 blur-3xl pointer-events-none"></div>
-    <div class="absolute top-24 -right-24 w-96 h-96 rounded-full bg-orange-700/10 blur-3xl pointer-events-none"></div>
+    <div class="absolute -top-24 left-1/2 -translate-x-1/2 w-72 h-72 rounded-full bg-amber-500/10 blur-3xl pointer-events-none"></div>
 
-    <div class="max-w-6xl mx-auto px-4 sm:px-6 pt-14 pb-16 sm:pt-20 sm:pb-24 grid lg:grid-cols-2 gap-12 items-center">
-      <div class="text-center lg:text-right">
-        <span class="inline-flex items-center gap-2 badge tone-info mb-5 !px-3 !py-1.5">
-          <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+    <div class="relative max-w-xl mx-auto px-4 sm:px-6 pt-10 pb-14 sm:pt-16 sm:pb-20">
+
+      <!-- پیام اصلی -->
+      <div class="text-center">
+        <span class="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-[11px] text-cream/50">
+          <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
           باشگاه مشتریان ${cafe}
         </span>
-        <h1 class="text-3xl sm:text-5xl font-black leading-[1.35] tracking-tight mb-5">
-          هر فنجان قهوه،
-          <br />
-          <span class="gold-text">یک قدم به هدیه بعدی</span>
+
+        <h1 class="mt-6 text-[27px] sm:text-4xl font-black leading-[1.55]">
+          هر خرید، <span class="gold-text">امتیاز</span> می‌شود
         </h1>
-        <p class="text-sm sm:text-base text-cream/60 leading-8 max-w-lg mx-auto lg:mx-0 mb-8">
-          با هر خرید امتیاز جمع کن، سطحت را ارتقا بده و از تخفیف تولد، هدیه معرفی دوستان
-          و پیامک‌های هوشمند ما بهره‌مند شو. ساده، سریع و بدون کارت فیزیکی.
+
+        <p class="mt-3 text-[13px] sm:text-sm text-cream/55 leading-7 max-w-sm mx-auto">
+          عضو باشگاه شو، با هر فاکتور امتیاز بگیر و در روز تولدت هدیه بگیر.
         </p>
-        <div class="flex flex-col sm:flex-row items-center gap-3 justify-center lg:justify-start">
-          <a href="/register" class="btn btn-primary w-full sm:w-auto !px-6 !py-3">
-            ${icon('sparkles', 'w-5 h-5')}
-            <span>همین حالا عضو شو</span>
-          </a>
-          <a href="#how" class="btn btn-ghost w-full sm:w-auto !px-6 !py-3">
-            ${icon('coffee', 'w-5 h-5')}
-            <span>چطور کار می‌کند؟</span>
-          </a>
-        </div>
 
-        <div class="mt-8 flex flex-wrap items-center justify-center lg:justify-start gap-x-6 gap-y-3 text-[12px] text-cream/45">
-          <span class="flex items-center gap-1.5">${icon('check', 'w-4 h-4 text-emerald-400')} عضویت رایگان</span>
-          <span class="flex items-center gap-1.5">${icon('check', 'w-4 h-4 text-emerald-400')} بدون نیاز به کارت</span>
-          <span class="flex items-center gap-1.5">${icon('check', 'w-4 h-4 text-emerald-400')} هدیه تولد</span>
-        </div>
-      </div>
-
-      <!-- Illustration -->
-      <div class="relative flex justify-center lg:justify-end">
-        <div class="relative w-[320px] h-[340px] sm:w-[380px] sm:h-[400px]">
-          <div class="absolute inset-0 rounded-[2.5rem] bg-gradient-to-br from-amber-500/15 via-orange-800/10 to-transparent border border-white/10 rotate-3"></div>
-
-          <div class="absolute inset-6 rounded-[2rem] glass flex items-center justify-center overflow-hidden">
-            <div class="absolute bottom-0 inset-x-0 h-1/3 bg-gradient-to-t from-amber-900/30 to-transparent"></div>
-            <svg viewBox="0 0 240 220" class="w-full h-full drop-shadow-2xl" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <defs>
-                <linearGradient id="cup" x1="0" y1="0" x2="1" y2="1">
-                  <stop offset="0%" stop-color="#f7dfb1"/>
-                  <stop offset="55%" stop-color="#e8b45a"/>
-                  <stop offset="100%" stop-color="#b97f35"/>
-                </linearGradient>
-                <linearGradient id="liquid" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stop-color="#c8853f"/>
-                  <stop offset="100%" stop-color="#4a2a15"/>
-                </linearGradient>
-              </defs>
-              <ellipse cx="120" cy="196" rx="66" ry="10" fill="#000" opacity=".35"/>
-              <path d="M62 92h104v52c0 24-18 40-40 40h-24c-22 0-40-16-40-40V92Z" fill="url(#cup)"/>
-              <ellipse cx="114" cy="92" rx="52" ry="12" fill="#3a2110"/>
-              <ellipse cx="114" cy="92" rx="45" ry="9" fill="url(#liquid)"/>
-              <ellipse cx="102" cy="89" rx="16" ry="4" fill="#e7b98c" opacity=".45"/>
-              <path d="M166 104h12c14 0 24 10 24 22s-10 22-24 22h-12" stroke="#d9a55c" stroke-width="9" stroke-linecap="round"/>
-              <path d="M88 74c0-10 10-10 10-20s-10-10-10-20" stroke="#f6ecdd" stroke-width="4" stroke-linecap="round" opacity=".35"/>
-              <path d="M116 70c0-10 10-10 10-20s-10-10-10-20" stroke="#f6ecdd" stroke-width="4" stroke-linecap="round" opacity=".28"/>
-              <path d="M144 76c0-10 10-10 10-20s-10-10-10-20" stroke="#f6ecdd" stroke-width="4" stroke-linecap="round" opacity=".22"/>
-            </svg>
-          </div>
-
-          <div class="absolute -top-3 -right-2 sm:-right-6 glass-strong rounded-2xl px-4 py-3 shadow-xl float-slow">
-            <div class="flex items-center gap-2.5">
-              <div class="w-9 h-9 rounded-xl bg-emerald-500/15 border border-emerald-400/25 text-emerald-300 flex items-center justify-center">
-                ${icon('star', 'w-4 h-4')}
-              </div>
-              <div>
-                <div class="text-[10px] text-cream/45">امتیاز شما</div>
-                <div class="text-sm font-bold">+${toPersianDigits(120)}</div>
-              </div>
-            </div>
-          </div>
-
-          <div class="absolute -bottom-4 -left-2 sm:-left-6 glass-strong rounded-2xl px-4 py-3 shadow-xl float-slower">
-            <div class="flex items-center gap-2.5">
-              <div class="w-9 h-9 rounded-xl bg-amber-500/15 border border-amber-400/25 text-amber-300 flex items-center justify-center">
-                ${icon('gift', 'w-4 h-4')}
-              </div>
-              <div>
-                <div class="text-[10px] text-cream/45">سطح فعلی</div>
-                <div class="text-sm font-bold">طلایی 🥇</div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- Stats -->
-  <section class="max-w-6xl mx-auto px-4 sm:px-6">
-    <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-      ${[
-        { icon: 'wallet', label: 'نرخ امتیاز', value: `${ratio} امتیاز`, hint: `به ازای هر ${unit} تومان` },
-        { icon: 'users', label: 'پاداش معرفی', value: `${reward} امتیاز`, hint: 'برای معرف و دوستش' },
-        { icon: 'gift', label: 'هدیه تولد', value: `${toPersianDigits(settings.birthday_coupon_percent)}٪ تخفیف`, hint: 'کد اختصاصی سالانه' },
-        { icon: 'chat', label: 'پیامک هوشمند', value: 'رایگان', hint: 'یادآوری و دلتنگی' },
-      ]
-        .map(
-          (item) => `<div class="glass rounded-2xl p-4 sm:p-5 card-hover">
-            <div class="flex items-center gap-2 text-cream/50 text-[11px] mb-2">
-              ${icon(item.icon, 'w-4 h-4 text-gold')}
-              <span>${item.label}</span>
-            </div>
-            <div class="text-lg sm:text-xl font-extrabold gold-text">${item.value}</div>
-            <div class="text-[10px] text-cream/35 mt-1">${item.hint}</div>
-          </div>`
-        )
-        .join('')}
-    </div>
-  </section>
-
-  <!-- Features -->
-  <section class="max-w-6xl mx-auto px-4 sm:px-6 py-16 sm:py-20">
-    <div class="text-center mb-10">
-      <h2 class="text-2xl sm:text-3xl font-extrabold mb-3">عضویت چه سودی دارد؟</h2>
-      <p class="text-sm text-cream/50 max-w-xl mx-auto leading-7">
-        باشگاه مشتریان ${cafe} طوری طراحی شده که هر بار که سر می‌زنی، بیشتر از یک قهوه به دست بیاوری.
-      </p>
-    </div>
-
-    <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-      ${[
-        {
-          icon: 'star',
-          title: 'امتیاز و سطح‌بندی',
-          desc: `با هر ${unit} تومان خرید، ${ratio} امتیاز بگیر و از برنزی تا الماسی ارتقا پیدا کن.`,
-        },
-        {
-          icon: 'gift',
-          title: 'هدیه تولد',
-          desc: `در روز تولدت یک کد تخفیف ${toPersianDigits(settings.birthday_coupon_percent)} درصدی اختصاصی برایت پیامک می‌شود.`,
-        },
-        {
-          icon: 'users',
-          title: 'معرفی دوستان',
-          desc: `دوستانت را معرفی کن؛ پس از اولین خریدشان ${reward} امتیاز هدیه بگیر.`,
-        },
-        {
-          icon: 'chat',
-          title: 'خبرنامه هوشمند',
-          desc: 'پیامک دلتنگی، وضعیت آب‌وهوا و پیشنهادهای ویژه — فقط وقتی به کارت می‌آید.',
-        },
-      ]
-        .map(
-          (item) => `<div class="glass rounded-2xl p-5 card-hover">
-            <div class="w-11 h-11 rounded-2xl bg-gold/10 border border-gold/25 text-gold flex items-center justify-center mb-4">
-              ${icon(item.icon, 'w-5 h-5')}
-            </div>
-            <h3 class="font-bold text-[15px] mb-2">${item.title}</h3>
-            <p class="text-[12.5px] text-cream/50 leading-7">${item.desc}</p>
-          </div>`
-        )
-        .join('')}
-    </div>
-  </section>
-
-  <!-- Tiers -->
-  <section class="max-w-6xl mx-auto px-4 sm:px-6 pb-16">
-    <div class="glass rounded-3xl p-6 sm:p-8">
-      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
-        <div>
-          <h2 class="text-xl font-extrabold mb-1">سطح‌های باشگاه</h2>
-          <p class="text-xs text-cream/45">هرچه بیشتر بیایی، سطحت بالاتر و مزایایت بیشتر.</p>
-        </div>
-        <a href="/register" class="btn btn-primary btn-sm self-start sm:self-auto">
-          ${icon('plus', 'w-4 h-4')} عضویت
+        <a href="/register" class="btn btn-primary w-full sm:w-auto !px-10 !py-3.5 mt-7 text-sm">
+          ${icon('coffee', 'w-5 h-5')}
+          <span>عضویت رایگان</span>
         </a>
+
+        <p class="mt-3 text-[11px] text-cream/35">
+          کمتر از یک دقیقه · فقط نام، شماره موبایل و تاریخ تولد
+        </p>
       </div>
-      <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        ${[
-          { name: 'برنزی', icon: '🥉', min: 0, cls: 'from-amber-900/40 to-transparent border-amber-700/30' },
-          { name: 'نقره‌ای', icon: '🥈', min: settings.tiers.silver, cls: 'from-slate-600/25 to-transparent border-slate-400/25' },
-          { name: 'طلایی', icon: '🥇', min: settings.tiers.gold, cls: 'from-yellow-700/25 to-transparent border-yellow-500/30' },
-          { name: 'الماسی', icon: '💎', min: settings.tiers.vip, cls: 'from-fuchsia-800/25 to-transparent border-fuchsia-500/30' },
-        ]
+
+      <!-- سه مزیت اصلی -->
+      <div class="mt-9 rounded-3xl border border-white/10 bg-white/[0.03] divide-y divide-white/10">
+        ${benefits
           .map(
-            (tier) => `<div class="rounded-2xl border bg-gradient-to-br ${tier.cls} p-4">
-              <div class="text-2xl mb-2">${tier.icon}</div>
-              <div class="font-bold text-sm mb-1">${tier.name}</div>
-              <div class="text-[11px] text-cream/45">${tier.min === 0 ? 'از شروع عضویت' : `از ${toPersianDigits(tier.min)} امتیاز`}</div>
+            (item) => `<div class="flex items-center gap-3.5 p-4 sm:p-5">
+              <div class="w-10 h-10 shrink-0 rounded-2xl bg-gold/10 border border-gold/20 text-gold flex items-center justify-center">
+                ${icon(item.icon, 'w-5 h-5')}
+              </div>
+              <div class="min-w-0">
+                <div class="text-[13px] font-semibold">${item.title}</div>
+                <div class="text-[11.5px] text-cream/45 leading-6 mt-0.5">${item.desc}</div>
+              </div>
             </div>`
           )
           .join('')}
       </div>
-    </div>
-  </section>
 
-  <!-- How it works -->
-  <section id="how" class="max-w-6xl mx-auto px-4 sm:px-6 pb-20 scroll-mt-24">
-    <div class="text-center mb-10">
-      <h2 class="text-2xl sm:text-3xl font-extrabold mb-3">در سه قدم عضو شو</h2>
-    </div>
-    <div class="grid sm:grid-cols-3 gap-4">
-      ${[
-        { step: '۱', title: 'ثبت‌نام کن', desc: 'نام، شماره موبایل و تاریخ تولدت را وارد کن. کمتر از یک دقیقه.' },
-        { step: '۲', title: 'کد معرفت را بگیر', desc: 'یک کد اختصاصی داری؛ با آن دوستانت را دعوت کن.' },
-        { step: '۳', title: 'خرید کن و امتیاز بگیر', desc: 'شماره‌ات را به کارمند بگو؛ امتیاز خودکار ثبت می‌شود.' },
-      ]
-        .map(
-          (item) => `<div class="relative glass rounded-2xl p-6">
-            <div class="text-5xl font-black text-white/5 absolute top-3 left-4 select-none">${item.step}</div>
-            <div class="w-9 h-9 rounded-xl gold-bg text-coffee-950 font-extrabold flex items-center justify-center mb-4">${item.step}</div>
-            <h3 class="font-bold text-sm mb-2">${item.title}</h3>
-            <p class="text-[12.5px] text-cream/50 leading-7">${item.desc}</p>
-          </div>`
-        )
-        .join('')}
-    </div>
-  </section>
+      <!-- سه قدم ساده -->
+      <div class="mt-6 grid grid-cols-3 gap-2 sm:gap-3">
+        ${steps
+          .map(
+            (step) => `<div class="rounded-2xl border border-white/10 bg-black/20 p-3 text-center">
+              <div class="w-7 h-7 mx-auto rounded-full bg-gold/10 text-gold text-[12px] font-bold flex items-center justify-center mb-1.5">${step.n}</div>
+              <div class="text-[11.5px] text-cream/60">${step.t}</div>
+            </div>`
+          )
+          .join('')}
+      </div>
 
-  <!-- CTA -->
-  <section class="max-w-6xl mx-auto px-4 sm:px-6 pb-20">
-    <div class="relative overflow-hidden rounded-3xl border border-gold/25 bg-gradient-to-l from-amber-900/30 via-coffee-900/40 to-transparent p-8 sm:p-12 text-center">
-      <div class="absolute -top-16 -left-16 w-64 h-64 rounded-full bg-gold/10 blur-3xl"></div>
-      <h2 class="text-2xl sm:text-3xl font-extrabold mb-3 relative">امروز اولین امتیازت را بگیر</h2>
-      <p class="text-sm text-cream/55 mb-7 relative">عضویت رایگان است و فقط چند ثانیه زمان می‌برد.</p>
-      <a href="/register" class="btn btn-primary !px-8 !py-3 relative">
-        ${icon('coffee', 'w-5 h-5')} عضویت در باشگاه
-      </a>
+      <!-- ورود کارمندان -->
+      <div class="mt-8 text-center">
+        <a href="/login" class="inline-flex items-center gap-1.5 text-[11.5px] text-cream/35 hover:text-gold transition">
+          ${icon('shield', 'w-3.5 h-3.5')}
+          کارمند یا مدیر کافه هستید؟ ورود به پنل
+        </a>
+      </div>
     </div>
   </section>
   `;

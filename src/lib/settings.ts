@@ -118,7 +118,7 @@ function coerceSettings(raw: Record<string, unknown>): AppSettings {
     weather: str(templates.weather, DEFAULT_SETTINGS.sms_templates.weather),
   };
 
-  const provider = raw.sms_provider === 'kavenegar' ? 'kavenegar' : 'console';
+  const provider = coerceSmsProvider(raw.sms_provider);
 
   return {
     sms_templates: templatesMerged,
@@ -144,6 +144,11 @@ function coerceSettings(raw: Record<string, unknown>): AppSettings {
 
 function str(value: unknown, fallback: string): string {
   return typeof value === 'string' ? value : fallback;
+}
+
+/** فقط ارائه‌دهنده‌های پشتیبانی‌شده پذیرفته می‌شوند */
+export function coerceSmsProvider(value: unknown): AppSettings['sms_provider'] {
+  return value === 'smsir' || value === 'kavenegar' ? value : 'console';
 }
 
 /** بارگذاری تنظیمات از D1 */

@@ -3,8 +3,13 @@
  *  ارسال پیامک + دریافت وضعیت آب‌وهوا
  * ----------------------------------------------------------------------------
  *  ارائه‌دهنده پیش‌فرض «console» است (بدون هزینه؛ پیام‌ها در لاگ Worker و
- *  جدول sms_logs ذخیره می‌شوند). برای ارسال واقعی، در تنظیمات سرویس کاوه‌نگار
- *  را انتخاب و کلید API را وارد کنید.
+ *  جدول sms_logs ذخیره می‌شوند).
+ *
+ *  ارائه‌دهنده‌های واقعی:
+ *   - sms.ir   : متد POST https://api.sms.ir/v1/send/bulk با هدر X-API-KEY
+ *   - kavenegar: متد GET  https://api.kavenegar.com/v1/{key}/sms/send.json
+ *
+ *  برای sms.ir علاوه بر کلید API، «شماره خط» (LineNumber) هم لازم است.
  */
 import type { AppSettings, Bindings } from '../types';
 import { renderTemplate, toPersianDigits, sqliteToMs } from './utils';
@@ -59,6 +64,159 @@ async function logSms(
   }
 }
 
+/** تبدیل شماره به شکل استاندارد 09xxxxxxxxx (ورودی سرویس‌ها) */
+export function normalizeSmsMobile(raw: string): string {
+  let digits = String(raw ?? '').replace(/\D/g, '');
+  if (digits.startsWith('0098')) digits = digits.slice(4);
+  else if (digits.startsWith('98') && digits.length === 12) digits = digits.slice(2);
+  if (digits.length === 10 && digits.startsWith('9')) digits = `0${digits}`;
+  return digits;
+}
+
+/** پیام خطای قابل‌فهم برای نبود تنظیمات هر ارائه‌دهنده */
+function missingConfigMessage(provider: AppSettings['sms_provider']): string {
+  if (provider === 'smsir') {
+    return 'سرویس sms.ir انتخاب شده اما کلید API یا شماره خط تنظیم نشده است.';
+  }
+  if (provider === 'kavenegar') {
+    return 'سرویس کاوه‌نگار انتخاب شده اما کلید API تنظیم نشده است.';
+  }
+  return 'ارائه‌دهنده پیامک تنظیم نشده است.';
+}
+
+/** ارسال از طریق سامانه sms.ir (REST v1 — متد ارسال گروهی) */
+async function sendViaSmsIr(
+  apiKey: string,
+  sender: string,
+  mobile: string,
+  message: string
+): Promise<{ ok: true; messageId?: string } | { ok: false; error: string }> {
+  const lineNumber = Number(String(sender).replace(/\D/g, ''));
+
+  if (!Number.isFinite(lineNumber) || lineNumber <= 0) {
+    return {
+      ok: false,
+      error: 'شماره خط فرستنده (LineNumber) در sms.ir تنظیم نشده است.',
+    };
+  }
+
+  let response: Response;
+  try {
+    response = await fetch('https://api.sms.ir/v1/send/bulk', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        'X-API-KEY': apiKey,
+      },
+      body: JSON.stringify({
+        lineNumber,
+        messageText: message,
+        mobiles: [mobile],
+        sendDateTime: null,
+      }),
+      signal: AbortSignal.timeout(12_000),
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      error: `اتصال به sms.ir برقرار نشد: ${
+        error instanceof Error ? error.message : 'خطای شبکه'
+      }`,
+    };
+  }
+
+  if (response.status === 401 || response.status === 403) {
+    return { ok: false, error: 'کلید API سامانه sms.ir نامعتبر است.' };
+  }
+  if (!response.ok) {
+    return { ok: false, error: `sms.ir پاسخ HTTP ${response.status} داد.` };
+  }
+
+  let payload: {
+    status?: number;
+    message?: string;
+    data?: { packId?: string | number; messageIds?: number[]; cost?: number };
+  };
+  try {
+    payload = (await response.json()) as typeof payload;
+  } catch {
+    return { ok: false, error: 'پاسخ sms.ir قابل خواندن نبود.' };
+  }
+
+  if (payload.status === 1) {
+    const id = payload.data?.messageIds?.[0] ?? payload.data?.packId;
+    return { ok: true, messageId: id !== undefined && id !== null ? String(id) : undefined };
+  }
+
+  return {
+    ok: false,
+    error: payload.message
+      ? String(payload.message)
+      : `sms.ir کد وضعیت ${payload.status ?? 'نامشخص'} را برگرداند.`,
+  };
+}
+
+/** ارسال از طریق کاوه‌نگار (متد قدیمی send.json) */
+async function sendViaKavenegar(
+  apiKey: string,
+  sender: string,
+  mobile: string,
+  message: string
+): Promise<{ ok: true; messageId?: string } | { ok: false; error: string }> {
+  const url = new URL(`https://api.kavenegar.com/v1/${encodeURIComponent(apiKey)}/sms/send.json`);
+  url.searchParams.set('receptor', mobile);
+  if (sender) url.searchParams.set('sender', sender);
+  url.searchParams.set('message', message);
+
+  let response: Response;
+  try {
+    response = await fetch(url.toString(), {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch (error) {
+    return {
+      ok: false,
+      error: `اتصال به کاوه‌نگار برقرار نشد: ${
+        error instanceof Error ? error.message : 'خطای شبکه'
+      }`,
+    };
+  }
+
+  if (response.status === 401 || response.status === 403) {
+    return { ok: false, error: 'کلید API کاوه‌نگار نامعتبر است.' };
+  }
+  if (!response.ok) {
+    return { ok: false, error: `کاوه‌نگار پاسخ HTTP ${response.status} داد.` };
+  }
+
+  let payload: {
+    return?: { status?: number; message?: string };
+    entries?: Array<{ messageid?: number; status?: number; statustext?: string }>;
+  };
+  try {
+    payload = (await response.json()) as typeof payload;
+  } catch {
+    return { ok: false, error: 'پاسخ کاوه‌نگار قابل خواندن نبود.' };
+  }
+
+  const entry = payload.entries?.[0];
+  const apiStatus = payload.return?.status ?? entry?.status ?? 0;
+  if (apiStatus === 200) {
+    return {
+      ok: true,
+      messageId: entry?.messageid ? String(entry.messageid) : undefined,
+    };
+  }
+
+  return {
+    ok: false,
+    error: payload.return?.message || entry?.statustext || `کد وضعیت ${apiStatus}`,
+  };
+}
+
 /** ارسال پیامک از طریق ارائه‌دهنده پیکربندی‌شده */
 export async function sendSms(
   env: Bindings,
@@ -72,70 +230,95 @@ export async function sendSms(
     return result;
   }
 
-  const apiKey = env.KAVENEGAR_API_KEY || settings.sms_api_key;
-  const sender = env.SMS_SENDER || settings.sms_sender;
   const provider = settings.sms_provider;
+  const mobile = normalizeSmsMobile(params.phone);
+  if (!/^09\d{9}$/.test(mobile)) {
+    const result: SendSmsResult = { status: 'failed', error: 'شماره موبایل گیرنده نامعتبر است.' };
+    await logSms(env, params, result);
+    return result;
+  }
 
   // حالت نمایشی/توسعه: پیام فقط در لاگ ثبت می‌شود
-  if (provider !== 'kavenegar' || !apiKey) {
-    console.log(`[SMS:console] to=${params.phone} type=${params.type} :: ${message}`);
+  if (provider === 'console') {
+    console.log(`[SMS:console] to=${mobile} type=${params.type} :: ${message}`);
     const result: SendSmsResult = { status: 'sent' };
     await logSms(env, params, result);
     return result;
   }
 
-  try {
-    const url = new URL(
-      `https://api.kavenegar.com/v1/${encodeURIComponent(apiKey)}/sms/send.json`
-    );
-    url.searchParams.set('receptor', params.phone);
-    if (sender) url.searchParams.set('sender', sender);
-    url.searchParams.set('message', message);
+  const envKey = provider === 'smsir' ? env.SMSIR_API_KEY : env.KAVENEGAR_API_KEY;
+  const apiKey = (envKey || settings.sms_api_key).trim();
+  const sender = (env.SMS_SENDER || settings.sms_sender).trim();
 
-    const response = await fetch(url.toString(), {
+  if (!apiKey) {
+    const result: SendSmsResult = { status: 'failed', error: missingConfigMessage(provider) };
+    await logSms(env, params, result);
+    return result;
+  }
+
+  let outcome: { ok: true; messageId?: string } | { ok: false; error: string };
+  if (provider === 'smsir') {
+    if (!sender) {
+      const result: SendSmsResult = {
+        status: 'failed',
+        error: 'شماره خط فرستنده (LineNumber) در sms.ir تنظیم نشده است.',
+      };
+      await logSms(env, params, result);
+      return result;
+    }
+    outcome = await sendViaSmsIr(apiKey, sender, mobile, message);
+  } else {
+    outcome = await sendViaKavenegar(apiKey, sender, mobile, message);
+  }
+
+  const result: SendSmsResult = outcome.ok
+    ? { status: 'sent', messageId: outcome.messageId }
+    : { status: 'failed', error: outcome.error };
+
+  await logSms(env, params, result);
+  return result;
+}
+
+/**
+ * دریافت اعتبار باقی‌مانده حساب sms.ir.
+ * فقط برای ارائه‌دهنده sms.ir معنا دارد.
+ */
+export async function fetchSmsCredit(
+  env: Bindings,
+  settings: AppSettings
+): Promise<{ ok: boolean; credit?: number; error?: string }> {
+  const apiKey = (env.SMSIR_API_KEY || settings.sms_api_key).trim();
+  if (settings.sms_provider !== 'smsir') {
+    return { ok: false, error: 'برای دیدن اعتبار، سرویس پیامک را روی sms.ir بگذارید.' };
+  }
+  if (!apiKey) {
+    return { ok: false, error: 'کلید API سامانه sms.ir تنظیم نشده است.' };
+  }
+
+  try {
+    const response = await fetch('https://api.sms.ir/v1/credit', {
       method: 'GET',
-      headers: { Accept: 'application/json' },
+      headers: { Accept: 'application/json', 'X-API-KEY': apiKey },
       signal: AbortSignal.timeout(10_000),
     });
 
+    if (response.status === 401 || response.status === 403) {
+      return { ok: false, error: 'کلید API سامانه sms.ir نامعتبر است.' };
+    }
     if (!response.ok) {
-      const result: SendSmsResult = {
-        status: 'failed',
-        error: `HTTP ${response.status}`,
-      };
-      await logSms(env, params, result);
-      return result;
+      return { ok: false, error: `sms.ir پاسخ HTTP ${response.status} داد.` };
     }
 
-    const payload = (await response.json()) as {
-      return?: { status?: number; message?: string };
-      entries?: Array<{ messageid?: number; status?: number; statustext?: string }>;
-    };
-
-    const entry = payload.entries?.[0];
-    const apiStatus = payload.return?.status ?? entry?.status ?? 0;
-    if (apiStatus === 200) {
-      const result: SendSmsResult = {
-        status: 'sent',
-        messageId: entry?.messageid ? String(entry.messageid) : undefined,
-      };
-      await logSms(env, params, result);
-      return result;
+    const payload = (await response.json()) as { status?: number; data?: number; message?: string };
+    if (payload.status === 1 && typeof payload.data === 'number') {
+      return { ok: true, credit: payload.data };
     }
-
-    const result: SendSmsResult = {
-      status: 'failed',
-      error: payload.return?.message || entry?.statustext || `api status ${apiStatus}`,
-    };
-    await logSms(env, params, result);
-    return result;
+    return { ok: false, error: payload.message || 'دریافت اعتبار ناموفق بود.' };
   } catch (error) {
-    const result: SendSmsResult = {
-      status: 'failed',
-      error: error instanceof Error ? error.message : 'خطای نامشخص در ارسال',
+    return {
+      ok: false,
+      error: `اتصال به sms.ir برقرار نشد: ${error instanceof Error ? error.message : 'خطای شبکه'}`,
     };
-    await logSms(env, params, result);
-    return result;
   }
 }
 

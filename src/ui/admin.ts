@@ -94,8 +94,10 @@ export function adminDashboardPage(input: {
   jobRuns: JobRunMap;
   monthLabel: string;
   todayLabel: string;
+  defaultPassword?: boolean;
 }): string {
   const { settings, userName, stats, weather, jobRuns, monthLabel, todayLabel } = input;
+  const defaultPassword = input.defaultPassword === true;
 
   const maxSale = Math.max(...stats.salesSeries.map((d) => d.total), 1);
   const bars = stats.salesSeries
@@ -147,6 +149,19 @@ export function adminDashboardPage(input: {
       actions: `<a href="/staff" class="btn btn-primary btn-sm">${icon('receipt', 'w-4 h-4')} ثبت فاکتور</a>
         <a href="/admin/settings" class="btn btn-ghost btn-sm">${icon('settings', 'w-4 h-4')} تنظیمات</a>`,
     })}
+
+    ${
+      defaultPassword
+        ? `<div class="mb-4 rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+            <span class="w-9 h-9 shrink-0 rounded-xl bg-rose-500/15 text-rose-300 flex items-center justify-center">${icon('shield', 'w-4 h-4')}</span>
+            <div class="flex-1 min-w-0">
+              <div class="text-[13px] font-bold text-rose-200">رمز عبور پیش‌فرض شما هنوز فعال است</div>
+              <div class="text-[11px] text-rose-200/60 leading-6 mt-0.5">این رمز در مستندات پروژه عمومی است؛ لطفاً همین حالا آن را تغییر دهید.</div>
+            </div>
+            <a href="/admin/staff" class="btn btn-danger btn-sm shrink-0">تغییر رمز</a>
+          </div>`
+        : ''
+    }
 
     <div class="grid grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4 mb-4">
       ${statCard({

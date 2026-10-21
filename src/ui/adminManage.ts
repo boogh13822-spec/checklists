@@ -92,6 +92,14 @@ export function adminSettingsPage(input: {
   smsToday: { sent: number; failed: number };
 }): string {
   const { settings, userName, menu, smsToday } = input;
+  const hasSmsKey = settings.sms_api_key.trim().length > 0;
+  const hasWeatherKey = settings.weather_api_key.trim().length > 0;
+  const smsProviderLabel =
+    settings.sms_provider === 'smsir'
+      ? 'sms.ir'
+      : settings.sms_provider === 'kavenegar'
+        ? 'کاوه‌نگار'
+        : 'حالت آزمایشی';
 
   const templateCards = TEMPLATE_META.map((meta) => {
     const value = settings.sms_templates[meta.key];
@@ -238,9 +246,9 @@ export function adminSettingsPage(input: {
             <p class="hint">اگر بیش از «میانگین + این عدد» نیامد، پیامک می‌گیرد.</p>
           </div>
           <div>
-            <label class="label" for="churn_min_visits">حداقل تعداد خرید</label>
+            <label class="label" for="churn_min_visits">حداقل خرید برای میانگین</label>
             <input id="churn_min_visits" type="number" min="1" max="100" class="field text-left" dir="ltr" value="${settings.churn_min_visits}" />
-            <p class="hint">برای محاسبه میانگین، حداقل این تعداد خرید لازم است.</p>
+            <p class="hint">کمتر از این تعداد خرید، مبنای سنجش ۳۰ روز است (مشتری تک‌خرید هم پیامک می‌گیرد).</p>
           </div>
           <div>
             <label class="label" for="birthday_coupon_percent">درصد تخفیف تولد</label>
@@ -260,33 +268,69 @@ export function adminSettingsPage(input: {
           <div>
             <label class="label" for="sms_provider">سرویس‌دهنده پیامک</label>
             <select id="sms_provider" class="field">
-              <option value="console" ${settings.sms_provider === 'console' ? 'selected' : ''}>حالت آزمایشی (فقط لاگ)</option>
+              <option value="smsir" ${settings.sms_provider === 'smsir' ? 'selected' : ''}>sms.ir (پیشنهادی)</option>
               <option value="kavenegar" ${settings.sms_provider === 'kavenegar' ? 'selected' : ''}>کاوه‌نگار</option>
+              <option value="console" ${settings.sms_provider === 'console' ? 'selected' : ''}>حالت آزمایشی (فقط لاگ)</option>
             </select>
-            <p class="hint">در حالت آزمایشی پیامکی ارسال نمی‌شود و فقط در جدول لاگ ثبت می‌گردد.</p>
+            <p class="hint">
+              وضعیت فعلی: <span class="text-gold font-semibold">${smsProviderLabel}</span> —
+              در حالت آزمایشی پیامک واقعی ارسال نمی‌شود.
+            </p>
           </div>
           <div>
-            <label class="label" for="sms_sender">شماره فرستنده</label>
-            <input id="sms_sender" type="text" dir="ltr" class="field text-left" maxlength="30" value="${escapeHtml(settings.sms_sender)}" />
+            <label class="label" for="sms_sender">شماره خط فرستنده (LineNumber)</label>
+            <input id="sms_sender" type="text" dir="ltr" inputmode="numeric" class="field text-left font-mono" maxlength="30" value="${escapeHtml(settings.sms_sender)}" placeholder="3000xxxxxx" />
+            <p class="hint">در sms.ir همان «شماره خط» پنل است و باید فقط عدد باشد.</p>
           </div>
           <div class="sm:col-span-2">
-            <label class="label" for="sms_api_key">کلید API پیامک (کاوه‌نگار)</label>
+            <label class="label" for="sms_api_key">کلید API پیامک</label>
             <div class="flex gap-2">
-              <input id="sms_api_key" type="password" dir="ltr" class="field text-left font-mono" value="${escapeHtml(settings.sms_api_key)}" autocomplete="off" />
+              <input id="sms_api_key" type="password" dir="ltr" class="field text-left font-mono" value="" autocomplete="off"
+                placeholder="${hasSmsKey ? 'کلید ذخیره شده است — برای تغییر، مقدار جدید را وارد کنید' : 'کلید API را وارد کنید'}" />
               <button type="button" data-reveal="sms_api_key" class="btn btn-ghost btn-sm shrink-0">${icon('search', 'w-4 h-4')}</button>
+            </div>
+            <div class="flex items-center justify-between gap-2 mt-2">
+              <p class="hint !mt-0">
+                ${hasSmsKey ? 'کلید فعلی ذخیره شده و دیگر در صفحه نمایش داده نمی‌شود.' : 'کلید API را از پنل سرویس پیامک بگیرید.'}
+              </p>
+              ${
+                hasSmsKey
+                  ? `<label class="flex items-center gap-1.5 text-[10.5px] text-rose-300/80 cursor-pointer whitespace-nowrap">
+                       <input id="clear-sms-key" type="checkbox" class="accent-rose-500 w-3.5 h-3.5" />
+                       حذف کلید
+                     </label>`
+                  : ''
+              }
             </div>
           </div>
           <div class="sm:col-span-2">
             <label class="label" for="weather_api_key">کلید API هواشناسی (OpenWeather)</label>
             <div class="flex gap-2">
-              <input id="weather_api_key" type="password" dir="ltr" class="field text-left font-mono" value="${escapeHtml(settings.weather_api_key)}" autocomplete="off" />
+              <input id="weather_api_key" type="password" dir="ltr" class="field text-left font-mono" value="" autocomplete="off"
+                placeholder="${hasWeatherKey ? 'کلید ذخیره شده است — برای تغییر، مقدار جدید را وارد کنید' : 'کلید API را وارد کنید'}" />
               <button type="button" data-reveal="weather_api_key" class="btn btn-ghost btn-sm shrink-0">${icon('search', 'w-4 h-4')}</button>
             </div>
-            <p class="hint">دریافت کلید از openweathermap.org — پلن رایگان کافی است.</p>
+            <div class="flex items-center justify-between gap-2 mt-2">
+              <p class="hint !mt-0">دریافت کلید از openweathermap.org — پلن رایگان کافی است.</p>
+              ${
+                hasWeatherKey
+                  ? `<label class="flex items-center gap-1.5 text-[10.5px] text-rose-300/80 cursor-pointer whitespace-nowrap">
+                       <input id="clear-weather-key" type="checkbox" class="accent-rose-500 w-3.5 h-3.5" />
+                       حذف کلید
+                     </label>`
+                  : ''
+              }
+            </div>
           </div>
-          <div class="sm:col-span-2 flex flex-wrap gap-2 pt-1">
-            <button type="button" id="test-sms" class="btn btn-ghost btn-sm">${icon('send', 'w-4 h-4')} پیامک آزمایشی به خودم</button>
-            <button type="button" id="test-weather" class="btn btn-ghost btn-sm">${icon('sun', 'w-4 h-4')} تست آب‌وهوا</button>
+          <div class="sm:col-span-2 rounded-2xl border border-white/10 bg-black/20 p-3.5">
+            <div class="flex flex-wrap items-center gap-2">
+              <button type="button" id="test-sms" class="btn btn-ghost btn-sm">${icon('send', 'w-4 h-4')} پیامک آزمایشی به خودم</button>
+              <button type="button" id="sms-credit" class="btn btn-ghost btn-sm">${icon('wallet', 'w-4 h-4')} اعتبار sms.ir</button>
+              <button type="button" id="test-weather" class="btn btn-ghost btn-sm">${icon('sun', 'w-4 h-4')} تست آب‌وهوا</button>
+            </div>
+            <p class="text-[10.5px] text-cream/35 leading-6 mt-2">
+              راهنمای sms.ir: پنل → «وب‌سرویس» → دریافت کلید API؛ سپس شماره خط را در فیلد بالا وارد و ذخیره کنید.
+            </p>
           </div>
         </div>
       </section>
@@ -448,6 +492,8 @@ export function adminSettingsPage(input: {
         sms_api_key: $('#sms_api_key').value.trim(),
         sms_sender: $('#sms_sender').value.trim(),
         weather_api_key: $('#weather_api_key').value.trim(),
+        clear_sms_api_key: !!(document.getElementById('clear-sms-key') && document.getElementById('clear-sms-key').checked),
+        clear_weather_api_key: !!(document.getElementById('clear-weather-key') && document.getElementById('clear-weather-key').checked),
         sms_templates: {
           welcome: document.getElementById('tpl-welcome').value,
           invoice: document.getElementById('tpl-invoice').value,
@@ -461,6 +507,14 @@ export function adminSettingsPage(input: {
       };
       try {
         await api('/api/admin/settings', { method: 'PUT', body: payload });
+        // بعد از ذخیره، مقدار کلید از صفحه پاک می‌شود تا دوباره در HTML قرار نگیرد
+        ['sms_api_key', 'weather_api_key'].forEach(function (id) {
+          var input = document.getElementById(id);
+          if (input && input.value.trim()) {
+            input.value = '';
+            input.placeholder = 'کلید ذخیره شده است — برای تغییر، مقدار جدید را وارد کنید';
+          }
+        });
         toast('تنظیمات با موفقیت ذخیره شد.', 'success');
       } catch (error) {
         toast(error.message, 'error');
@@ -484,6 +538,21 @@ export function adminSettingsPage(input: {
         setLoading(btn, false);
       }
     });
+
+    var creditBtn = $('#sms-credit');
+    if (creditBtn) {
+      creditBtn.addEventListener('click', async function () {
+        setLoading(creditBtn, true, 'در حال بررسی…');
+        try {
+          var result = await api('/api/admin/sms/credit');
+          toast(result.message, result.ok ? 'success' : 'error');
+        } catch (error) {
+          toast(error.message, 'error');
+        } finally {
+          setLoading(creditBtn, false);
+        }
+      });
+    }
 
     $('#test-weather').addEventListener('click', async function () {
       var btn = $('#test-weather');
@@ -675,8 +744,8 @@ export function adminStaffPage(input: {
       var btn = $('#staff-submit');
       setLoading(btn, true, 'در حال ایجاد…');
       try {
-        var result = await api('/api/admin/staff', { method: 'POST', body: { name: name, phone: phone, role: role, password: password } });
-        toast('کارمند ایجاد شد. رمز: ' + result.password, 'success');
+        await api('/api/admin/staff', { method: 'POST', body: { name: name, phone: phone, role: role, password: password } });
+        toast('کارمند ایجاد شد. رمز: ' + password, 'success');
         setTimeout(function () { window.location.reload(); }, 1600);
       } catch (error) {
         toast(error.message, 'error');

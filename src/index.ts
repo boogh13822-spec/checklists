@@ -41,8 +41,8 @@ import {
   recordInvoice,
   registerCustomer,
 } from './lib/db';
-import { loadMenuItems, loadSettings, saveSetting } from './lib/settings';
-import { fetchWeather, renderSms, sendSms, weatherSummary } from './lib/sms';
+import { coerceSmsProvider, loadMenuItems, loadSettings, saveSetting } from './lib/settings';
+import { fetchSmsCredit, fetchWeather, renderSms, sendSms, weatherSummary } from './lib/sms';
 import {
   dispatchCron,
   getJobRuns,
@@ -92,6 +92,16 @@ import {
 const app = new Hono<AppEnv>();
 
 const TIMEZONE = DEFAULT_TIMEZONE;
+
+/**
+ * هش رمزهای پیش‌فرضی که در schema.sql / مستندات عمومی آمده‌اند.
+ * اگر رمز فعال کاربر با یکی از این‌ها برابر باشد، در داشبورد هشدار داده می‌شود.
+ * (این‌ها هش هستند، نه رمز؛ برای مقایسه امن است.)
+ */
+const DEFAULT_PASSWORD_HASHES: string[] = [
+  'pbkdf2$25000$2qmBxvUUUsoHnkNI8TJ0sQ==$0h0jweqD5x5UfV/MM+J/1FGvBKYuW5TXAqLmW+9+tGs=',
+  'pbkdf2$25000$WGzL3eKGGQiLplcEmrJL+Q==$EM2ACxk1AoH2M0BuNE7ULuQfjeJsgl3FzFRHArKb9Zk=',
+];
 
 /* --------------------------------------------------------------------------
  *  هدرهای امنیتی
@@ -286,6 +296,14 @@ app.get('/admin', requirePageRole('admin'), async (c) => {
     getJobRuns(c.env),
   ]);
 
+  // هشدار امنیتی: اگر رمز پیش‌فرض مستندات هنوز استفاده می‌شود، به مدیر اطلاع بده
+  const credentialRow = await c.env.DB.prepare(
+    'SELECT password_hash FROM users WHERE id = ? LIMIT 1'
+  )
+    .bind(user.uid)
+    .first<{ password_hash: string | null }>();
+  const defaultPassword = DEFAULT_PASSWORD_HASHES.includes(credentialRow?.password_hash ?? '');
+
   const hasWeatherKey = !!(c.env.OPENWEATHER_API_KEY || settings.weather_api_key);
   const weather = hasWeatherKey
     ? await fetchWeather(c.env, settings)
@@ -310,6 +328,7 @@ app.get('/admin', requirePageRole('admin'), async (c) => {
       jobRuns,
       monthLabel: month.label,
       todayLabel: `${jalaliWeekday(day.dateISO)} ${formatJalali(day.dateISO)}`,
+      defaultPassword,
     })
   );
 });
@@ -612,7 +631,8 @@ app.post('/api/auth/login', async (c) => {
 app.post('/api/auth/register', async (c) => {
   const settings = c.get('settings');
 
-  const rate = checkRateLimit(`register:${clientKey(c)}`, 6, 10 * 60_000);
+  // سقف سخاوتمندانه‌تر: ثبت‌نام‌های حضوری در کافه معمولاً از یک IP مشترک انجام می‌شوند
+  const rate = checkRateLimit(`register:${clientKey(c)}`, 20, 10 * 60_000);
   if (!rate.allowed) {
     c.header('Retry-After', String(rate.retryAfter));
     return fail(c, 'تعداد ثبت‌نام‌ها زیاد است. کمی بعد تلاش کنید.', 429, 'RATE_LIMITED');
@@ -929,9 +949,12 @@ app.post('/api/admin/customers/:id/deactivate', requireApiRole('admin'), async (
   const id = toPositiveInt(c.req.param('id'), 0);
   if (!id) return fail(c, 'شناسه نامعتبر است.', 400, 'INVALID_ID');
 
-  await c.env.DB.prepare(`UPDATE users SET is_active = 0 WHERE id = ? AND role = 'customer'`)
+  const result = await c.env.DB.prepare(
+    `UPDATE users SET is_active = 0 WHERE id = ? AND role = 'customer'`
+  )
     .bind(id)
     .run();
+  if (!result.meta?.changes) return fail(c, 'مشتری یافت نشد.', 404, 'NOT_FOUND');
   return ok(c, { isActive: false });
 });
 
@@ -939,16 +962,28 @@ app.post('/api/admin/customers/:id/activate', requireApiRole('admin'), async (c)
   const id = toPositiveInt(c.req.param('id'), 0);
   if (!id) return fail(c, 'شناسه نامعتبر است.', 400, 'INVALID_ID');
 
-  await c.env.DB.prepare(`UPDATE users SET is_active = 1 WHERE id = ? AND role = 'customer'`)
+  const result = await c.env.DB.prepare(
+    `UPDATE users SET is_active = 1 WHERE id = ? AND role = 'customer'`
+  )
     .bind(id)
     .run();
+  if (!result.meta?.changes) return fail(c, 'مشتری یافت نشد.', 404, 'NOT_FOUND');
   return ok(c, { isActive: true });
 });
 
 app.get('/api/admin/settings', requireApiRole('admin'), async (c) => {
   const settings = c.get('settings');
   const menu = await loadMenuItems(c.env);
-  return ok(c, { settings, menu });
+  // کلیدهای حساس هرگز از API برنمی‌گردند؛ فقط وجودشان اعلام می‌شود.
+  const { sms_api_key, weather_api_key, ...safeSettings } = settings;
+  return ok(c, {
+    settings: {
+      ...safeSettings,
+      has_sms_api_key: sms_api_key.trim().length > 0,
+      has_weather_api_key: weather_api_key.trim().length > 0,
+    },
+    menu,
+  });
 });
 
 app.put('/api/admin/settings', requireApiRole('admin'), async (c) => {
@@ -997,17 +1032,24 @@ app.put('/api/admin/settings', requireApiRole('admin'), async (c) => {
     }
 
     if (body.sms_provider !== undefined) {
-      const provider = body.sms_provider === 'kavenegar' ? 'kavenegar' : 'console';
-      await saveSetting(c.env, 'sms_provider', provider);
+      await saveSetting(c.env, 'sms_provider', coerceSmsProvider(body.sms_provider));
     }
-    if (body.sms_api_key !== undefined) {
-      await saveSetting(c.env, 'sms_api_key', String(body.sms_api_key).trim().slice(0, 300));
+    // کلیدها فقط وقتی مقدار جدید دارند بازنویسی می‌شوند؛ رشته‌ی خالی یعنی «تغییری نده».
+    // برای حذف آگاهانه، پرچم clear_* را بفرستید.
+    if (body.clear_sms_api_key === true) {
+      await saveSetting(c.env, 'sms_api_key', '');
+    } else if (body.sms_api_key !== undefined) {
+      const nextKey = String(body.sms_api_key).trim().slice(0, 300);
+      if (nextKey) await saveSetting(c.env, 'sms_api_key', nextKey);
     }
     if (body.sms_sender !== undefined) {
       await saveSetting(c.env, 'sms_sender', String(body.sms_sender).trim().slice(0, 30));
     }
-    if (body.weather_api_key !== undefined) {
-      await saveSetting(c.env, 'weather_api_key', String(body.weather_api_key).trim().slice(0, 200));
+    if (body.clear_weather_api_key === true) {
+      await saveSetting(c.env, 'weather_api_key', '');
+    } else if (body.weather_api_key !== undefined) {
+      const nextWeatherKey = String(body.weather_api_key).trim().slice(0, 200);
+      if (nextWeatherKey) await saveSetting(c.env, 'weather_api_key', nextWeatherKey);
     }
 
     if (body.sms_templates && typeof body.sms_templates === 'object') {
@@ -1083,8 +1125,25 @@ app.post('/api/admin/test-sms', requireApiRole('admin'), async (c) => {
     status: result.status,
     message:
       result.status === 'sent'
-        ? `پیامک آزمایشی برای ${dbUser.phone} ثبت شد${settings.sms_provider === 'console' ? ' (حالت آزمایشی: فقط در لاگ)' : ''}.`
+        ? `پیامک آزمایشی برای ${dbUser.phone} ارسال شد${
+            settings.sms_provider === 'console' ? ' (حالت آزمایشی: فقط در لاگ ثبت شد)' : ''
+          }.`
         : `ارسال ناموفق بود: ${result.error ?? 'خطای نامشخص'}`,
+  });
+});
+
+app.get('/api/admin/sms/credit', requireApiRole('admin'), async (c) => {
+  const settings = c.get('settings');
+  const result = await fetchSmsCredit(c.env, settings);
+
+  if (!result.ok) {
+    return ok(c, { ok: false, message: result.error ?? 'دریافت اعتبار ناموفق بود.' });
+  }
+
+  return ok(c, {
+    ok: true,
+    credit: result.credit ?? 0,
+    message: `اعتبار باقی‌مانده sms.ir: ${toPersianDigits(result.credit ?? 0)} تومان`,
   });
 });
 
@@ -1146,7 +1205,6 @@ app.post('/api/admin/staff', requireApiRole('admin'), async (c) => {
       name,
       phone,
       role,
-      password,
     },
     201
   );

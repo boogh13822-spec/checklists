@@ -279,6 +279,13 @@ export async function recordInvoice(
   if (customer.role !== 'customer') {
     return { ok: false, error: 'فقط برای مشتریان می‌توان فاکتور ثبت کرد.', code: 'INVALID_ROLE' };
   }
+  if (customer.is_active !== 1) {
+    return {
+      ok: false,
+      error: 'حساب این مشتری غیرفعال است؛ ابتدا آن را از پنل مدیریت فعال کنید.',
+      code: 'INACTIVE_CUSTOMER',
+    };
+  }
 
   const items = normalizeItems(input.items);
   let subtotal = items.length > 0 ? itemsSubtotal(items) : Math.floor(Number(input.amount) || 0);
@@ -744,7 +751,8 @@ export async function getCustomerDetail(
   visitCount: number;
 }> {
   const user = await findUserById(db, id);
-  if (!user) {
+  // فقط مشتری‌ها پروفایل مشتری دارند؛ نه کارمندان و مدیران
+  if (!user || user.role !== 'customer') {
     return { user: null, invoices: [], coupons: [], referrer: null, referrals: [], totalSpent: 0, visitCount: 0 };
   }
 

@@ -13,8 +13,10 @@ export type Bindings = {
   TZ_NAME?: string;
   /** کلید OpenWeather — در صورت تنظیم، بر مقدار ذخیره‌شده در تنظیمات اولویت دارد */
   OPENWEATHER_API_KEY?: string;
-  /** تنظیمات اختیاری ارائه‌دهنده پیامک کاوه‌نگار */
+  /** کلید API کاوه‌نگار (اختیاری — بر مقدار ذخیره‌شده در تنظیمات اولویت دارد) */
   KAVENEGAR_API_KEY?: string;
+  /** کلید API سامانه sms.ir (اختیاری — بر مقدار تنظیمات اولویت دارد) */
+  SMSIR_API_KEY?: string;
   /** شماره فرستنده پیامک */
   SMS_SENDER?: string;
   /** آدرس عمومی برنامه برای ساخت لینک در پیامک‌ها */
@@ -116,7 +118,7 @@ export type AppSettings = {
   cafe_name: string;
   cafe_city: string;
   weather_api_key: string;
-  sms_provider: 'console' | 'kavenegar';
+  sms_provider: 'console' | 'kavenegar' | 'smsir';
   sms_api_key: string;
   sms_sender: string;
   referral_reward_points: number;

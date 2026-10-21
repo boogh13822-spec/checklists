@@ -253,6 +253,15 @@ export const CORE_JS = `
 
   window.moneyFa = function (value) { return fa(money(value)); };
 
+  /** تبدیل هر رشتهٔ عددی (فارسی/لاتین و با جداکننده) به Number */
+  window.parseFaNumber = function (value) {
+    var normalized = String(value === undefined || value === null ? '' : value)
+      .replace(/[۰-۹]/g, function (d) { return String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)); })
+      .replace(/[^0-9-]/g, '');
+    var number = Number(normalized);
+    return Number.isFinite(number) ? number : 0;
+  };
+
   window.escapeHtml = function (value) {
     return String(value === undefined || value === null ? '' : value)
       .replace(/&/g, '&amp;')
@@ -697,11 +706,9 @@ export function publicShell(options: {
           </div>
         </a>
         <nav class="flex items-center gap-2">
-          <a href="/register" class="btn btn-ghost btn-sm">عضویت</a>
-          <a href="/login" class="btn btn-primary btn-sm">
+          <a href="/login" class="btn btn-ghost btn-sm text-cream/60 hover:text-gold">
             ${icon('shield', 'w-4 h-4')}
-            <span class="hidden sm:inline">ورود کارمندان</span>
-            <span class="sm:hidden">ورود</span>
+            <span>ورود</span>
           </a>
         </nav>
       </div>
@@ -710,10 +717,10 @@ export function publicShell(options: {
 
   <main class="flex-1">${body}</main>
 
-  <footer class="border-t border-white/10 mt-16">
-    <div class="max-w-6xl mx-auto px-4 sm:px-6 py-8 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-cream/40">
+  <footer class="border-t border-white/10 mt-10">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 py-6 flex flex-col sm:flex-row items-center justify-between gap-2 text-[11px] text-cream/30">
       <div class="flex items-center gap-2">
-        ${icon('coffee', 'w-4 h-4')}
+        ${icon('coffee', 'w-3.5 h-3.5')}
         <span>${escapeHtml(cafeName)} — باشگاه مشتریان</span>
       </div>
       <div class="flex items-center gap-4">

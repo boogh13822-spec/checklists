@@ -452,6 +452,19 @@ export function staffPage(
       }
     }
 
+    /** با هر تغییر در سبد، کد تخفیف باید دوباره اعمال شود */
+    function resetCoupon() {
+      appliedCoupon = null;
+      appliedDiscount = 0;
+      var input = $('#coupon-input');
+      if (input) input.value = '';
+      var result = $('#coupon-result');
+      if (result) {
+        result.textContent = '';
+        result.classList.add('hidden');
+      }
+    }
+
     function resetForm() {
       selected = {};
       appliedCoupon = null;
@@ -494,8 +507,7 @@ export function staffPage(
       if (!btn) return;
       var name = btn.dataset.item;
       selected[name] = (selected[name] || 0) + 1;
-      appliedCoupon = null;
-      appliedDiscount = 0;
+      resetCoupon();
       renderMenu();
       renderSelected();
       refreshTotals();
@@ -513,8 +525,7 @@ export function staffPage(
       } else if (rm) {
         delete selected[rm.dataset.rm];
       } else return;
-      appliedCoupon = null;
-      appliedDiscount = 0;
+      resetCoupon();
       renderMenu();
       renderSelected();
       refreshTotals();
@@ -522,8 +533,7 @@ export function staffPage(
 
     $('#clear-items').addEventListener('click', function () {
       selected = {};
-      appliedCoupon = null;
-      appliedDiscount = 0;
+      resetCoupon();
       renderMenu();
       renderSelected();
       refreshTotals();
@@ -532,6 +542,7 @@ export function staffPage(
     manualInput.addEventListener('input', function () {
       var digits = manualInput.value.replace(/[^0-9]/g, '');
       manualInput.value = digits ? money(digits) : '';
+      resetCoupon();
       refreshTotals();
     });
 
@@ -613,9 +624,8 @@ export function staffPage(
         // به‌روزرسانی آمار امروز
         var countEl = $('#today-count');
         var totalEl = $('#today-total');
-        countEl.textContent = fa(Number(countEl.textContent.replace(/[^۰-۹]/g, function (d) { return String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)); })) + 1);
-        var currentTotal = Number(totalEl.textContent.replace(/[^۰-۹]/g, function (d) { return String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)); }).replace(/,/g, '')) || 0;
-        totalEl.textContent = moneyFa(currentTotal + result.amount);
+        countEl.textContent = fa(parseFaNumber(countEl.textContent) + 1);
+        totalEl.textContent = moneyFa(parseFaNumber(totalEl.textContent) + result.amount);
 
         var list = $('#recent-list');
         if (list.querySelector('p')) list.innerHTML = '';

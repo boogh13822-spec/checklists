@@ -137,9 +137,12 @@ export async function runChurnJob(
   ).all<ChurnCandidate>();
 
   const candidates = (results ?? []).filter((row) => {
-    if (row.visits < settings.churn_min_visits) return false;
     const days = daysSince(row.last_visit_date);
-    const baseline = row.avg_visit_interval > 0 ? row.avg_visit_interval : CHURN_DEFAULT_INTERVAL;
+    // میانگین فقط وقتی معتبر است که تعداد خرید به حداقل تنظیم‌شده برسد؛
+    // در غیر این صورت (مثلاً مشتری تک‌خرید) مبنای پیش‌فرض ۳۰ روزه استفاده می‌شود.
+    const hasReliableAverage =
+      row.visits >= settings.churn_min_visits && row.avg_visit_interval > 0;
+    const baseline = hasReliableAverage ? row.avg_visit_interval : CHURN_DEFAULT_INTERVAL;
     const threshold = baseline + settings.churn_grace_days;
     if (days <= threshold) return false;
     if (row.last_churn_sms_at) {
@@ -162,7 +165,13 @@ export async function runChurnJob(
       name: row.name,
       last_visit: toPersianDigits(days),
       days: toPersianDigits(days),
-      avg: toPersianDigits(Math.round(row.avg_visit_interval > 0 ? row.avg_visit_interval : CHURN_DEFAULT_INTERVAL)),
+      avg: toPersianDigits(
+        Math.round(
+          row.visits >= settings.churn_min_visits && row.avg_visit_interval > 0
+            ? row.avg_visit_interval
+            : CHURN_DEFAULT_INTERVAL
+        )
+      ),
       tier: tierLabel(row.tier),
       cafe: settings.cafe_name,
     });
