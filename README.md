@@ -89,11 +89,33 @@ npm run dev
 
 ## ☁️ دیپلوی روی Cloudflare
 
-### ۱) ساخت دیتابیس D1
+### ۰) دریافت پروژه و رفتن به پوشهٔ درست
+
+> ⚠️ **مهم‌ترین نکته:** هر دو خطای رایج
+> `Unable to read SQL text file "schema.sql"` و
+> `Required Worker name missing`
+> یعنی دستور از **پوشهٔ اشتباه** اجرا شده است؛ یعنی `wrangler.toml` و `schema.sql` در پوشهٔ جاری نیستند.
+> همیشه اول با `ls wrangler.toml schema.sql` مطمئن شوید که داخل ریشهٔ پروژه هستید.
+
+```bash
+git clone -b arena/ba9e1761-checklists https://github.com/boogh13822-spec/checklists.git cafe-club
+cd cafe-club
+npm install
+```
+
+### ۱) انتشار خودکار (ساده‌ترین راه) ⭐
+
+یک اسکریپت آماده همهٔ مراحل زیر را انجام می‌دهد (ساخت D1، نوشتن `database_id`، اجرای schema، ساخت Secret و دیپلوی):
+
+```bash
+bash scripts/deploy.sh
+```
+
+### ۲) ساخت دیتابیس D1 (روش دستی)
 
 ```bash
 npx wrangler login
-npx wrangler d1 create cafe-club-db
+npx wrangler d1 create cafe-club-db --location weur
 ```
 
 خروجی یک `database_id` می‌دهد. آن را در `wrangler.toml` جای‌گذاری کنید:
@@ -105,27 +127,49 @@ database_name = "cafe-club-db"
 database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 ```
 
-### ۲) ساخت جدول‌ها و داده‌های اولیه
+اگر شناسه را گم کردید:
 
 ```bash
-npm run db:init:remote
+npx wrangler d1 list --json
 ```
 
-### ۳) تنظیم Secret
+### ۳) ساخت جدول‌ها و داده‌های اولیه
 
 ```bash
-# یک رشته تصادفی قوی (حداقل ۳۲ کاراکتر)
+npx wrangler d1 execute cafe-club-db --remote --file=./schema.sql
+# یا: npm run db:init:remote
+```
+
+> `schema.sql` تکرارپذیر است (`IF NOT EXISTS` + `ON CONFLICT DO NOTHING`)؛ اجرای دوبارهٔ آن آسیبی نمی‌زند.
+
+### ۴) تنظیم Secret
+
+```bash
+npx wrangler secret put JWT_SECRET     # مقدار را در ترمینال پیست کنید (حداقل ۳۲ کاراکتر)
+```
+
+ساخت مقدار تصادفی:
+
+```bash
 openssl rand -base64 48
-npx wrangler secret put JWT_SECRET
 ```
 
-### ۴) انتشار
+### ۵) انتشار
 
 ```bash
-npm run deploy
+npx wrangler deploy
+# یا: npm run deploy
 ```
 
-### ۵) اتصال دامنه (اختیاری)
+اگر باز هم `Required Worker name missing` دیدید، یعنی wrangler فایل کانفیگ را پیدا نکرده است؛ با مسیر صریح اجرا کنید:
+
+```bash
+npx wrangler deploy --config ./wrangler.toml
+# یا با تعیین دستی نام:
+npx wrangler deploy --name cafe-club --config ./wrangler.toml
+```
+
+### ۶) اتصال دامنه (اختیاری)
 
 در داشبورد Cloudflare → Workers & Pages → `cafe-club` → Settings → Domains & Routes، دامنه‌ی خود را اضافه کنید.
 
@@ -321,6 +365,8 @@ npm run hash-password -- 'MyPassword'   # ساخت هش برای seed
 
 | مشکل | راه‌حل |
 | --- | --- |
+| `Unable to read SQL text file "schema.sql"` | دستور از پوشهٔ اشتباه اجرا شده؛ `cd` به ریشهٔ پروژه‌ای که `schema.sql` در آن است (`ls wrangler.toml schema.sql`) |
+| `Required Worker name missing` | `wrangler.toml` در پوشهٔ جاری نیست؛ یا `npx wrangler deploy --config ./wrangler.toml` بزنید یا فایل را کنار دستور بیاورید |
 | `no such table: users` | `schema.sql` اجرا نشده؛ `npm run db:init:remote` |
 | «کلید JWT تنظیم نشده است» | `npx wrangler secret put JWT_SECRET` (حداقل ۳۲ کاراکتر) |
 | ورود با خطای CPU | پلن رایگان Workers سقف CPU کمی دارد؛ مقدار `PBKDF2_ITERATIONS` را کم کنید یا به پلن Paid ارتقا دهید |

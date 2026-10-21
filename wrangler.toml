@@ -1,13 +1,18 @@
 # ============================================================================
 #  تنظیمات Cloudflare Workers — باشگاه مشتریان کافه
 # ----------------------------------------------------------------------------
+#  ⚠️ این فایل باید در همان پوشه‌ای باشد که دستور wrangler را اجرا می‌کنید.
+#     اگر خطای «Required Worker name missing» گرفتید یعنی wrangler این فایل را
+#     پیدا نکرده است؛ راه‌حل:  npx wrangler deploy --config ./wrangler.toml
+#
 #  مراحل دیپلوی:
+#   0) bash scripts/deploy.sh        ← همهٔ مراحل زیر را خودکار انجام می‌دهد
 #   1) npm install
 #   2) npx wrangler d1 create cafe-club-db
 #      → مقدار database_id خروجی را در پایین جای‌گذاری کنید.
-#   3) npx wrangler secret put JWT_SECRET
-#   4) npm run db:init:remote
-#   5) npm run deploy
+#   3) npx wrangler d1 execute cafe-club-db --remote --file=./schema.sql
+#   4) npx wrangler secret put JWT_SECRET
+#   5) npx wrangler deploy
 # ============================================================================
 
 name = "cafe-club"
