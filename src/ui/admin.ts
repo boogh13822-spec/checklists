@@ -639,9 +639,10 @@ export function adminCustomerDetailPage(input: {
           <button type="button" id="open-coupon" class="btn btn-ghost btn-sm">${icon('gift', 'w-4 h-4')} کد تخفیف</button>
           ${
             user.is_active === 1
-              ? `<button type="button" id="deactivate" class="btn btn-danger btn-sm">${icon('close', 'w-4 h-4')} غیرفعال</button>`
+              ? `<button type="button" id="deactivate" class="btn btn-ghost btn-sm">${icon('close', 'w-4 h-4')} غیرفعال</button>`
               : `<button type="button" id="activate" class="btn btn-primary btn-sm">${icon('check', 'w-4 h-4')} فعال‌سازی</button>`
           }
+          <button type="button" id="delete-customer" class="btn btn-danger btn-sm">${icon('trash', 'w-4 h-4')} حذف</button>
         </div>
       </div>
     </div>
@@ -724,7 +725,7 @@ export function adminCustomerDetailPage(input: {
           ? emptyState({ title: 'فاکتوری ثبت نشده', message: 'این مشتری هنوز خریدی ثبت نکرده است.', iconName: 'receipt' })
           : `<div class="table-wrap max-h-[420px] overflow-y-auto">
               <table class="data">
-                <thead><tr><th>#</th><th>مبلغ</th><th>تخفیف</th><th>امتیاز</th><th>کد</th><th>تاریخ</th></tr></thead>
+                <thead><tr><th>#</th><th>مبلغ</th><th>تخفیف</th><th>امتیاز</th><th>کد</th><th>تاریخ</th><th>وضعیت</th><th></th></tr></thead>
                 <tbody>
                   ${invoices
                     .map(
@@ -735,6 +736,16 @@ export function adminCustomerDetailPage(input: {
                         <td class="text-[11px]">+${toPersianDigits(invoice.points_earned)}</td>
                         <td class="text-[10.5px] text-cream/40 font-mono" dir="ltr">${escapeHtml(invoice.coupon_code ?? '—')}</td>
                         <td class="text-[10.5px] text-cream/40 whitespace-nowrap">${formatJalaliDateTime(invoice.created_at)}</td>
+                        <td>${
+                          invoice.voided_at
+                            ? `<span class="badge tone-danger" title="ابطان: ${escapeHtml(invoice.voided_at)}">باطل‌شده</span>`
+                            : `<span class="badge tone-success">معتبر</span>`
+                        }</td>
+                        <td class="text-left">${
+                          invoice.voided_at
+                            ? ''
+                            : `<button type="button" data-void-id="${invoice.id}" class="btn btn-danger btn-sm whitespace-nowrap">${icon('close', 'w-3.5 h-3.5')} ابطال</button>`
+                        }</td>
                       </tr>`
                     )
                     .join('')}
@@ -887,6 +898,25 @@ export function adminCustomerDetailPage(input: {
     if ($('#deactivate')) $('#deactivate').addEventListener('click', toggleActive('deactivate'));
     if ($('#activate')) $('#activate').addEventListener('click', toggleActive('activate'));
 
+    // حذف کامل مشتری — فقط با تأیید صریح مدیر
+    var deleteBtn = $('#delete-customer');
+    if (deleteBtn) {
+      deleteBtn.addEventListener('click', async function () {
+        if (!confirm('این مشتری و تمام فاکتورها، کدهای تخفیف و لاگ پیامک‌هایش برای همیشه حذف شود؟ این کار برگشت‌پذیر نیست.')) return;
+        if (!confirm('مطمئن هستید؟ پیشنهاد می‌کنیم پیش از حذف، خروجی پشتیبان بگیرید.')) return;
+
+        setLoading(deleteBtn, true, 'در حال حذف…');
+        try {
+          await api('/api/admin/customers/' + userId, { method: 'DELETE' });
+          toast('مشتری حذف شد.', 'success');
+          setTimeout(function () { location.href = '/admin/customers'; }, 700);
+        } catch (error) {
+          toast(error.message, 'error');
+          setLoading(deleteBtn, false);
+        }
+      });
+    }
+
     var modal = $('#coupon-modal');
     $('#open-coupon').addEventListener('click', function () { modal.classList.remove('hidden'); });
     $('#close-coupon').addEventListener('click', function () { modal.classList.add('hidden'); });
@@ -968,18 +998,29 @@ export function adminInvoicesPage(input: {
       ${statCard({ label: 'مجموع فروش', value: formatNumberFa(sum), unit: 'تومان', iconName: 'wallet', accent: 'emerald' })}
     </div>
 
-    <form method="get" action="/admin/invoices" class="glass rounded-2xl p-4 mb-4">
-      <div class="grid sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_auto] gap-2.5">
-        <input type="search" name="q" value="${escapeHtml(filters.q ?? '')}" class="field" placeholder="نام یا شماره مشتری…" />
-        <div>
-          <input type="date" name="from" value="${escapeHtml(filters.from ?? '')}" class="field" dir="ltr" title="از تاریخ (میلادی)" />
+    <form id="filter-form" method="get" action="/admin/invoices" class="glass rounded-2xl p-4 mb-4">
+      <div class="grid gap-2.5 lg:grid-cols-[1fr_auto_auto_auto]">
+        <input type="search" name="q" value="${escapeHtml(filters.q ?? '')}" class="field" placeholder="نام، شماره مشتری یا شماره فاکتور…" />
+
+        <div class="flex items-center gap-1.5">
+          <span class="text-[10px] text-cream/35 shrink-0">از تاریخ</span>
+          <select id="from-day" class="field !w-auto !px-2 !py-1.5 text-[11px]"></select>
+          <select id="from-month" class="field !w-auto !px-2 !py-1.5 text-[11px]"></select>
+          <select id="from-year" class="field !w-auto !px-2 !py-1.5 text-[11px]"></select>
         </div>
-        <div>
-          <input type="date" name="to" value="${escapeHtml(filters.to ?? '')}" class="field" dir="ltr" title="تا تاریخ (میلادی)" />
+
+        <div class="flex items-center gap-1.5">
+          <span class="text-[10px] text-cream/35 shrink-0">تا تاریخ</span>
+          <select id="to-day" class="field !w-auto !px-2 !py-1.5 text-[11px]"></select>
+          <select id="to-month" class="field !w-auto !px-2 !py-1.5 text-[11px]"></select>
+          <select id="to-year" class="field !w-auto !px-2 !py-1.5 text-[11px]"></select>
         </div>
+
         <button type="submit" class="btn btn-primary btn-sm">${icon('filter', 'w-4 h-4')} فیلتر</button>
       </div>
-      <p class="hint">بازه تاریخ را به میلادی انتخاب کنید؛ در جدول به شمسی نمایش داده می‌شود.</p>
+      <input type="hidden" name="from" id="from-iso" value="${escapeHtml(filters.from ?? '')}" />
+      <input type="hidden" name="to" id="to-iso" value="${escapeHtml(filters.to ?? '')}" />
+      <p class="hint">تاریخ‌ها شمسی‌اند؛ خالی گذاشتن یعنی بدون محدودیت. بازه «تا» شامل همان روز هم می‌شود.</p>
     </form>
 
     <div class="glass rounded-3xl overflow-hidden">
@@ -988,7 +1029,7 @@ export function adminInvoicesPage(input: {
           ? emptyState({ title: 'فاکتوری یافت نشد', message: 'با تغییر فیلترها دوباره تلاش کنید.', iconName: 'receipt' })
           : `<div class="table-wrap">
               <table class="data">
-                <thead><tr><th>#</th><th>مشتری</th><th>آیتم‌ها</th><th>مبلغ</th><th>تخفیف</th><th>امتیاز</th><th>ثبت‌کننده</th><th>تاریخ</th></tr></thead>
+                <thead><tr><th>#</th><th>مشتری</th><th>آیتم‌ها</th><th>مبلغ</th><th>تخفیف</th><th>امتیاز</th><th>ثبت‌کننده</th><th>تاریخ</th><th>وضعیت</th><th></th></tr></thead>
                 <tbody>
                   ${invoices
                     .map(
@@ -1004,6 +1045,16 @@ export function adminInvoicesPage(input: {
                         <td class="text-[11px] text-cream/60">+${toPersianDigits(invoice.points_earned)}</td>
                         <td class="text-[11px] text-cream/45">${escapeHtml(invoice.staff_name ?? '—')}</td>
                         <td class="text-[10.5px] text-cream/40 whitespace-nowrap">${formatJalaliDateTime(invoice.created_at)}</td>
+                        <td>${
+                          invoice.voided_at
+                            ? `<span class="badge tone-danger" title="زمان ابطال: ${escapeHtml(invoice.voided_at)}">باطل‌شده</span>`
+                            : `<span class="badge tone-success">معتبر</span>`
+                        }</td>
+                        <td class="text-left">${
+                          invoice.voided_at
+                            ? ''
+                            : `<button type="button" data-void-id="${invoice.id}" class="btn btn-danger btn-sm whitespace-nowrap">${icon('close', 'w-3.5 h-3.5')} ابطال</button>`
+                        }</td>
                       </tr>`
                     )
                     .join('')}
@@ -1022,12 +1073,54 @@ export function adminInvoicesPage(input: {
   </div>
   `;
 
+  const scripts = `
+    initJalaliRange($('#from-day'), $('#from-month'), $('#from-year'), ${jsonForScript(filters.from ?? '')}, 8);
+    initJalaliRange($('#to-day'), $('#to-month'), $('#to-year'), ${jsonForScript(filters.to ?? '')}, 8);
+
+    $('#filter-form').addEventListener('submit', function (event) {
+      var from = readJalaliRange($('#from-day'), $('#from-month'), $('#from-year'));
+      var to = readJalaliRange($('#to-day'), $('#to-month'), $('#to-year'));
+
+      if (from.partial || to.partial) {
+        event.preventDefault();
+        toast('برای بازهٔ تاریخ، روز و ماه و سال را کامل انتخاب کنید یا همه را خالی بگذارید.', 'error');
+        return;
+      }
+      if (from.iso && to.iso && from.iso > to.iso) {
+        event.preventDefault();
+        toast('تاریخ شروع نباید بعد از تاریخ پایان باشد.', 'error');
+        return;
+      }
+
+      $('#from-iso').value = from.iso || '';
+      $('#to-iso').value = to.iso || '';
+    });
+
+    document.querySelectorAll('[data-void-id]').forEach(function (button) {
+      button.addEventListener('click', async function () {
+        var id = button.getAttribute('data-void-id');
+        if (!confirm('این فاکتور باطل شود؟ امتیازهای داده‌شده و استفاده از کد تخفیف برگشت می‌خورد.')) return;
+
+        setLoading(button, true, 'در حال ابطال…');
+        try {
+          var result = await api('/api/admin/invoices/' + id + '/void', { method: 'POST' });
+          toast('فاکتور باطل شد؛ ' + fa(result.pointsReversed) + ' امتیاز برگشت خورد.', 'success');
+          setTimeout(function () { location.reload(); }, 700);
+        } catch (error) {
+          toast(error.message, 'error');
+          setLoading(button, false);
+        }
+      });
+    });
+  `;
+
   return appShell({
     title: 'فاکتورها',
     role: 'admin' as Role,
     userName,
     active: 'invoices',
     body,
+    scripts,
     cafeName: settings.cafe_name,
   });
 }

@@ -27,6 +27,7 @@ import {
 import { renderSms, sendSms, fetchWeather } from './sms';
 import { createCoupon, getDashboardStats, recomputeAvgInterval, tierLabel } from './db';
 import { CHURN_DEFAULT_INTERVAL, getRawSetting, saveSetting } from './settings';
+import { pruneRateLimits } from './otp';
 
 /**
  * سقف پیامک هر اجرا.
@@ -135,9 +136,9 @@ export async function runChurnJob(
 
   const { results } = await env.DB.prepare(
     `SELECT u.id, u.name, u.phone, u.last_visit_date, u.avg_visit_interval, u.last_churn_sms_at, u.tier,
-            (SELECT COUNT(*) FROM invoices i WHERE i.user_id = u.id) AS visits
+            (SELECT COUNT(*) FROM invoices i WHERE i.user_id = u.id AND i.voided_at IS NULL) AS visits
      FROM users u
-     WHERE u.role = 'customer' AND u.is_active = 1
+     WHERE u.role = 'customer' AND u.is_active = 1 AND u.sms_opt_in = 1
        AND u.last_visit_date IS NOT NULL
      LIMIT 3000`
   ).all<ChurnCandidate>();
@@ -239,7 +240,7 @@ export async function runBirthdayJob(
   const today = todayJalali();
   const { results } = await env.DB.prepare(
     `SELECT * FROM users
-     WHERE role = 'customer' AND is_active = 1 AND birth_date IS NOT NULL
+     WHERE role = 'customer' AND is_active = 1 AND sms_opt_in = 1 AND birth_date IS NOT NULL
      LIMIT 5000`
   ).all<UserRow>();
 
@@ -355,7 +356,7 @@ export async function runWeatherJob(
   // مشتریان فعال ۳۰ روز گذشته
   const { results } = await env.DB.prepare(
     `SELECT id, name, phone, tier FROM users
-     WHERE role = 'customer' AND is_active = 1
+     WHERE role = 'customer' AND is_active = 1 AND sms_opt_in = 1
        AND (last_visit_date >= datetime('now', '-30 days') OR created_at >= datetime('now', '-30 days'))
      ORDER BY last_visit_date DESC
      LIMIT ?`
@@ -426,6 +427,12 @@ export async function runMaintenanceJob(env: Bindings): Promise<JobResult> {
     `DELETE FROM sms_logs WHERE sent_at < datetime('now', '-180 days')`
   ).run();
 
+  // کدهای یک‌بارمصرف منقضی و رکوردهای قدیمی محدودسازی نرخ
+  const oldOtps = await env.DB.prepare(
+    "DELETE FROM otp_codes WHERE created_at < datetime('now', '-2 days')"
+  ).run();
+  await pruneRateLimits(env.DB);
+
   await markRan(env, 'maintenance', todayISO());
 
   return {
@@ -436,7 +443,9 @@ export async function runMaintenanceJob(env: Bindings): Promise<JobResult> {
     failed: 0,
     message: `میانگین ${toPersianDigits(users?.length ?? 0)} مشتری بازمحاسبه شد؛ ${toPersianDigits(
       expiredCoupons.meta?.changes ?? 0
-    )} کد منقضی و ${toPersianDigits(oldLogs.meta?.changes ?? 0)} لاگ قدیمی پاک شد.`,
+    )} کد منقضی، ${toPersianDigits(oldLogs.meta?.changes ?? 0)} لاگ قدیمی و ${toPersianDigits(
+      oldOtps.meta?.changes ?? 0
+    )} کد ورود منقضی پاک شد.`,
   };
 }
 

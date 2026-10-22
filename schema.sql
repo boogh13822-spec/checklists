@@ -14,7 +14,8 @@ CREATE TABLE IF NOT EXISTS users (
   name               TEXT    NOT NULL,
   phone              TEXT    NOT NULL UNIQUE,
   birth_date         TEXT,                                   -- قالب YYYY-MM-DD
-  points             INTEGER NOT NULL DEFAULT 0,
+  points             INTEGER NOT NULL DEFAULT 0,             -- موجودی امتیاز (قابل خرج)
+  lifetime_points    INTEGER NOT NULL DEFAULT 0,             -- مجموع امتیازهای کسب‌شده (مبنای سطح)
   tier               TEXT    NOT NULL DEFAULT 'bronze',       -- bronze | silver | gold | vip
   referred_by        INTEGER,                                -- شناسه معرف
   referral_code      TEXT    UNIQUE,                         -- کد معرف اختصاصی این مشتری
@@ -26,6 +27,8 @@ CREATE TABLE IF NOT EXISTS users (
   first_purchase_at  TEXT,                                   -- پاداش معرف پس از اولین خرید
   referral_rewarded  INTEGER NOT NULL DEFAULT 0,
   last_churn_sms_at  TEXT,
+  sms_opt_in         INTEGER NOT NULL DEFAULT 1,              -- رضایت دریافت پیامک تبلیغاتی
+  token_version      INTEGER NOT NULL DEFAULT 0,              -- با تغییر رمز، نشست‌های قبلی باطل می‌شوند
   created_at         TEXT    NOT NULL DEFAULT (datetime('now')),
   FOREIGN KEY (referred_by) REFERENCES users (id) ON DELETE SET NULL
 );
@@ -50,6 +53,10 @@ CREATE TABLE IF NOT EXISTS invoices (
   discount      INTEGER NOT NULL DEFAULT 0,                  -- مبلغ تخفیف
   coupon_code   TEXT,                                        -- کد تخفیف استفاده‌شده
   points_earned INTEGER NOT NULL DEFAULT 0,
+  visit_day     TEXT,                                        -- روز شمسی/میلادی تهران برای امتیاز «هر روز یک‌بار»
+  client_request_id TEXT,                                    -- جلوگیری از ثبت تکراری فاکتور
+  voided_at     TEXT,                                        -- زمان ابطال (NULL = معتبر)
+  voided_by     INTEGER,
   created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
   registered_by INTEGER,
   FOREIGN KEY (user_id)       REFERENCES users (id) ON DELETE CASCADE,
@@ -58,6 +65,15 @@ CREATE TABLE IF NOT EXISTS invoices (
 
 CREATE INDEX IF NOT EXISTS idx_invoices_user_id    ON invoices (user_id);
 CREATE INDEX IF NOT EXISTS idx_invoices_created_at ON invoices (created_at);
+CREATE INDEX IF NOT EXISTS idx_invoices_voided     ON invoices (voided_at);
+
+-- امتیاز «یک‌بار در روز» فقط برای یک فاکتور در هر روز معتبر است
+CREATE UNIQUE INDEX IF NOT EXISTS ux_invoices_visit_day
+  ON invoices (user_id, visit_day) WHERE visit_day IS NOT NULL;
+
+-- هر درخواست ثبت فاکتور تنها یک‌بار اعمال می‌شود
+CREATE UNIQUE INDEX IF NOT EXISTS ux_invoices_client_request
+  ON invoices (client_request_id) WHERE client_request_id IS NOT NULL;
 
 -- ----------------------------------------------------------------------------
 -- ۳) تنظیمات (کلید/مقدار — مقدار به صورت JSON ذخیره می‌شود)
@@ -105,6 +121,47 @@ CREATE TABLE IF NOT EXISTS coupons (
 
 CREATE INDEX IF NOT EXISTS idx_coupons_user_id ON coupons (user_id);
 CREATE INDEX IF NOT EXISTS idx_coupons_code    ON coupons (code);
+
+-- ----------------------------------------------------------------------------
+-- ۶) کدهای یک‌بارمصرف ورود مشتری (OTP)
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS otp_codes (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  phone       TEXT    NOT NULL,
+  code_hash   TEXT    NOT NULL,
+  expires_at  TEXT    NOT NULL,
+  attempts    INTEGER NOT NULL DEFAULT 0,
+  used_at     TEXT,
+  created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_otp_codes_phone ON otp_codes (phone, created_at);
+
+-- ----------------------------------------------------------------------------
+-- ۷) محدودسازی نرخ درخواست (مشترک بین همه ایزوله‌ها)
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS rate_limits (
+  key       TEXT PRIMARY KEY,
+  count     INTEGER NOT NULL DEFAULT 0,
+  reset_at  TEXT    NOT NULL
+);
+
+-- ============================================================================
+--  گزارش اقدامات مدیران (ردپای تغییرات حساس)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS admin_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  admin_id INTEGER,
+  admin_name TEXT NOT NULL,
+  action TEXT NOT NULL,
+  target_type TEXT,
+  target_id TEXT,
+  details TEXT,
+  ip TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_admin_logs_created ON admin_logs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_admin_logs_action ON admin_logs(action);
 
 -- ============================================================================
 --  داده‌های اولیه

@@ -168,6 +168,15 @@ export const BASE_STYLES = `
   .btn-sm { padding: .42rem .75rem; font-size: .8rem; border-radius: .7rem; }
 
   .badge { display: inline-flex; align-items: center; gap: .3rem; border-radius: 99px; padding: .2rem .6rem; font-size: .72rem; font-weight: 600; border: 1px solid transparent; }
+
+  .mode-card {
+    display: flex; align-items: flex-start; gap: .7rem; cursor: pointer;
+    border-radius: 1rem; border: 1px solid rgba(255,255,255,.1);
+    background: rgba(0,0,0,.2); padding: .8rem .9rem; transition: border-color .15s ease, background .15s ease;
+  }
+  .mode-card:hover { border-color: rgba(232,180,90,.3); }
+  .mode-card.is-active { border-color: rgba(232,180,90,.55); background: rgba(232,180,90,.08); box-shadow: 0 0 0 1px rgba(232,180,90,.15) inset; }
+  .mode-card.is-disabled { opacity: .5; }
   .tone-success { background: rgba(34,197,94,.12); color: #86efac; border-color: rgba(34,197,94,.25); }
   .tone-warning { background: rgba(245,158,11,.12); color: #fcd34d; border-color: rgba(245,158,11,.28); }
   .tone-danger { background: rgba(239,68,68,.12); color: #fca5a5; border-color: rgba(239,68,68,.28); }
@@ -522,6 +531,94 @@ export const CORE_JS = `
     if (!g) return null;
     return String(g.gy).padStart(4, '0') + '-' + String(g.gm).padStart(2, '0') + '-' + String(g.gd).padStart(2, '0');
   };
+
+  // طول ماه شمسی (۲۹ تا ۳۱ روز)
+  window.jalaliMonthLength = function (jy, jm) {
+    var start = window.jalaliToGregorian(jy, jm, 1);
+    var ny = jm === 12 ? jy + 1 : jy;
+    var nm = jm === 12 ? 1 : jm + 1;
+    var end = window.jalaliToGregorian(ny, nm, 1);
+    if (!start || !end) return 30;
+    var a = Date.UTC(start.gy, start.gm - 1, start.gd);
+    var b = Date.UTC(end.gy, end.gm - 1, end.gd);
+    return Math.round((b - a) / 86400000);
+  };
+
+  var JALALI_MONTH_NAMES = [
+    'فروردین', 'اردیبهشت', 'خرداد', 'تیر', 'مرداد', 'شهریور',
+    'مهر', 'آبان', 'آذر', 'دی', 'بهمن', 'اسفند'
+  ];
+
+  // سلکت‌های «اختیاری» بازهٔ تاریخ شمسی؛ گزینهٔ خالی یعنی بدون محدودیت
+  window.initJalaliRange = function (daySel, monSel, yearSel, initialISO, yearsBack) {
+    var today = new Date().toISOString().slice(0, 10);
+    var current = window.gregorianToJalali(today);
+    var currentYear = current ? current.jy : 1405;
+    var back = yearsBack || 8;
+
+    function fillDays() {
+      var jy = Number(yearSel.value);
+      var jm = Number(monSel.value);
+      var count = jy && jm ? window.jalaliMonthLength(jy, jm) : 31;
+      var previous = Number(daySel.value) || 0;
+      daySel.innerHTML = '<option value="">روز</option>';
+      for (var d = 1; d <= count; d += 1) {
+        var opt = document.createElement('option');
+        opt.value = String(d);
+        opt.textContent = fa(d);
+        daySel.appendChild(opt);
+      }
+      if (previous) daySel.value = String(Math.min(previous, count));
+    }
+
+    yearSel.innerHTML = '<option value="">سال</option>';
+    for (var y = currentYear; y >= currentYear - back; y -= 1) {
+      var yOpt = document.createElement('option');
+      yOpt.value = String(y);
+      yOpt.textContent = fa(y);
+      yearSel.appendChild(yOpt);
+    }
+
+    monSel.innerHTML = '<option value="">ماه</option>';
+    for (var m = 1; m <= 12; m += 1) {
+      var mOpt = document.createElement('option');
+      mOpt.value = String(m);
+      mOpt.textContent = JALALI_MONTH_NAMES[m - 1];
+      monSel.appendChild(mOpt);
+    }
+
+    fillDays();
+
+    if (initialISO) {
+      var parsed = window.gregorianToJalali(initialISO);
+      if (parsed && parsed.jy >= currentYear - back) {
+        yearSel.value = String(parsed.jy);
+        monSel.value = String(parsed.jm);
+        fillDays();
+        daySel.value = String(parsed.jd);
+      }
+    }
+
+    if (monSel.dataset.jalaliRangeBound !== '1') {
+      monSel.addEventListener('change', fillDays);
+      yearSel.addEventListener('change', fillDays);
+      monSel.dataset.jalaliRangeBound = '1';
+      yearSel.dataset.jalaliRangeBound = '1';
+    }
+  };
+
+  // خروجی: { iso: string|null, partial: boolean }
+  window.readJalaliRange = function (daySel, monSel, yearSel) {
+    var filled = [daySel.value, monSel.value, yearSel.value].filter(function (v) { return v !== ''; });
+    if (filled.length === 0) return { iso: null, partial: false };
+    if (filled.length !== 3) return { iso: null, partial: true };
+    var g = window.jalaliToGregorian(Number(yearSel.value), Number(monSel.value), Number(daySel.value));
+    if (!g) return { iso: null, partial: true };
+    return {
+      iso: String(g.gy).padStart(4, '0') + '-' + String(g.gm).padStart(2, '0') + '-' + String(g.gd).padStart(2, '0'),
+      partial: false
+    };
+  };
 })();
 `;
 
@@ -537,13 +634,19 @@ const NAV_ITEMS = {
     { href: '/admin/settings', label: 'تنظیمات', icon: 'settings', key: 'settings' },
     { href: '/admin/staff', label: 'کارمندان', icon: 'shield', key: 'staff' },
     { href: '/admin/coupons', label: 'کدهای تخفیف', icon: 'gift', key: 'coupons' },
+    { href: '/admin/reports', label: 'گزارش‌ها', icon: 'chart', key: 'reports' },
     { href: '/admin/sms', label: 'پیامک‌ها', icon: 'chat', key: 'sms' },
+    { href: '/admin/logs', label: 'اقدامات مدیران', icon: 'clock', key: 'logs' },
   ],
   staff: [
     { href: '/staff', label: 'ثبت فاکتور', icon: 'receipt', key: 'invoice' },
     { href: '/staff/history', label: 'فاکتورهای من', icon: 'clock', key: 'history' },
   ],
-  customer: [],
+  customer: [
+    { href: '/me', label: 'باشگاه من', icon: 'home', key: 'home' },
+    { href: '/me#coupons', label: 'کدهای تخفیف', icon: 'gift', key: 'coupons' },
+    { href: '/me#history', label: 'خریدهای من', icon: 'receipt', key: 'history' },
+  ],
 } as const;
 
 export type ShellOptions = {
@@ -610,7 +713,7 @@ export function appShell(options: ShellOptions): string {
 
             <nav class="flex-1 p-3 space-y-1 overflow-y-auto no-scrollbar">
               <div class="px-3 pt-2 pb-1 text-[10px] tracking-wider text-cream/35 font-semibold">
-                ${role === 'admin' ? 'پنل مدیریت' : 'پنل کارمند'}
+                ${role === 'admin' ? 'پنل مدیریت' : role === 'staff' ? 'پنل کارمند' : 'باشگاه من'}
               </div>
               ${desktopNav}
             </nav>
@@ -622,7 +725,7 @@ export function appShell(options: ShellOptions): string {
                 </div>
                 <div class="min-w-0">
                   <div class="text-[13px] font-semibold truncate">${escapeHtml(userName)}</div>
-                  <div class="text-[10px] text-cream/45">${role === 'admin' ? 'مدیر اصلی' : 'کارمند'}</div>
+                  <div class="text-[10px] text-cream/45">${role === 'admin' ? 'مدیر اصلی' : role === 'staff' ? 'کارمند' : 'مشتری'}</div>
                 </div>
               </div>
               <button type="button" onclick="logout()" class="nav-item w-full text-rose-300/80 hover:text-rose-200 hover:bg-rose-500/10">
@@ -643,7 +746,7 @@ export function appShell(options: ShellOptions): string {
             </div>
             <div class="leading-tight">
               <div class="font-bold text-[13px] gold-text">${escapeHtml(cafeName)}</div>
-              <div class="text-[10px] text-cream/45">${role === 'admin' ? 'پنل مدیریت' : 'پنل کارمند'}</div>
+              <div class="text-[10px] text-cream/45">${role === 'admin' ? 'پنل مدیریت' : role === 'staff' ? 'پنل کارمند' : 'باشگاه من'}</div>
             </div>
           </a>
           <button type="button" onclick="logout()" class="btn btn-ghost btn-sm text-rose-300/80">
@@ -671,7 +774,7 @@ export function appShell(options: ShellOptions): string {
   <script>
     async function logout() {
       try { await api('/api/auth/logout', { method: 'POST' }); } catch (error) {}
-      window.location.href = '/login';
+      window.location.href = '${role === 'customer' ? '/me' : '/login'}';
     }
   </script>
   ${scripts ? `<script>${scripts}</script>` : ''}

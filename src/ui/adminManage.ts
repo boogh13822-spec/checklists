@@ -83,6 +83,29 @@ const TEMPLATE_META: Array<{
       cafe: 'کافه ملت',
     },
   },
+  {
+    key: 'otp',
+    title: 'کد ورود مشتری',
+    iconName: 'key',
+    description: 'با هر درخواست ورود به باشگاه برای مشتری ارسال می‌شود.',
+    vars: ['name', 'code', 'minutes', 'cafe'],
+    sample: { name: 'سارا', code: '481920', minutes: '۲', cafe: 'کافه ملت' },
+  },
+  {
+    key: 'redeem',
+    title: 'تبدیل امتیاز به کد تخفیف',
+    iconName: 'gift',
+    description: 'بعد از تبدیل امتیاز، کد تخفیف و مهلت استفاده ارسال می‌شود.',
+    vars: ['name', 'code', 'value', 'points', 'days', 'cafe'],
+    sample: {
+      name: 'سارا',
+      code: 'CAFE-8Q2M4L',
+      value: '۲۰,۰۰۰',
+      points: '۲۰۰',
+      days: '۳۰',
+      cafe: 'کافه ملت',
+    },
+  },
 ];
 
 export function adminSettingsPage(input: {
@@ -146,6 +169,7 @@ export function adminSettingsPage(input: {
       ${[
         { href: '#general', label: 'اطلاعات کافه', iconName: 'coffee' },
         { href: '#points', label: 'امتیاز و سطح', iconName: 'star' },
+        { href: '#rewards', label: 'باشگاه مشتری', iconName: 'gift' },
         { href: '#templates', label: 'قالب پیامک', iconName: 'chat' },
         { href: '#automation', label: 'جاب‌های خودکار', iconName: 'refresh' },
         { href: '#integrations', label: 'اتصال سرویس‌ها', iconName: 'key' },
@@ -186,38 +210,123 @@ export function adminSettingsPage(input: {
           <span class="w-8 h-8 rounded-xl bg-gold/10 border border-gold/20 text-gold flex items-center justify-center">${icon('star', 'w-4 h-4')}</span>
           <h2 class="font-bold text-sm">امتیازدهی و سطح‌بندی</h2>
         </div>
-        <div class="p-5 grid sm:grid-cols-3 gap-4">
+
+        <div class="p-5 space-y-4">
           <div>
-            <label class="label" for="currency_unit">واحد مبلغ (تومان)</label>
-            <input id="currency_unit" type="number" min="1" max="10000000" class="field text-left" dir="ltr" value="${settings.currency_unit}" />
-            <p class="hint">مثلاً ۱۰۰۰ یعنی هر هزار تومان.</p>
+            <div class="label">روش امتیازدهی</div>
+            <div class="grid sm:grid-cols-2 gap-2">
+              <label class="mode-card" data-mode-card="amount">
+                <input type="radio" name="points_mode" value="amount" class="accent-amber-500 mt-0.5" ${settings.points_mode === 'amount' ? 'checked' : ''} />
+                <span>
+                  <span class="block text-[12.5px] font-semibold">بر اساس مبلغ خرید</span>
+                  <span class="block text-[10.5px] text-cream/40 leading-5 mt-1">هر مبلغی که خرید کند، به نسبت مبلغ امتیاز می‌گیرد.</span>
+                </span>
+              </label>
+              <label class="mode-card" data-mode-card="visit">
+                <input type="radio" name="points_mode" value="visit" class="accent-amber-500 mt-0.5" ${settings.points_mode === 'visit' ? 'checked' : ''} />
+                <span>
+                  <span class="block text-[12.5px] font-semibold">امتیاز ثابت برای هر روز حضور</span>
+                  <span class="block text-[10.5px] text-cream/40 leading-5 mt-1">اولین خرید هر روز امتیاز ثابت می‌گیرد؛ خریدهای بعدی همان روز امتیاز ندارند.</span>
+                </span>
+              </label>
+            </div>
           </div>
-          <div>
-            <label class="label" for="points_per_currency">امتیاز هر واحد</label>
-            <input id="points_per_currency" type="number" min="1" max="1000" class="field text-left" dir="ltr" value="${settings.points_per_currency}" />
-            <p class="hint">مثلاً ۱ یعنی ۱ امتیاز برای هر ۱۰۰۰ تومان.</p>
+
+          <div id="mode-amount" class="grid sm:grid-cols-2 gap-4">
+            <div>
+              <label class="label" for="currency_unit">واحد مبلغ (تومان)</label>
+              <input id="currency_unit" type="number" min="1" max="10000000" class="field text-left" dir="ltr" value="${settings.currency_unit}" />
+              <p class="hint">مثلاً ۱۰۰۰ یعنی هر هزار تومان.</p>
+            </div>
+            <div>
+              <label class="label" for="points_per_currency">امتیاز هر واحد</label>
+              <input id="points_per_currency" type="number" min="1" max="1000" class="field text-left" dir="ltr" value="${settings.points_per_currency}" />
+              <p class="hint">مثلاً ۱ یعنی ۱ امتیاز برای هر ۱۰۰۰ تومان.</p>
+            </div>
           </div>
-          <div>
-            <label class="label" for="referral_reward_points">پاداش معرفی (امتیاز)</label>
-            <input id="referral_reward_points" type="number" min="0" max="1000000" class="field text-left" dir="ltr" value="${settings.referral_reward_points}" />
-            <p class="hint">پس از اولین خرید مشتری معرفی‌شده.</p>
+
+          <div id="mode-visit" class="grid sm:grid-cols-2 gap-4">
+            <div>
+              <label class="label" for="visit_points">امتیاز هر روز خرید</label>
+              <input id="visit_points" type="number" min="1" max="100000" class="field text-left" dir="ltr" value="${settings.visit_points}" />
+              <p class="hint">فقط اولین فاکتور هر روز این امتیاز را می‌دهد.</p>
+            </div>
+            <div>
+              <label class="label" for="visit_min_amount">حداقل مبلغ فاکتور (تومان)</label>
+              <input id="visit_min_amount" type="number" min="0" max="100000000" class="field text-left" dir="ltr" value="${settings.visit_min_amount}" />
+              <p class="hint">خریدهای کمتر از این مبلغ امتیاز حضور نمی‌گیرند.</p>
+            </div>
           </div>
-          <div>
-            <label class="label" for="tier_silver">آستانه سطح نقره‌ای</label>
-            <input id="tier_silver" type="number" min="1" class="field text-left" dir="ltr" value="${settings.tiers.silver}" />
+
+          <div class="grid sm:grid-cols-2 gap-4">
+            <div>
+              <label class="label" for="referral_reward_points">پاداش معرفی (امتیاز)</label>
+              <input id="referral_reward_points" type="number" min="0" max="1000000" class="field text-left" dir="ltr" value="${settings.referral_reward_points}" />
+              <p class="hint">پس از اولین خرید مشتری معرفی‌شده.</p>
+            </div>
           </div>
+
           <div>
-            <label class="label" for="tier_gold">آستانه سطح طلایی</label>
-            <input id="tier_gold" type="number" min="2" class="field text-left" dir="ltr" value="${settings.tiers.gold}" />
-          </div>
-          <div>
-            <label class="label" for="tier_vip">آستانه سطح الماسی</label>
-            <input id="tier_vip" type="number" min="3" class="field text-left" dir="ltr" value="${settings.tiers.vip}" />
+            <div class="label">آستانه‌های سطح (بر اساس مجموع امتیاز کسب‌شده)</div>
+            <div class="grid grid-cols-3 gap-4">
+              <div>
+                <label class="label !text-[10.5px]" for="tier_silver">نقره‌ای</label>
+                <input id="tier_silver" type="number" min="1" class="field text-left" dir="ltr" value="${settings.tiers.silver}" />
+              </div>
+              <div>
+                <label class="label !text-[10.5px]" for="tier_gold">طلایی</label>
+                <input id="tier_gold" type="number" min="2" class="field text-left" dir="ltr" value="${settings.tiers.gold}" />
+              </div>
+              <div>
+                <label class="label !text-[10.5px]" for="tier_vip">الماسی</label>
+                <input id="tier_vip" type="number" min="3" class="field text-left" dir="ltr" value="${settings.tiers.vip}" />
+              </div>
+            </div>
           </div>
         </div>
+
         <div class="px-5 py-3 border-t border-white/5 bg-white/[0.02] flex flex-wrap items-center gap-2">
           <span class="text-[10.5px] text-cream/40">پیش‌نمایش:</span>
           <span class="badge tone-muted" id="points-preview">—</span>
+        </div>
+      </section>
+
+      <!-- Redemption & customer login -->
+      <section id="rewards" class="glass rounded-3xl overflow-hidden scroll-mt-24">
+        <div class="px-5 py-4 border-b border-white/10 flex items-center gap-2">
+          <span class="w-8 h-8 rounded-xl bg-gold/10 border border-gold/20 text-gold flex items-center justify-center">${icon('gift', 'w-4 h-4')}</span>
+          <h2 class="font-bold text-sm">باشگاه مشتری و تبدیل امتیاز</h2>
+        </div>
+        <div class="p-5 space-y-4">
+          <label class="flex items-start gap-2.5 text-[12px] text-cream/70 leading-6 cursor-pointer select-none">
+            <input id="otp_login_enabled" type="checkbox" class="mt-1 accent-amber-500 w-4 h-4" ${settings.otp_login_enabled === 1 ? 'checked' : ''} />
+            <span>ورود مشتری با کد پیامکی فعال باشد <span class="text-cream/35">(صفحه‌ی «باشگاه من»)</span></span>
+          </label>
+
+          <label class="flex items-start gap-2.5 text-[12px] text-cream/70 leading-6 cursor-pointer select-none">
+            <input id="redeem_enabled" type="checkbox" class="mt-1 accent-amber-500 w-4 h-4" ${settings.redeem_enabled === 1 ? 'checked' : ''} />
+            <span>مشتری بتواند امتیاز را به کد تخفیف تبدیل کند</span>
+          </label>
+
+          <div id="redeem-fields" class="grid sm:grid-cols-3 gap-4">
+            <div>
+              <label class="label" for="redeem_points">امتیاز لازم</label>
+              <input id="redeem_points" type="number" min="1" max="10000000" class="field text-left" dir="ltr" value="${settings.redeem_points}" />
+            </div>
+            <div>
+              <label class="label" for="redeem_value">مبلغ کد تخفیف (تومان)</label>
+              <input id="redeem_value" type="number" min="1000" max="100000000" class="field text-left" dir="ltr" value="${settings.redeem_value}" />
+            </div>
+            <div>
+              <label class="label" for="redeem_expiry_days">مهلت استفاده (روز)</label>
+              <input id="redeem_expiry_days" type="number" min="1" max="365" class="field text-left" dir="ltr" value="${settings.redeem_expiry_days}" />
+            </div>
+          </div>
+          <p class="hint">کد تخفیف فقط یک‌بار و فقط برای فاکتورهای بالای مبلغ کد قابل استفاده است.</p>
+        </div>
+        <div class="px-5 py-3 border-t border-white/5 bg-white/[0.02] flex flex-wrap items-center gap-2">
+          <span class="text-[10.5px] text-cream/40">پیش‌نمایش:</span>
+          <span class="badge tone-muted" id="redeem-preview">—</span>
         </div>
       </section>
 
@@ -460,15 +569,54 @@ export function adminSettingsPage(input: {
       renderMenuRows();
     });
 
-    // Points preview
+    // Points preview + mode switch
+    function currentMode() {
+      var checked = document.querySelector('input[name="points_mode"]:checked');
+      return checked ? checked.value : 'amount';
+    }
+
     function updatePointsPreview() {
+      var mode = currentMode();
+      document.querySelectorAll('[data-mode-card]').forEach(function (card) {
+        card.classList.toggle('is-active', card.getAttribute('data-mode-card') === mode);
+      });
+
+      var amountBox = document.getElementById('mode-amount');
+      var visitBox = document.getElementById('mode-visit');
+      if (amountBox) amountBox.style.display = mode === 'amount' ? '' : 'none';
+      if (visitBox) visitBox.style.display = mode === 'visit' ? '' : 'none';
+
       var unit = Number($('#currency_unit').value) || 1000;
       var ratio = Number($('#points_per_currency').value) || 1;
-      $('#points-preview').textContent = 'هر ' + moneyFa(unit) + ' تومان = ' + fa(ratio) + ' امتیاز';
+      var visitPoints = Number($('#visit_points').value) || 0;
+      var visitMin = Number($('#visit_min_amount').value) || 0;
+      var preview = mode === 'visit'
+        ? 'اولین خرید هر روز بالای ' + moneyFa(visitMin) + ' تومان = ' + fa(visitPoints) + ' امتیاز'
+        : 'هر ' + moneyFa(unit) + ' تومان = ' + fa(ratio) + ' امتیاز';
+      $('#points-preview').textContent = preview;
+
+      var redeemEnabled = document.getElementById('redeem_enabled');
+      var redeemFields = document.getElementById('redeem-fields');
+      var redeemBadge = document.getElementById('redeem-preview');
+      if (redeemEnabled && redeemFields && redeemBadge) {
+        var on = redeemEnabled.checked;
+        redeemFields.style.opacity = on ? '1' : '.45';
+        redeemFields.style.pointerEvents = on ? '' : 'none';
+        redeemBadge.textContent = on
+          ? fa(Number($('#redeem_points').value) || 0) + ' امتیاز = کد تخفیف ' + moneyFa(Number($('#redeem_value').value) || 0) + ' تومان (' + fa(Number($('#redeem_expiry_days').value) || 0) + ' روز)'
+          : 'غیرفعال';
+      }
     }
-    ['currency_unit', 'points_per_currency'].forEach(function (id) {
-      $('#' + id).addEventListener('input', updatePointsPreview);
+
+    document.querySelectorAll('input[name="points_mode"]').forEach(function (input) {
+      input.addEventListener('change', updatePointsPreview);
     });
+    ['currency_unit', 'points_per_currency', 'visit_points', 'visit_min_amount', 'redeem_points', 'redeem_value', 'redeem_expiry_days'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.addEventListener('input', updatePointsPreview);
+    });
+    var redeemToggle = document.getElementById('redeem_enabled');
+    if (redeemToggle) redeemToggle.addEventListener('change', updatePointsPreview);
     updatePointsPreview();
 
     async function saveSettings() {
@@ -477,8 +625,16 @@ export function adminSettingsPage(input: {
       var payload = {
         cafe_name: $('#cafe_name').value.trim(),
         cafe_city: $('#cafe_city').value.trim(),
+        points_mode: currentMode(),
         currency_unit: Number($('#currency_unit').value),
         points_per_currency: Number($('#points_per_currency').value),
+        visit_points: Number($('#visit_points').value),
+        visit_min_amount: Number($('#visit_min_amount').value),
+        redeem_enabled: document.getElementById('redeem_enabled').checked ? 1 : 0,
+        redeem_points: Number($('#redeem_points').value),
+        redeem_value: Number($('#redeem_value').value),
+        redeem_expiry_days: Number($('#redeem_expiry_days').value),
+        otp_login_enabled: document.getElementById('otp_login_enabled').checked ? 1 : 0,
         referral_reward_points: Number($('#referral_reward_points').value),
         tiers: {
           silver: Number($('#tier_silver').value),
@@ -499,7 +655,9 @@ export function adminSettingsPage(input: {
           invoice: document.getElementById('tpl-invoice').value,
           birthday: document.getElementById('tpl-birthday').value,
           churn: document.getElementById('tpl-churn').value,
-          weather: document.getElementById('tpl-weather').value
+          weather: document.getElementById('tpl-weather').value,
+          otp: document.getElementById('tpl-otp') ? document.getElementById('tpl-otp').value : undefined,
+          redeem: document.getElementById('tpl-redeem') ? document.getElementById('tpl-redeem').value : undefined
         },
         menu_items: menuItems.filter(function (item) { return item.name.trim(); }).map(function (item) {
           return { name: item.name.trim(), price: Number(item.price) || 0, category: (item.category || '').trim() };

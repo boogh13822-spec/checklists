@@ -13,6 +13,8 @@ export type Bindings = {
   TZ_NAME?: string;
   /** طول عمر نشست ورود به ساعت (پیش‌فرض ۱۲، حداکثر ۱۶۸) */
   SESSION_HOURS?: string;
+  /** طول عمر نشست مشتری به روز (پیش‌فرض ۳۰، حداکثر ۹۰) */
+  CUSTOMER_SESSION_DAYS?: string;
   /** کلید OpenWeather — در صورت تنظیم، بر مقدار ذخیره‌شده در تنظیمات اولویت دارد */
   OPENWEATHER_API_KEY?: string;
   /** کلید API کاوه‌نگار (اختیاری — بر مقدار ذخیره‌شده در تنظیمات اولویت دارد) */
@@ -34,6 +36,8 @@ export type UserRow = {
   phone: string;
   birth_date: string | null;
   points: number;
+  /** مجموع امتیازهای کسب‌شده در طول عمر — مبنای سطح‌بندی */
+  lifetime_points: number;
   tier: string;
   referred_by: number | null;
   referral_code: string | null;
@@ -45,6 +49,10 @@ export type UserRow = {
   first_purchase_at: string | null;
   referral_rewarded: number;
   last_churn_sms_at: string | null;
+  /** رضایت دریافت پیامک تبلیغاتی (۰/۱) */
+  sms_opt_in: number;
+  /** نسخهٔ نشست — با تغییر رمز افزایش می‌یابد */
+  token_version: number;
   created_at: string;
 };
 
@@ -58,6 +66,12 @@ export type InvoiceRow = {
   discount: number;
   coupon_code: string | null;
   points_earned: number;
+  /** روزی که امتیاز «هر روز یک‌بار» برایش ثبت شده (NULL یعنی امتیاز روزانه ندارد) */
+  visit_day: string | null;
+  client_request_id: string | null;
+  /** زمان ابطال — NULL یعنی فاکتور معتبر است */
+  voided_at: string | null;
+  voided_by: number | null;
   created_at: string;
   registered_by: number | null;
 };
@@ -102,6 +116,8 @@ export type SmsTemplates = {
   birthday: string;
   churn: string;
   weather: string;
+  otp: string;
+  redeem: string;
 };
 
 /** آستانه‌های سطح‌بندی مشتری (بر اساس امتیاز) */
@@ -112,10 +128,25 @@ export type TierThresholds = {
 };
 
 /** تنظیمات کامل برنامه (از جدول settings واکشی می‌شود) */
+export type PointsMode = 'amount' | 'visit';
+
 export type AppSettings = {
   sms_templates: SmsTemplates;
+  /** روش امتیازدهی: بر اساس مبلغ خرید یا بر اساس هر روز حضور */
+  points_mode: PointsMode;
   points_per_currency: number;
   currency_unit: number;
+  /** امتیاز ثابت برای هر روز خرید (حالت visit) */
+  visit_points: number;
+  /** حداقل مبلغ فاکتور برای احتساب امتیاز روزانه (حالت visit) */
+  visit_min_amount: number;
+  /** تبدیل امتیاز به کد تخفیف */
+  redeem_enabled: number;
+  redeem_points: number;
+  redeem_value: number;
+  redeem_expiry_days: number;
+  /** ورود مشتری با رمز یک‌بارمصرف پیامکی */
+  otp_login_enabled: number;
   tiers: TierThresholds;
   cafe_name: string;
   cafe_city: string;
@@ -135,6 +166,8 @@ export type JwtPayload = {
   uid: number;
   role: Role;
   name: string;
+  /** نسخهٔ نشست (برای ابطال توکن‌های قدیمی) */
+  tv?: number;
   /** زمان انقضا (ثانیه) */
   exp?: number;
   /** زمان صدور (ثانیه) */

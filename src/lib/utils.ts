@@ -235,6 +235,22 @@ export function toJalali(gy: number, gm: number, gd: number): JalaliDate {
 /** منطقه زمانی پیش‌فرض برنامه */
 export const DEFAULT_TIMEZONE = 'Asia/Tehran';
 
+/**
+ * منطقه‌ی زمانی معتبر (پیش‌فرض Asia/Tehran).
+ * مقدار نامعتبر باعث کرش نمی‌شود؛ به پیش‌فرض برمی‌گردد.
+ */
+export function resolveTimeZone(name?: string | null): string {
+  const raw = String(name ?? '').trim();
+  if (!raw) return DEFAULT_TIMEZONE;
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: raw });
+    return raw;
+  } catch {
+    return DEFAULT_TIMEZONE;
+  }
+}
+
+
 /** تبدیل تاریخ شمسی به میلادی */
 export function toGregorian(jy: number, jm: number, jd: number): { gy: number; gm: number; gd: number } {
   const r = jalCal(jy);
@@ -328,30 +344,45 @@ export function zonedDateStartMs(dateISO: string, timeZone = DEFAULT_TIMEZONE): 
 export function jalaliMonthRange(
   timeZone = DEFAULT_TIMEZONE
 ): { start: string; end: string; startMs: number; endMs: number; label: string } {
-  const { jy, jm } = todayJalali(timeZone);
-  const startG = toGregorian(jy, jm, 1);
+  return jalaliMonthRangeAt(0, timeZone);
+}
 
-  let nextYear = jy;
-  let nextMonth = jm + 1;
-  if (nextMonth > 12) {
-    nextMonth = 1;
-    nextYear += 1;
-  }
+/**
+ * بازهٔ یک ماه شمسی با جابه‌جایی دلخواه (۰ = ماه جاری، ۱ = ماه قبل).
+ * مرزها با ساعت محلی همان روز محاسبه می‌شوند تا تغییر ساعت روی مرزها اثر نگذارد.
+ */
+export function jalaliMonthRangeAt(
+  monthOffset = 0,
+  timeZone = DEFAULT_TIMEZONE
+): { start: string; end: string; startMs: number; endMs: number; label: string; jy: number; jm: number } {
+  const { jy, jm } = todayJalali(timeZone);
+  const shift = Math.max(0, Math.floor(monthOffset));
+
+  let index = jy * 12 + (jm - 1) - shift;
+  const targetYear = Math.floor(index / 12);
+  const targetMonth = (index % 12) + 1;
+
+  index = targetYear * 12 + targetMonth; // ماه بعد
+  const nextYear = Math.floor(index / 12);
+  const nextMonth = (index % 12) + 1;
+
+  const startG = toGregorian(targetYear, targetMonth, 1);
   const endG = toGregorian(nextYear, nextMonth, 1);
 
-  const p = zonedParts(new Date(), timeZone);
-  const asUTC = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, 0);
-  const offset = asUTC - Math.floor(Date.now() / 60_000) * 60_000;
+  const startISO = `${startG.gy}-${String(startG.gm).padStart(2, '0')}-${String(startG.gd).padStart(2, '0')}`;
+  const endISO = `${endG.gy}-${String(endG.gm).padStart(2, '0')}-${String(endG.gd).padStart(2, '0')}`;
 
-  const startMs = Date.UTC(startG.gy, startG.gm - 1, startG.gd) - offset;
-  const endMs = Date.UTC(endG.gy, endG.gm - 1, endG.gd) - offset;
+  const startMs = zonedDateStartMs(startISO, timeZone) ?? Date.UTC(startG.gy, startG.gm - 1, startG.gd);
+  const endMs = zonedDateStartMs(endISO, timeZone) ?? Date.UTC(endG.gy, endG.gm - 1, endG.gd);
 
   return {
     start: utcStamp(startMs),
     end: utcStamp(endMs),
     startMs,
     endMs,
-    label: `${JALALI_MONTHS[jm - 1]} ${toPersianDigits(jy)}`,
+    label: `${JALALI_MONTHS[targetMonth - 1]} ${toPersianDigits(targetYear)}`,
+    jy: targetYear,
+    jm: targetMonth,
   };
 }
 

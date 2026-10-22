@@ -68,9 +68,21 @@ export const DEFAULT_SETTINGS: AppSettings = {
       '{name} عزیز، دلمان برایت تنگ شده ☕\n{last_visit} روز از آخرین دیدارمان گذشته؛ با این پیامک ۱۰٪ تخفیف روی فاکتور بعدی مهمان ما باش.',
     weather:
       'سلام {name}، هوای امروز {city}: {weather} و {temp} درجه است. {advice} ☕',
+    otp:
+      'کد ورود شما به باشگاه {cafe}: {code}\nاین کد فقط ۲ دقیقه اعتبار دارد؛ آن را با کسی به اشتراک نگذارید.',
+    redeem:
+      '{name} عزیز، {points} امتیاز شما به کد تخفیف {coupon} به ارزش {value} تومان تبدیل شد.\nاعتبار تا {expiry}. ☕',
   },
+  points_mode: 'amount',
   points_per_currency: 1,
   currency_unit: 1000,
+  visit_points: 15,
+  visit_min_amount: 30000,
+  redeem_enabled: 1,
+  redeem_points: 200,
+  redeem_value: 20000,
+  redeem_expiry_days: 30,
+  otp_login_enabled: 1,
   tiers: { silver: 500, gold: 2000, vip: 5000 },
   cafe_name: 'کافه ملت',
   cafe_city: 'تهران',
@@ -87,7 +99,15 @@ export const DEFAULT_SETTINGS: AppSettings = {
 /** کلیدهای قابل ویرایش از داشبورد ادمین */
 export const EDITABLE_SETTING_KEYS: Array<keyof AppSettings> = [
   'sms_templates',
+  'points_mode',
   'points_per_currency',
+  'visit_points',
+  'visit_min_amount',
+  'redeem_enabled',
+  'redeem_points',
+  'redeem_value',
+  'redeem_expiry_days',
+  'otp_login_enabled',
   'currency_unit',
   'tiers',
   'cafe_name',
@@ -123,13 +143,23 @@ function coerceSettings(raw: Record<string, unknown>): AppSettings {
     birthday: str(templates.birthday, DEFAULT_SETTINGS.sms_templates.birthday),
     churn: str(templates.churn, DEFAULT_SETTINGS.sms_templates.churn),
     weather: str(templates.weather, DEFAULT_SETTINGS.sms_templates.weather),
+    otp: str(templates.otp, DEFAULT_SETTINGS.sms_templates.otp),
+    redeem: str(templates.redeem, DEFAULT_SETTINGS.sms_templates.redeem),
   };
 
   const provider = coerceSmsProvider(raw.sms_provider);
 
   return {
     sms_templates: templatesMerged,
+    points_mode: raw.points_mode === 'visit' ? 'visit' : 'amount',
     points_per_currency: toIntInRange(raw.points_per_currency, 1, 1000, 1),
+    visit_points: toIntInRange(raw.visit_points, 1, 100_000, 15),
+    visit_min_amount: toIntInRange(raw.visit_min_amount, 0, 100_000_000, 30_000),
+    redeem_enabled: toIntInRange(raw.redeem_enabled, 0, 1, 1),
+    redeem_points: toIntInRange(raw.redeem_points, 1, 10_000_000, 200),
+    redeem_value: toIntInRange(raw.redeem_value, 1000, 100_000_000, 20_000),
+    redeem_expiry_days: toIntInRange(raw.redeem_expiry_days, 1, 365, 30),
+    otp_login_enabled: toIntInRange(raw.otp_login_enabled, 0, 1, 1),
     currency_unit: toIntInRange(raw.currency_unit, 1, 10_000_000, 1000),
     tiers: {
       silver: toIntInRange(tiers.silver, 1, 100_000_000, 500),

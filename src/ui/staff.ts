@@ -112,6 +112,8 @@ export function staffPage(
                       </div>
                     </div>
 
+                    <div id="c-visit" class="hidden mt-2.5 text-[10.5px] rounded-lg border px-2.5 py-1.5"></div>
+
                     <div id="c-coupons" class="hidden mt-3 flex flex-wrap gap-1.5"></div>
                   </div>
                   <button type="button" id="clear-customer" class="w-8 h-8 rounded-lg text-cream/40 hover:text-rose-300 hover:bg-rose-500/10 flex items-center justify-center shrink-0" title="حذف انتخاب">
@@ -214,6 +216,7 @@ export function staffPage(
                 <span>امتیاز این فاکتور</span>
                 <span id="sum-points" class="font-semibold text-amber-300">+۰</span>
               </div>
+              <div id="sum-points-note" class="text-[10px] text-cream/30 text-start leading-5"></div>
             </div>
 
             <button type="button" id="submit-invoice" class="btn btn-primary w-full !py-3">
@@ -269,6 +272,7 @@ export function staffPage(
         <div class="rounded-2xl border border-white/10 bg-black/25 p-4 space-y-2 text-[12.5px] text-right">
           <div class="flex items-center justify-between"><span class="text-cream/50">مبلغ فاکتور</span><span id="r-amount" class="font-bold">—</span></div>
           <div class="flex items-center justify-between"><span class="text-cream/50">امتیاز کسب‌شده</span><span id="r-points" class="font-bold text-emerald-300">—</span></div>
+          <div id="r-points-note" class="text-[10px] text-cream/35 leading-5"></div>
           <div class="flex items-center justify-between"><span class="text-cream/50">موجودی امتیاز</span><span id="r-total" class="font-bold text-amber-300">—</span></div>
           <div class="flex items-center justify-between"><span class="text-cream/50">سطح مشتری</span><span id="r-tier" class="font-bold">—</span></div>
           <div id="r-discount-row" class="hidden flex items-center justify-between"><span class="text-cream/50">تخفیف اعمال‌شده</span><span id="r-discount" class="font-bold text-emerald-300">—</span></div>
@@ -285,6 +289,9 @@ export function staffPage(
     var MENU = ${jsonForScript(menu)};
     var POINTS_UNIT = ${Number(settings.currency_unit) || 1000};
     var POINTS_RATIO = ${Number(settings.points_per_currency) || 1};
+    var POINTS_MODE = ${JSON.stringify(settings.points_mode)};
+    var VISIT_POINTS = ${Number(settings.visit_points) || 0};
+    var VISIT_MIN_AMOUNT = ${Number(settings.visit_min_amount) || 0};
     var TIER_LABELS = { bronze: 'برنزی', silver: 'نقره‌ای', gold: 'طلایی', vip: 'الماسی' };
     var TIER_CLASSES = { bronze: 'tone-warning', silver: 'tone-muted', gold: 'tone-warning', vip: 'tone-info' };
 
@@ -292,6 +299,7 @@ export function staffPage(
     var selected = {};
     var activeCategory = '__all__';
     var appliedCoupon = null;
+    var requestId = null;
     var appliedDiscount = 0;
 
     var phoneInput = $('#phone-input');
@@ -375,7 +383,25 @@ export function staffPage(
       }
 
       var total = Math.max(0, base - discount);
-      var points = Math.floor(total / POINTS_UNIT) * POINTS_RATIO;
+      var points = 0;
+      var note = '';
+      if (POINTS_MODE === 'visit') {
+        if (total < VISIT_MIN_AMOUNT) {
+          points = 0;
+          note = 'کمتر از حداقل مبلغ برای امتیاز روزانه';
+        } else if (customer && customer.visit_earned_today) {
+          points = 0;
+          note = 'امتیاز حضور امروز قبلاً ثبت شده';
+        } else {
+          points = VISIT_POINTS;
+          note = 'امتیاز حضور امروز';
+        }
+      } else {
+        points = Math.floor(total / POINTS_UNIT) * POINTS_RATIO;
+        note = points > 0 ? 'بر اساس مبلغ خرید' : '';
+      }
+      var pointsNoteEl = $('#sum-points-note');
+      if (pointsNoteEl) pointsNoteEl.textContent = note;
 
       $('#sum-subtotal').textContent = moneyFa(base) + ' تومان';
       $('#sum-discount').textContent = moneyFa(discount) + ' تومان';
@@ -403,6 +429,21 @@ export function staffPage(
       var status = $('#c-status');
       status.textContent = data.status_label || 'فعال';
       status.className = 'badge ' + (data.status_tone === 'danger' ? 'tone-danger' : data.status_tone === 'warning' ? 'tone-warning' : data.status_tone === 'muted' ? 'tone-muted' : 'tone-success');
+
+      var visitEl = $('#c-visit');
+      if (data.points_mode === 'visit') {
+        visitEl.classList.remove('hidden');
+        if (data.visit_earned_today) {
+          visitEl.className = 'mt-2.5 text-[10.5px] rounded-lg border px-2.5 py-1.5 border-amber-500/25 bg-amber-500/10 text-amber-200';
+          visitEl.textContent = 'امتیاز حضور امروز را گرفته است؛ خرید بعدی امروز امتیاز ندارد.';
+        } else {
+          visitEl.className = 'mt-2.5 text-[10.5px] rounded-lg border px-2.5 py-1.5 border-emerald-500/25 bg-emerald-500/10 text-emerald-200';
+          visitEl.textContent = 'امتیاز حضور امروز هنوز ثبت نشده؛ با این خرید ' + fa(data.visit_points) + ' امتیاز می‌گیرد.';
+        }
+      } else {
+        visitEl.classList.add('hidden');
+        visitEl.textContent = '';
+      }
 
       var couponHost = $('#c-coupons');
       if (data.coupons && data.coupons.length > 0) {
@@ -597,6 +638,11 @@ export function staffPage(
       });
       var btn = $('#submit-invoice');
       setLoading(btn, true, 'در حال ثبت…');
+      if (!requestId) {
+        requestId = (window.crypto && window.crypto.randomUUID)
+          ? window.crypto.randomUUID()
+          : String(Date.now()) + '-' + Math.random().toString(16).slice(2);
+      }
       try {
         var result = await api('/api/staff/invoices', {
           method: 'POST',
@@ -604,12 +650,16 @@ export function staffPage(
             userId: customer.id,
             items: items,
             amount: items.length ? null : totals.base,
-            couponCode: appliedCoupon ? appliedCoupon.code : null
+            couponCode: appliedCoupon ? appliedCoupon.code : null,
+            clientRequestId: requestId
           }
         });
+        requestId = null;
         $('#r-customer').textContent = result.customerName;
         $('#r-amount').textContent = moneyFa(result.amount) + ' تومان';
         $('#r-points').textContent = '+' + fa(result.pointsEarned) + ' امتیاز';
+        var noteEl = $('#r-points-note');
+        if (noteEl) noteEl.textContent = result.pointsNote || '';
         $('#r-total').textContent = fa(result.totalPoints) + ' امتیاز';
         $('#r-tier').textContent = TIER_LABELS[result.tier] || result.tier;
         if (result.discount > 0) {
@@ -765,19 +815,26 @@ export function staffHistoryPage(
 export function customerSummaryForApi(
   user: UserRow,
   status: { label: string; tone: string },
-  coupons: Array<{ code: string; kind: string; value: number }>
+  coupons: Array<{ code: string; kind: string; value: number }>,
+  extra: { visitEarnedToday?: boolean; pointsMode?: string; visitPoints?: number; visitMinAmount?: number } = {}
 ): Record<string, unknown> {
   return {
     id: user.id,
     name: user.name,
     phone: user.phone,
     points: user.points,
+    lifetime_points: user.lifetime_points,
     tier: user.tier,
     last_visit_date: user.last_visit_date,
     avg_visit_interval: user.avg_visit_interval,
     status_label: status.label,
     status_tone: status.tone,
     tier_label: tierLabel(user.tier),
+    sms_opt_in: user.sms_opt_in,
+    visit_earned_today: extra.visitEarnedToday === true,
+    points_mode: extra.pointsMode ?? 'amount',
+    visit_points: extra.visitPoints ?? 0,
+    visit_min_amount: extra.visitMinAmount ?? 0,
     coupons: coupons.map((c) => ({
       code: c.code,
       label: c.kind === 'percent' ? `${c.value}٪` : `${formatMoney(c.value)} تومان`,

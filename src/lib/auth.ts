@@ -12,6 +12,16 @@ import { fail } from './utils';
 export const SESSION_COOKIE = 'cc_session';
 export const SESSION_TTL_SECONDS = 12 * 60 * 60; // ۱۲ ساعت (پیش‌فرض)
 
+/**
+ * طول عمر نشست مشتری (روز) — پیش‌فرض ۳۰ روز، حداکثر ۹۰.
+ * مشتری‌ها با کد پیامکی وارد می‌شوند و نباید هر روز دوباره وارد شوند.
+ */
+export function customerSessionTtl(env: Bindings): number {
+  const days = Number(env.CUSTOMER_SESSION_DAYS);
+  const safe = Number.isFinite(days) && days > 0 ? Math.floor(days) : 30;
+  return Math.min(90, Math.max(1, safe)) * 86_400;
+}
+
 /** طول عمر نشست بر اساس متغیر محیطی SESSION_HOURS (۱ تا ۱۶۸ ساعت) */
 export function sessionTtl(env: Bindings): number {
   const hours = Number(env.SESSION_HOURS);
@@ -22,7 +32,7 @@ export function sessionTtl(env: Bindings): number {
 /** ساخت توکن JWT برای کاربر */
 export async function createToken(
   secret: string,
-  user: Pick<UserRow, 'id' | 'role' | 'name'>,
+  user: Pick<UserRow, 'id' | 'role' | 'name'> & { token_version?: number },
   ttlSeconds: number = SESSION_TTL_SECONDS
 ): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
@@ -31,6 +41,7 @@ export async function createToken(
     uid: user.id,
     role: user.role,
     name: user.name,
+    tv: user.token_version ?? 0,
     iat: now,
     exp: now + ttlSeconds,
   };
@@ -90,6 +101,7 @@ export async function readSession(
       uid,
       role: role as Role,
       name: typeof payload.name === 'string' ? payload.name : '',
+      tv: typeof payload.tv === 'number' ? payload.tv : 0,
       exp: typeof payload.exp === 'number' ? payload.exp : undefined,
       iat: typeof payload.iat === 'number' ? payload.iat : undefined,
     };
@@ -108,9 +120,10 @@ export async function getActiveUser(
 ): Promise<UserRow | null> {
   const user = await db
     .prepare(
-      `SELECT id, name, phone, birth_date, points, tier, referred_by, last_visit_date,
-              avg_visit_interval, role, password_hash, is_active, first_purchase_at,
-              referral_rewarded, last_churn_sms_at, created_at
+      `SELECT id, name, phone, birth_date, points, lifetime_points, tier, referred_by,
+              last_visit_date, avg_visit_interval, role, password_hash, is_active,
+              first_purchase_at, referral_rewarded, last_churn_sms_at, sms_opt_in,
+              token_version, created_at
        FROM users WHERE id = ? LIMIT 1`
     )
     .bind(uid)
@@ -138,7 +151,8 @@ export const attachUser: MiddlewareHandler<AppEnv> = async (c, next) => {
     return;
   }
   const user = await getActiveUser(c.env.DB, payload.uid);
-  if (!user) {
+  // توکن‌هایی که قبل از تغییر رمز صادر شده‌اند باطل می‌شوند
+  if (!user || (payload.tv ?? 0) !== (user.token_version ?? 0)) {
     clearSessionCookie(c, isSecureRequest(c));
     c.set('user', null);
     await next();
@@ -193,7 +207,7 @@ export function requirePageRole(...roles: Role[]): MiddlewareHandler<AppEnv> {
 export function homeForRole(role: Role): string {
   if (role === 'admin') return '/admin';
   if (role === 'staff') return '/staff';
-  return '/';
+  return '/me';
 }
 
 /* ==========================================================================

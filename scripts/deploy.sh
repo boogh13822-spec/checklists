@@ -11,7 +11,7 @@
 #    ۳) ورود به حساب Cloudflare (wrangler login) در صورت نیاز
 #    ۴) ساخت دیتابیس D1 با نام cafe-club-db (اگر از قبل نباشد)
 #    ۵) گذاشتن database_id واقعی داخل wrangler.toml
-#    ۶) اجرای schema.sql روی دیتابیس ابری
+#    ۶) اجرای schema.sql روی دیتابیس ابری + مایگریشن تکرارپذیر
 #    ۷) ساخت JWT_SECRET (تصادفی و امن) و ذخیره به‌عنوان Secret
 #       — اگر از قبل تنظیم شده باشد، دست نمی‌خورد (وگرنه همه از حساب خارج می‌شدند)
 #    ۸) دیپلوی نهایی
@@ -167,6 +167,18 @@ fi
 # --- ۵) اجرای schema.sql روی دیتابیس ابری ------------------------------------
 info "ساخت جدول‌ها و داده‌های اولیه (schema.sql)..."
 run "${WRANGLER[@]}" d1 execute "$DB_NAME" --remote --file=./schema.sql
+
+# --- ۵.۵) مایگریشن تکرارپذیر (برای دیتابیس‌هایی که از قبل ساخته شده‌اند) ------
+if [[ -f scripts/migrate.sh ]]; then
+  info "مایگریشن ساختار دیتابیس (ستون/جدول‌های جدید)..."
+  if [[ "$DRY_RUN" == "1" ]]; then
+    printf '   [dry-run] bash scripts/migrate.sh --remote %s\n' "$DB_NAME"
+  else
+    bash scripts/migrate.sh --remote "$DB_NAME" || die "مایگریشن با خطا متوقف شد."
+  fi
+else
+  warn "فایل scripts/migrate.sh پیدا نشد؛ مایگریشن رد شد."
+fi
 
 # --- ۶) Secret مربوط به JWT --------------------------------------------------
 ROTATE_SECRET="${ROTATE_SECRET:-0}"

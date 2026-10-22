@@ -6,12 +6,16 @@
 import type { AppSettings, Bindings, InvoiceItem, InvoiceRow, UserRow, CouponRow, Role, SmsLogRow } from '../types';
 import {
   DEFAULT_TIMEZONE,
+  resolveTimeZone,
+  todayISO,
   safeJsonParse,
   normalizePhone,
   toPersianDigits,
   sqliteToMs,
   utcStamp,
+  jalaliMonthRangeAt,
   zonedDateStartMs,
+  zonedDayRange,
   formatNumberFa,
   formatJalali,
 } from './utils';
@@ -111,6 +115,8 @@ export type RegisterInput = {
   phone: string;
   birth_date: string | null;
   referral: string | null;
+  /** رضایت دریافت پیامک تبلیغاتی (پیش‌فرض ۱) */
+  sms_opt_in?: number;
 };
 
 export type RegisterResult =
@@ -144,16 +150,18 @@ export async function registerCustomer(
   const referralCode = await generateUniqueReferralCode(env.DB);
 
   try {
+    const smsOptIn = input.sms_opt_in === 0 ? 0 : 1;
     const result = await env.DB.prepare(
-      `INSERT INTO users (name, phone, birth_date, points, tier, referred_by, role, referral_code)
-       VALUES (?, ?, ?, 0, 'bronze', ?, 'customer', ?)`
+      `INSERT INTO users (name, phone, birth_date, points, tier, referred_by, role, referral_code, sms_opt_in)
+       VALUES (?, ?, ?, 0, 'bronze', ?, 'customer', ?, ?)`
     )
       .bind(
         input.name,
         phone,
         input.birth_date,
         referrer ? referrer.id : null,
-        referralCode
+        referralCode,
+        smsOptIn
       )
       .run();
 
@@ -163,7 +171,8 @@ export async function registerCustomer(
       return { ok: false, error: 'خطا در ایجاد حساب کاربری.', code: 'DB_ERROR' };
     }
 
-    // پیامک خوش‌آمدگویی
+    // پیامک خوش‌آمدگویی — برای کسی که رضایت نداده ارسال نمی‌شود
+    if (smsOptIn === 1) {
     await sendSms(env, settings, {
       userId: user.id,
       phone: user.phone,
@@ -174,6 +183,7 @@ export async function registerCustomer(
         points: 0,
       }),
     });
+    }
 
     return {
       ok: true,
@@ -197,6 +207,8 @@ export type InvoiceInput = {
   amount: number | null;
   couponCode: string | null;
   registeredBy: number;
+  /** شناسه یکتای درخواست (برای جلوگیری از ثبت تکراری با دوبار کلیک/تلاش مجدد) */
+  clientRequestId?: string | null;
 };
 
 export type InvoiceResult =
@@ -211,6 +223,10 @@ export type InvoiceResult =
       tier: string;
       tierChanged: boolean;
       customerName: string;
+      /** توضیح امتیاز این فاکتور (برای نمایش در پنل پرسنل) */
+      pointsNote: string;
+      /** آیا این درخواست تکراری بود و همان فاکتور قبلی برگشت داده شد */
+      duplicate: boolean;
     }
   | { ok: false; error: string; code: string };
 
@@ -277,6 +293,99 @@ export async function evaluateCoupon(
   return { ok: true, coupon, discount };
 }
 
+/** آیا مشتری در این روز (تاریخ تهران) امتیاز حضور گرفته است؟ */
+export async function hasVisitPointsToday(
+  db: D1Database,
+  userId: number,
+  timeZone: string
+): Promise<boolean> {
+  const row = await db
+    .prepare(
+      `SELECT id FROM invoices
+       WHERE user_id = ? AND visit_day = ? AND voided_at IS NULL
+       LIMIT 1`
+    )
+    .bind(userId, todayISO(timeZone))
+    .first<{ id: number }>();
+  return !!row;
+}
+
+/**
+ * محاسبه‌ی امتیاز یک فاکتور بر اساس روش امتیازدهی انتخاب‌شده.
+ *  - amount: بر اساس مبلغ (هر X تومان = Y امتیاز)
+ *  - visit : هر روز که مشتری خرید می‌کند و مبلغ فاکتور از حداقل عبور کند،
+ *            یک‌بار امتیاز ثابت می‌گیرد (مثل مهر/استمپ باشگاه‌های حرفه‌ای)
+ */
+export function calculateInvoicePoints(input: {
+  amount: number;
+  settings: AppSettings;
+  visitAlreadyEarned: boolean;
+}):
+  | { points: number; note: string; visitDay: boolean }
+  | { points: 0; note: string; visitDay: false } {
+  const { amount, settings } = input;
+
+  if (settings.points_mode === 'visit') {
+    if (amount < settings.visit_min_amount) {
+      return {
+        points: 0,
+        note: `مبلغ فاکتور کمتر از حداقل ${formatNumberFa(settings.visit_min_amount)} تومان است؛ امتیاز روزانه ثبت نشد.`,
+        visitDay: false,
+      };
+    }
+    if (input.visitAlreadyEarned) {
+      return {
+        points: 0,
+        note: 'امتیاز حضور امروز قبلاً برای این مشتری ثبت شده است.',
+        visitDay: false,
+      };
+    }
+    return {
+      points: settings.visit_points,
+      note: `امتیاز حضور امروز (${toPersianDigits(settings.visit_points)} امتیاز)`,
+      visitDay: true,
+    };
+  }
+
+  const points = calculatePoints(amount, settings);
+  return {
+    points,
+    note:
+      points > 0
+        ? `${toPersianDigits(points)} امتیاز بر اساس مبلغ خرید`
+        : 'مبلغ خرید برای دریافت امتیاز کافی نبود.',
+    visitDay: false,
+  };
+}
+
+/** نتیجه‌ی فاکتور از روی رکورد موجود (برای درخواست‌های تکراری) */
+async function invoiceResultFromRow(
+  db: D1Database,
+  row: InvoiceRow,
+  customer: UserRow,
+  settings: AppSettings
+): Promise<InvoiceResult> {
+  const after = await db
+    .prepare('SELECT points, tier FROM users WHERE id = ?')
+    .bind(customer.id)
+    .first<{ points: number; tier: string }>();
+
+  return {
+    ok: true,
+    invoiceId: row.id,
+    subtotal: row.subtotal,
+    discount: row.discount,
+    amount: row.amount,
+    pointsEarned: row.points_earned,
+    totalPoints: after?.points ?? customer.points,
+    tier: after?.tier ?? customer.tier,
+    tierChanged: false,
+    customerName: customer.name,
+    pointsNote: 'این فاکتور قبلاً ثبت شده بود؛ از ثبت دوباره جلوگیری شد.',
+    duplicate: true,
+  };
+}
+
 /** ثبت فاکتور، محاسبه امتیاز، به‌روزرسانی سطح و پاداش معرف */
 export async function recordInvoice(
   env: Bindings,
@@ -298,8 +407,19 @@ export async function recordInvoice(
     };
   }
 
+  // درخواست تکراری (دوبار کلیک یا تلاش مجدد شبکه) → همان فاکتور قبلی
+  const requestId = (input.clientRequestId ?? '').trim().slice(0, 64) || null;
+  if (requestId) {
+    const existing = await env.DB.prepare(
+      'SELECT * FROM invoices WHERE client_request_id = ? LIMIT 1'
+    )
+      .bind(requestId)
+      .first<InvoiceRow>();
+    if (existing) return invoiceResultFromRow(env.DB, existing, customer, settings);
+  }
+
   const items = normalizeItems(input.items);
-  let subtotal = items.length > 0 ? itemsSubtotal(items) : Math.floor(Number(input.amount) || 0);
+  const subtotal = items.length > 0 ? itemsSubtotal(items) : Math.floor(Number(input.amount) || 0);
 
   if (!Number.isFinite(subtotal) || subtotal <= 0) {
     return { ok: false, error: 'مبلغ فاکتور باید بزرگ‌تر از صفر باشد.', code: 'INVALID_AMOUNT' };
@@ -324,71 +444,122 @@ export async function recordInvoice(
   }
 
   const amount = subtotal - discount;
-  const pointsEarned = calculatePoints(amount, settings);
-  // مقدار «تخمینی» بر اساس داده‌ی خوانده‌شده؛ بعد از ثبت، مقدار نهایی را از DB می‌خوانیم
-  // تا دو فاکتور هم‌زمان باعث نمایش موجودی اشتباه در پیامک نشوند.
-  let newPoints = Math.max(0, customer.points + pointsEarned);
-  let newTier = calculateTier(newPoints, settings);
-  let tierChanged = newTier !== customer.tier;
+  const timeZone = resolveTimeZone(env.TZ_NAME);
+  const visitAlreadyEarned =
+    settings.points_mode === 'visit'
+      ? await hasVisitPointsToday(env.DB, customer.id, timeZone)
+      : false;
+
+  const calc = calculateInvoicePoints({
+    amount,
+    settings,
+    visitAlreadyEarned,
+  });
+
+  let pointsEarned = calc.points;
+  let pointsNote = calc.note;
+  let visitDay: string | null = calc.visitDay ? todayISO(timeZone) : null;
   const nowISO = new Date().toISOString().slice(0, 19).replace('T', ' ');
 
-  const statements = [
-    env.DB.prepare(
-      `INSERT INTO invoices (user_id, amount, items, points_earned, registered_by, discount, coupon_code, subtotal, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).bind(
-      customer.id,
-      amount,
-      JSON.stringify(items),
-      pointsEarned,
-      input.registeredBy,
-      discount,
-      couponCode,
-      subtotal,
-      nowISO
-    ),
-    // افزایش امتیاز به‌صورت اتمیک (points = points + ?) تا دو فاکتور هم‌زمان
-    // امتیاز یکدیگر را بازنویسی نکنند. سطح هم در همان UPDATE از مقدار جدید
-    // محاسبه می‌شود؛ در SQLite سمت راست عبارت‌ها مقدار «قبل از به‌روزرسانی» را می‌بیند.
-    env.DB.prepare(
-      `UPDATE users
-       SET points = points + ?,
-           tier = CASE
-                    WHEN points + ? >= ? THEN 'vip'
-                    WHEN points + ? >= ? THEN 'gold'
-                    WHEN points + ? >= ? THEN 'silver'
-                    ELSE 'bronze'
-                  END,
-           last_visit_date = ?,
-           first_purchase_at = COALESCE(first_purchase_at, ?)
-       WHERE id = ? AND role = 'customer'`
-    ).bind(
-      pointsEarned,
-      pointsEarned,
-      settings.tiers.vip,
-      pointsEarned,
-      settings.tiers.gold,
-      pointsEarned,
-      settings.tiers.silver,
-      nowISO,
-      nowISO,
-      customer.id
-    ),
-  ];
+  // مقدار «تخمینی»؛ بعد از ثبت، مقدار نهایی را از DB می‌خوانیم
+  let newPoints = Math.max(0, customer.points + pointsEarned);
+  let newTier = calculateTier(
+    Math.max(0, customer.lifetime_points + pointsEarned),
+    settings
+  );
+  let tierChanged = newTier !== customer.tier;
 
-  if (coupon) {
-    statements.push(
-      env.DB.prepare('UPDATE coupons SET used_count = used_count + 1 WHERE id = ?').bind(coupon.id)
-    );
-  }
+  const buildStatements = (earned: number, day: string | null) => {
+    const list = [
+      env.DB.prepare(
+        `INSERT INTO invoices
+           (user_id, amount, items, points_earned, registered_by, discount, coupon_code,
+            subtotal, created_at, visit_day, client_request_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).bind(
+        customer.id,
+        amount,
+        JSON.stringify(items),
+        earned,
+        input.registeredBy,
+        discount,
+        couponCode,
+        subtotal,
+        nowISO,
+        day,
+        requestId
+      ),
+      // افزایش اتمیک امتیاز؛ سطح بر اساس امتیاز «طول عمر» محاسبه می‌شود تا
+      // خرج کردن امتیاز باعث افت سطح نشود.
+      env.DB.prepare(
+        `UPDATE users
+         SET points = points + ?,
+             lifetime_points = lifetime_points + ?,
+             tier = CASE
+                      WHEN lifetime_points + ? >= ? THEN 'vip'
+                      WHEN lifetime_points + ? >= ? THEN 'gold'
+                      WHEN lifetime_points + ? >= ? THEN 'silver'
+                      ELSE 'bronze'
+                    END,
+             last_visit_date = ?,
+             first_purchase_at = COALESCE(first_purchase_at, ?)
+         WHERE id = ? AND role = 'customer'`
+      ).bind(
+        earned,
+        earned,
+        earned,
+        settings.tiers.vip,
+        earned,
+        settings.tiers.gold,
+        earned,
+        settings.tiers.silver,
+        nowISO,
+        nowISO,
+        customer.id
+      ),
+    ];
+
+    if (coupon) {
+      list.push(
+        env.DB.prepare('UPDATE coupons SET used_count = used_count + 1 WHERE id = ?').bind(coupon.id)
+      );
+    }
+    return list;
+  };
 
   let invoiceId = 0;
   try {
-    const results = await env.DB.batch(statements);
+    const results = await env.DB.batch(buildStatements(pointsEarned, visitDay));
     invoiceId = Number(results[0]?.meta?.last_row_id ?? 0);
   } catch (error) {
-    console.error('recordInvoice batch failed:', error);
-    return { ok: false, error: 'خطا در ثبت فاکتور.', code: 'DB_ERROR' };
+    const message = String(error);
+
+    // دو درخواست هم‌زمان با یک شناسه → یکی ثبت شده است
+    if (requestId && message.includes('client_request_id')) {
+      const existing = await env.DB.prepare(
+        'SELECT * FROM invoices WHERE client_request_id = ? LIMIT 1'
+      )
+        .bind(requestId)
+        .first<InvoiceRow>();
+      if (existing) return invoiceResultFromRow(env.DB, existing, customer, settings);
+    }
+
+    // در همین لحظه فاکتور دیگری امتیاز حضور امروز را گرفته است
+    if (visitDay && (message.includes('visit_day') || message.includes('ux_invoices_visit_day'))) {
+      try {
+        const results = await env.DB.batch(buildStatements(0, null));
+        invoiceId = Number(results[0]?.meta?.last_row_id ?? 0);
+        pointsEarned = 0;
+        pointsNote = 'امتیاز حضور امروز قبلاً برای این مشتری ثبت شده است.';
+        visitDay = null;
+      } catch (retryError) {
+        console.error('recordInvoice retry failed:', retryError);
+        return { ok: false, error: 'خطا در ثبت فاکتور.', code: 'DB_ERROR' };
+      }
+    } else {
+      console.error('recordInvoice batch failed:', error);
+      return { ok: false, error: 'خطا در ثبت فاکتور.', code: 'DB_ERROR' };
+    }
   }
 
   // خواندن مقدار نهایی امتیاز/سطح از دیتابیس (منبع حقیقت)
@@ -409,7 +580,7 @@ export async function recordInvoice(
     await rewardReferrer(env, settings, customer);
   }
 
-  // پیامک تأیید فاکتور
+  // پیامک تأیید فاکتور (پیامک تراکنشی است و به رضایت تبلیغاتی نیاز ندارد)
   await sendSms(env, settings, {
     userId: customer.id,
     phone: customer.phone,
@@ -436,6 +607,8 @@ export async function recordInvoice(
     tier: newTier,
     tierChanged,
     customerName: customer.name,
+    pointsNote,
+    duplicate: false,
   };
 }
 
@@ -464,14 +637,17 @@ async function rewardReferrer(
   if (reward > 0) {
     // افزایش اتمیک امتیاز معرف + محاسبه‌ی سطح از مقدار نهایی
     const updated = await env.DB.prepare(
-      `UPDATE users SET points = points + ? WHERE id = ? AND role = 'customer' RETURNING points`
+      `UPDATE users
+       SET points = points + ?, lifetime_points = lifetime_points + ?
+       WHERE id = ? AND role = 'customer'
+       RETURNING points, lifetime_points`
     )
-      .bind(reward, referrer.id)
-      .first<{ points: number }>();
+      .bind(reward, reward, referrer.id)
+      .first<{ points: number; lifetime_points: number }>();
 
     if (updated) {
       await env.DB.prepare('UPDATE users SET tier = ? WHERE id = ?')
-        .bind(calculateTier(updated.points, settings), referrer.id)
+        .bind(calculateTier(updated.lifetime_points, settings), referrer.id)
         .run();
     }
 
@@ -493,7 +669,7 @@ export async function recomputeAvgInterval(db: D1Database, userId: number): Prom
   const { results } = await db
     .prepare(
       `SELECT created_at FROM invoices
-       WHERE user_id = ?
+       WHERE user_id = ? AND voided_at IS NULL
        ORDER BY created_at DESC
        LIMIT 100`
     )
@@ -592,17 +768,17 @@ export async function getDashboardStats(
       .prepare(`SELECT COUNT(*) AS c FROM users WHERE role = 'customer' AND created_at >= ?`)
       .bind(daysAgo30Utc)
       .first<{ c: number }>(),
-    db.prepare('SELECT COUNT(*) AS c FROM invoices').first<{ c: number }>(),
+    db.prepare('SELECT COUNT(*) AS c FROM invoices WHERE voided_at IS NULL').first<{ c: number }>(),
     db
-      .prepare('SELECT COALESCE(SUM(amount), 0) AS s, COUNT(*) AS c FROM invoices WHERE created_at >= ? AND created_at < ?')
+      .prepare('SELECT COALESCE(SUM(amount), 0) AS s, COUNT(*) AS c FROM invoices WHERE voided_at IS NULL AND created_at >= ? AND created_at < ?')
       .bind(dayStartUtc, dayEndUtc)
       .first<{ s: number; c: number }>(),
     db
-      .prepare('SELECT COALESCE(SUM(amount), 0) AS s FROM invoices WHERE created_at >= ?')
+      .prepare('SELECT COALESCE(SUM(amount), 0) AS s FROM invoices WHERE voided_at IS NULL AND created_at >= ?')
       .bind(monthStartUtc)
       .first<{ s: number }>(),
     db
-      .prepare('SELECT COUNT(*) AS c FROM invoices WHERE created_at >= ? AND created_at < ?')
+      .prepare('SELECT COUNT(*) AS c FROM invoices WHERE voided_at IS NULL AND created_at >= ? AND created_at < ?')
       .bind(dayStartUtc, dayEndUtc)
       .first<{ c: number }>(),
     db
@@ -621,7 +797,7 @@ export async function getDashboardStats(
   const { results: sleepRows } = await db
     .prepare(
       `SELECT u.id, u.name, u.last_visit_date, u.avg_visit_interval,
-              (SELECT COUNT(*) FROM invoices i WHERE i.user_id = u.id) AS visits
+              (SELECT COUNT(*) FROM invoices i WHERE i.user_id = u.id AND i.voided_at IS NULL) AS visits
        FROM users u
        WHERE u.role = 'customer' AND u.is_active = 1 AND u.last_visit_date IS NOT NULL
        LIMIT 5000`
@@ -657,6 +833,7 @@ export async function getDashboardStats(
     .prepare(
       `SELECT i.id, i.amount, i.created_at, u.name AS customer_name, u.id AS customer_id
        FROM invoices i JOIN users u ON u.id = i.user_id
+       WHERE i.voided_at IS NULL
        ORDER BY i.created_at DESC, i.id DESC LIMIT 8`
     )
     .all<{
@@ -675,7 +852,7 @@ export async function getDashboardStats(
       seriesDays.map((range) =>
         db
           .prepare(
-            'SELECT COALESCE(SUM(amount), 0) AS s FROM invoices WHERE created_at >= ? AND created_at < ?'
+            'SELECT COALESCE(SUM(amount), 0) AS s FROM invoices WHERE voided_at IS NULL AND created_at >= ? AND created_at < ?'
           )
           .bind(range.start, range.end)
           .first<{ s: number }>()
@@ -690,7 +867,7 @@ export async function getDashboardStats(
       .prepare(
         `SELECT substr(created_at, 1, 10) AS day, COALESCE(SUM(amount), 0) AS total
          FROM invoices
-         WHERE created_at >= datetime('now', '-6 days')
+         WHERE voided_at IS NULL AND created_at >= datetime('now', '-6 days')
          GROUP BY day ORDER BY day ASC`
       )
       .all<{ day: string; total: number }>();
@@ -748,8 +925,8 @@ export async function exportCustomers(db: D1Database): Promise<CustomerListItem[
     .prepare(
       `SELECT u.id, u.name, u.phone, u.birth_date, u.points, u.tier, u.last_visit_date,
               u.avg_visit_interval, u.created_at, u.referral_code, u.is_active,
-              (SELECT COUNT(*) FROM invoices i WHERE i.user_id = u.id) AS visits,
-              (SELECT COALESCE(SUM(amount), 0) FROM invoices i WHERE i.user_id = u.id) AS total_spent
+              (SELECT COUNT(*) FROM invoices i WHERE i.user_id = u.id AND i.voided_at IS NULL) AS visits,
+              (SELECT COALESCE(SUM(amount), 0) FROM invoices i WHERE i.user_id = u.id AND i.voided_at IS NULL) AS total_spent
        FROM users u
        WHERE u.role = 'customer'
        ORDER BY u.created_at DESC
@@ -798,7 +975,7 @@ export async function listCustomers(
     // وگرنه مبنای ۳۰ روز (تا مشتری تک‌خرید هم درست دسته‌بندی شود).
     const baseline =
       `(CASE WHEN u.avg_visit_interval > 0
-             AND (SELECT COUNT(*) FROM invoices i WHERE i.user_id = u.id) >= ?
+             AND (SELECT COUNT(*) FROM invoices i WHERE i.user_id = u.id AND i.voided_at IS NULL) >= ?
         THEN u.avg_visit_interval ELSE ? END)`;
     const comparison = params.status === 'sleeping' ? '>' : '<=';
     where.push(
@@ -834,8 +1011,8 @@ export async function listCustomers(
     .prepare(
       `SELECT u.id, u.name, u.phone, u.birth_date, u.points, u.tier, u.last_visit_date,
               u.avg_visit_interval, u.created_at, u.referral_code, u.is_active,
-              (SELECT COUNT(*) FROM invoices i WHERE i.user_id = u.id) AS visits,
-              (SELECT COALESCE(SUM(amount), 0) FROM invoices i WHERE i.user_id = u.id) AS total_spent
+              (SELECT COUNT(*) FROM invoices i WHERE i.user_id = u.id AND i.voided_at IS NULL) AS visits,
+              (SELECT COALESCE(SUM(amount), 0) FROM invoices i WHERE i.user_id = u.id AND i.voided_at IS NULL) AS total_spent
        FROM users u
        WHERE ${whereSql}
        ORDER BY ${orderBy}
@@ -896,7 +1073,7 @@ export async function getCustomerDetail(
     .all<{ id: number; name: string; created_at: string; rewarded: number }>();
 
   const totalRow = await db
-    .prepare('SELECT COALESCE(SUM(amount), 0) AS s, COUNT(*) AS c FROM invoices WHERE user_id = ?')
+    .prepare('SELECT COALESCE(SUM(amount), 0) AS s, COUNT(*) AS c FROM invoices WHERE user_id = ? AND voided_at IS NULL')
     .bind(id)
     .first<{ s: number; c: number }>();
 
@@ -1056,7 +1233,8 @@ export async function listInvoices(
 
   const totalRow = await db
     .prepare(
-      `SELECT COUNT(*) AS c, COALESCE(SUM(i.amount), 0) AS s
+      `SELECT COUNT(*) AS c,
+              COALESCE(SUM(CASE WHEN i.voided_at IS NULL THEN i.amount ELSE 0 END), 0) AS s
        FROM invoices i JOIN users u ON u.id = i.user_id
        WHERE ${whereSql}`
     )
@@ -1103,7 +1281,7 @@ export async function listStaff(db: D1Database): Promise<StaffListItem[]> {
   const { results } = await db
     .prepare(
       `SELECT u.id, u.name, u.phone, u.role, u.is_active, u.created_at,
-              (SELECT COUNT(*) FROM invoices i WHERE i.registered_by = u.id) AS invoices_count
+              (SELECT COUNT(*) FROM invoices i WHERE i.registered_by = u.id AND i.voided_at IS NULL) AS invoices_count
        FROM users u
        WHERE u.role IN ('staff', 'admin')
        ORDER BY u.role ASC, u.id ASC`
@@ -1240,17 +1418,628 @@ export async function adjustPoints(
   const row = await db
     .prepare(
       `UPDATE users
-       SET points = MAX(0, points + ?)
+       SET points = MAX(0, points + ?),
+           lifetime_points = MAX(0, lifetime_points + ?)
        WHERE id = ? AND role = 'customer'
-       RETURNING points`
+       RETURNING points, lifetime_points`
     )
-    .bind(signed, userId)
-    .first<{ points: number }>();
+    .bind(signed, signed, userId)
+    .first<{ points: number; lifetime_points: number }>();
   if (!row) return { ok: false, error: 'کاربر یافت نشد.', code: 'NOT_FOUND' };
 
-  // سطح از همان مقدار نهاییِ ذخیره‌شده محاسبه می‌شود (نه از مقدار خوانده‌شده‌ی قبلی)
-  const tier = calculateTier(row.points, settings);
+  // سطح از مجموع امتیازهای طول عمر محاسبه می‌شود (نه موجودی قابل خرج)
+  const tier = calculateTier(row.lifetime_points, settings);
   await db.prepare('UPDATE users SET tier = ? WHERE id = ?').bind(tier, userId).run();
 
   return { ok: true, points: row.points, tier };
+}
+
+/* ==========================================================================
+ * ۱۳) ابطال فاکتور
+ * ========================================================================== */
+
+export async function voidInvoice(
+  env: Bindings,
+  settings: AppSettings,
+  invoiceId: number,
+  adminId: number
+): Promise<
+  | { ok: true; pointsReversed: number; customerId: number; customerName: string }
+  | { ok: false; error: string; code: string }
+> {
+  const invoice = await env.DB.prepare('SELECT * FROM invoices WHERE id = ? LIMIT 1')
+    .bind(invoiceId)
+    .first<InvoiceRow>();
+
+  if (!invoice) return { ok: false, error: 'فاکتور یافت نشد.', code: 'NOT_FOUND' };
+  if (invoice.voided_at) {
+    return { ok: false, error: 'این فاکتور قبلاً ابطال شده است.', code: 'ALREADY_VOID' };
+  }
+
+  const customer = await findUserById(env.DB, invoice.user_id);
+  if (!customer) return { ok: false, error: 'مشتری فاکتور یافت نشد.', code: 'NOT_FOUND' };
+
+  const nowISO = new Date().toISOString().slice(0, 19).replace('T', ' ');
+
+  // قفل کردن ابطال: فقط اولین درخواست موفق می‌شود
+  const claim = await env.DB.prepare(
+    `UPDATE invoices
+     SET voided_at = ?, voided_by = ?, visit_day = NULL
+     WHERE id = ? AND voided_at IS NULL`
+  )
+    .bind(nowISO, adminId, invoiceId)
+    .run();
+
+  if (!claim.meta?.changes) {
+    return { ok: false, error: 'این فاکتور قبلاً ابطال شده است.', code: 'ALREADY_VOID' };
+  }
+
+  const points = Math.max(0, Math.floor(invoice.points_earned));
+  const statements = [
+    env.DB.prepare(
+      `UPDATE users
+       SET points = MAX(0, points - ?),
+           lifetime_points = MAX(0, lifetime_points - ?)
+       WHERE id = ?`
+    ).bind(points, points, invoice.user_id),
+  ];
+
+  // مصرف کد تخفیف برگردانده می‌شود تا مشتری بتواند دوباره استفاده کند
+  if (invoice.coupon_code) {
+    statements.push(
+      env.DB.prepare(
+        `UPDATE coupons SET used_count = MAX(0, used_count - 1)
+         WHERE UPPER(code) = UPPER(?)`
+      ).bind(invoice.coupon_code)
+    );
+  }
+
+  await env.DB.batch(statements);
+
+  // سطح و آخرین خرید از روی فاکتورهای معتبر بازمحاسبه می‌شوند
+  const lifeRow = await env.DB.prepare('SELECT lifetime_points FROM users WHERE id = ?')
+    .bind(invoice.user_id)
+    .first<{ lifetime_points: number }>();
+  if (lifeRow) {
+    await env.DB.prepare('UPDATE users SET tier = ? WHERE id = ?')
+      .bind(calculateTier(lifeRow.lifetime_points, settings), invoice.user_id)
+      .run();
+  }
+
+  const lastRow = await env.DB.prepare(
+    'SELECT MAX(created_at) AS d FROM invoices WHERE user_id = ? AND voided_at IS NULL'
+  )
+    .bind(invoice.user_id)
+    .first<{ d: string | null }>();
+  await env.DB.prepare('UPDATE users SET last_visit_date = ? WHERE id = ?')
+    .bind(lastRow?.d ?? null, invoice.user_id)
+    .run();
+  await recomputeAvgInterval(env.DB, invoice.user_id);
+
+  return {
+    ok: true,
+    pointsReversed: points,
+    customerId: invoice.user_id,
+    customerName: customer.name,
+  };
+}
+
+/* ==========================================================================
+ * ۱۴) تبدیل امتیاز به کد تخفیف (مشتری)
+ * ========================================================================== */
+
+export async function redeemPointsForCoupon(
+  env: Bindings,
+  settings: AppSettings,
+  userId: number
+): Promise<
+  | { ok: true; code: string; value: number; expiresAt: string; pointsLeft: number }
+  | { ok: false; error: string; code: string }
+> {
+  if (settings.redeem_enabled !== 1) {
+    return { ok: false, error: 'تبدیل امتیاز به کد تخفیف در حال حاضر فعال نیست.', code: 'REDEEM_DISABLED' };
+  }
+
+  const user = await findUserById(env.DB, userId);
+  if (!user || user.role !== 'customer') {
+    return { ok: false, error: 'کاربر یافت نشد.', code: 'NOT_FOUND' };
+  }
+  if (user.points < settings.redeem_points) {
+    return {
+      ok: false,
+      error: `برای این جایزه ${toPersianDigits(settings.redeem_points)} امتیاز لازم است؛ موجودی شما ${toPersianDigits(user.points)} امتیاز است.`,
+      code: 'NOT_ENOUGH_POINTS',
+    };
+  }
+
+  // کسر اتمیک: اگر هم‌زمان دو درخواست برسد، فقط یکی موفق می‌شود
+  const deducted = await env.DB.prepare(
+    `UPDATE users SET points = points - ?
+     WHERE id = ? AND role = 'customer' AND points >= ?
+     RETURNING points`
+  )
+    .bind(settings.redeem_points, userId, settings.redeem_points)
+    .first<{ points: number }>();
+
+  if (!deducted) {
+    return { ok: false, error: 'موجودی امتیاز کافی نیست.', code: 'NOT_ENOUGH_POINTS' };
+  }
+
+  const expiresAt = utcStamp(Date.now() + settings.redeem_expiry_days * 86_400_000);
+  const coupon = await createCoupon(env.DB, {
+    userId,
+    kind: 'amount',
+    value: settings.redeem_value,
+    reason: 'redeem',
+    expiresAt,
+    maxUses: 1,
+  });
+
+  if (!coupon) {
+    // اگر ساخت کد شکست خورد، امتیاز برمی‌گردد
+    await env.DB.prepare('UPDATE users SET points = points + ? WHERE id = ?')
+      .bind(settings.redeem_points, userId)
+      .run();
+    return { ok: false, error: 'ساخت کد تخفیف ناموفق بود؛ امتیاز شما برگشت داده شد.', code: 'COUPON_FAILED' };
+  }
+
+  await sendSms(env, settings, {
+    userId,
+    phone: user.phone,
+    type: 'redeem',
+    message: renderSms(settings, 'redeem', {
+      name: user.name,
+      points: toPersianDigits(settings.redeem_points),
+      coupon: coupon.code,
+      value: formatNumberFa(settings.redeem_value),
+      expiry: formatJalali(expiresAt),
+    }),
+  });
+
+  return {
+    ok: true,
+    code: coupon.code,
+    value: coupon.value,
+    expiresAt,
+    pointsLeft: deducted.points,
+  };
+}
+
+/* ==========================================================================
+ * ۱۵) داده‌های پنل مشتری
+ * ========================================================================== */
+
+export type CustomerPanelData = {
+  user: UserRow;
+  invoices: InvoiceRow[];
+  coupons: CouponRow[];
+  activeCoupons: CouponRow[];
+  totalSpent: number;
+  visits: number;
+  referrals: number;
+  nextTier: { key: string; label: string; current: number; target: number; need: number } | null;
+};
+
+export async function getCustomerPanelData(
+  db: D1Database,
+  userId: number,
+  settings: AppSettings
+): Promise<CustomerPanelData | null> {
+  const user = await findUserById(db, userId);
+  if (!user || user.role !== 'customer') return null;
+
+  const { results: invoices } = await db
+    .prepare(
+      `SELECT * FROM invoices
+       WHERE user_id = ? AND voided_at IS NULL
+       ORDER BY id DESC LIMIT 20`
+    )
+    .bind(userId)
+    .all<InvoiceRow>();
+
+  const { results: coupons } = await db
+    .prepare('SELECT * FROM coupons WHERE user_id = ? ORDER BY id DESC LIMIT 50')
+    .bind(userId)
+    .all<CouponRow>();
+
+  const totalRow = await db
+    .prepare(
+      'SELECT COALESCE(SUM(amount), 0) AS s, COUNT(*) AS c FROM invoices WHERE user_id = ? AND voided_at IS NULL'
+    )
+    .bind(userId)
+    .first<{ s: number; c: number }>();
+
+  const refRow = await db
+    .prepare('SELECT COUNT(*) AS c FROM users WHERE referred_by = ?')
+    .bind(userId)
+    .first<{ c: number }>();
+
+  const order: Array<{ key: string; label: string; threshold: number }> = [
+    { key: 'silver', label: 'نقره‌ای', threshold: settings.tiers.silver },
+    { key: 'gold', label: 'طلایی', threshold: settings.tiers.gold },
+    { key: 'vip', label: 'الماسی', threshold: settings.tiers.vip },
+  ];
+  const next = order.find((tier) => user.lifetime_points < tier.threshold) ?? null;
+  const currentFloor =
+    [...order].reverse().find((tier) => user.lifetime_points >= tier.threshold)?.threshold ?? 0;
+
+  return {
+    user,
+    invoices: invoices ?? [],
+    coupons: coupons ?? [],
+    activeCoupons: (coupons ?? []).filter((coupon) => {
+      if (coupon.is_active !== 1) return false;
+      if (coupon.used_count >= coupon.max_uses) return false;
+      if (!coupon.expires_at) return true;
+      const ms = sqliteToMs(coupon.expires_at);
+      return ms === null || ms >= Date.now();
+    }),
+    totalSpent: totalRow?.s ?? 0,
+    visits: totalRow?.c ?? 0,
+    referrals: refRow?.c ?? 0,
+    nextTier: next
+      ? {
+          key: next.key,
+          label: next.label,
+          current: Math.max(0, user.lifetime_points - currentFloor),
+          target: Math.max(1, next.threshold - currentFloor),
+          need: Math.max(0, next.threshold - user.lifetime_points),
+        }
+      : null,
+  };
+}
+
+/* ==========================================================================
+ * ۱۶) گزارش اقدامات مدیران
+ * ========================================================================== */
+
+export type AdminLogRow = {
+  id: number;
+  admin_id: number | null;
+  admin_name: string;
+  action: string;
+  target_type: string | null;
+  target_id: string | null;
+  details: string | null;
+  ip: string | null;
+  created_at: string;
+};
+
+export type AdminLogInput = {
+  adminId: number | null;
+  adminName: string;
+  action: string;
+  targetType?: string | null;
+  targetId?: string | number | null;
+  details?: string | null;
+  ip?: string | null;
+};
+
+/**
+ * ثبت یک اقدام حساس مدیر. خطا هرگز جلوی عملیات اصلی را نمی‌گیرد؛
+ * فقط در کنسول لاگ می‌شود تا نبودِ جدول باعث شکست عملیات نشود.
+ */
+export async function logAdminAction(db: D1Database, input: AdminLogInput): Promise<void> {
+  try {
+    await db
+      .prepare(
+        `INSERT INTO admin_logs (admin_id, admin_name, action, target_type, target_id, details, ip)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      )
+      .bind(
+        input.adminId,
+        String(input.adminName).slice(0, 80),
+        String(input.action).slice(0, 60),
+        input.targetType ? String(input.targetType).slice(0, 40) : null,
+        input.targetId === null || input.targetId === undefined
+          ? null
+          : String(input.targetId).slice(0, 40),
+        input.details ? String(input.details).slice(0, 500) : null,
+        input.ip ? String(input.ip).slice(0, 60) : null
+      )
+      .run();
+  } catch (error) {
+    console.error('logAdminAction failed:', error);
+  }
+}
+
+/** فهرست صفحه‌بندی‌شدهٔ اقدامات مدیران */
+export async function listAdminLogs(
+  db: D1Database,
+  params: { page?: number; pageSize?: number; action?: string; q?: string } = {}
+): Promise<{ items: AdminLogRow[]; total: number; page: number; pageSize: number }> {
+  const page = Math.max(1, Math.floor(params.page ?? 1));
+  const pageSize = Math.min(100, Math.max(10, Math.floor(params.pageSize ?? 50)));
+  const offset = (page - 1) * pageSize;
+
+  const where: string[] = ['1 = 1'];
+  const binds: Array<string | number> = [];
+
+  const action = String(params.action ?? '').trim().slice(0, 60);
+  if (action) {
+    where.push('action = ?');
+    binds.push(action);
+  }
+
+  const q = String(params.q ?? '').trim().slice(0, 60);
+  if (q) {
+    where.push('(admin_name LIKE ? OR details LIKE ? OR target_id LIKE ?)');
+    binds.push(`%${q}%`, `%${q}%`, `%${q}%`);
+  }
+
+  const whereSql = where.join(' AND ');
+
+  const totalRow = await db
+    .prepare(`SELECT COUNT(*) AS c FROM admin_logs WHERE ${whereSql}`)
+    .bind(...binds)
+    .first<{ c: number }>();
+
+  const { results } = await db
+    .prepare(`SELECT * FROM admin_logs WHERE ${whereSql} ORDER BY id DESC LIMIT ? OFFSET ?`)
+    .bind(...binds, pageSize, offset)
+    .all<AdminLogRow>();
+
+  return { items: results ?? [], total: totalRow?.c ?? 0, page, pageSize };
+}
+
+/** همهٔ اقدام‌های ثبت‌شده برای خروجی CSV */
+export async function exportAdminLogs(db: D1Database, limit = 5000): Promise<AdminLogRow[]> {
+  const safeLimit = Math.min(20_000, Math.max(1, Math.floor(limit)));
+  const { results } = await db
+    .prepare('SELECT * FROM admin_logs ORDER BY id DESC LIMIT ?')
+    .bind(safeLimit)
+    .all<AdminLogRow>();
+  return results ?? [];
+}
+
+/* ==========================================================================
+ * ۱۷) گزارش‌های تحلیلی (فروش، کارمند، ماندگاری، منو)
+ * ========================================================================== */
+
+export type StaffSalesRow = {
+  staff_id: number | null;
+  staff_name: string;
+  invoices: number;
+  amount: number;
+  points: number;
+};
+
+export type MenuItemSalesRow = { name: string; qty: number; amount: number };
+
+export type MonthlySalesRow = { label: string; amount: number; invoices: number };
+
+export type ReportsData = {
+  thisMonth: { label: string; sales: number; invoices: number; customers: number; avgBasket: number };
+  lastMonth: { label: string; sales: number; invoices: number; customers: number; avgBasket: number };
+  growth: { salesPct: number | null; invoicesPct: number | null };
+  staff: StaffSalesRow[];
+  retention: {
+    buyers: number;
+    repeatBuyers: number;
+    rate: number | null;
+    newThisMonth: number;
+    newLastMonth: number;
+  };
+  topItems: MenuItemSalesRow[];
+  months: MonthlySalesRow[];
+  totals: { customers: number; active: number; sleeping: number; points: number };
+};
+
+/**
+ * دادهٔ صفحهٔ گزارش‌ها. تعداد کوئری‌ها ثابت و کم است (مناسب محدودیت
+ * ۵۰ کوئری در هر فراخوانی Worker در پلن رایگان).
+ */
+export async function getReportsData(
+  db: D1Database,
+  settings: AppSettings,
+  timeZone = DEFAULT_TIMEZONE
+): Promise<ReportsData> {
+  const month = jalaliMonthRangeAt(0, timeZone);
+  const prevMonth = jalaliMonthRangeAt(1, timeZone);
+  const r90 = zonedDayRange(timeZone, 89);
+
+  const [
+    thisRow,
+    prevRow,
+    thisCustomers,
+    prevCustomers,
+    staffRows,
+    retentionRow,
+    newThisRow,
+    newPrevRow,
+    itemRows,
+    totalsRow,
+    pointsRow,
+  ] = await Promise.all([
+    db
+      .prepare(
+        `SELECT COALESCE(SUM(amount), 0) AS s, COUNT(*) AS c
+         FROM invoices WHERE voided_at IS NULL AND created_at >= ? AND created_at < ?`
+      )
+      .bind(month.start, month.end)
+      .first<{ s: number; c: number }>(),
+    db
+      .prepare(
+        `SELECT COALESCE(SUM(amount), 0) AS s, COUNT(*) AS c
+         FROM invoices WHERE voided_at IS NULL AND created_at >= ? AND created_at < ?`
+      )
+      .bind(prevMonth.start, prevMonth.end)
+      .first<{ s: number; c: number }>(),
+    db
+      .prepare(
+        `SELECT COUNT(DISTINCT user_id) AS c FROM invoices
+         WHERE voided_at IS NULL AND created_at >= ? AND created_at < ?`
+      )
+      .bind(month.start, month.end)
+      .first<{ c: number }>(),
+    db
+      .prepare(
+        `SELECT COUNT(DISTINCT user_id) AS c FROM invoices
+         WHERE voided_at IS NULL AND created_at >= ? AND created_at < ?`
+      )
+      .bind(prevMonth.start, prevMonth.end)
+      .first<{ c: number }>(),
+    db
+      .prepare(
+        `SELECT i.registered_by AS staff_id,
+                COALESCE(u.name, 'ثبت سیستمی') AS staff_name,
+                COUNT(*) AS invoices,
+                COALESCE(SUM(i.amount), 0) AS amount,
+                COALESCE(SUM(i.points_earned), 0) AS points
+         FROM invoices i LEFT JOIN users u ON u.id = i.registered_by
+         WHERE i.voided_at IS NULL AND i.created_at >= ? AND i.created_at < ?
+         GROUP BY i.registered_by
+         ORDER BY amount DESC`
+      )
+      .bind(month.start, month.end)
+      .all<StaffSalesRow>(),
+    db
+      .prepare(
+        `SELECT COUNT(*) AS buyers,
+                SUM(CASE WHEN visits >= 2 THEN 1 ELSE 0 END) AS repeat_buyers
+         FROM (
+           SELECT user_id, COUNT(*) AS visits
+           FROM invoices
+           WHERE voided_at IS NULL AND created_at >= ?
+           GROUP BY user_id
+         )`
+      )
+      .bind(r90.start)
+      .first<{ buyers: number; repeat_buyers: number | null }>(),
+    db
+      .prepare(
+        `SELECT COUNT(*) AS c FROM users
+         WHERE role = 'customer' AND created_at >= ? AND created_at < ?`
+      )
+      .bind(month.start, month.end)
+      .first<{ c: number }>(),
+    db
+      .prepare(
+        `SELECT COUNT(*) AS c FROM users
+         WHERE role = 'customer' AND created_at >= ? AND created_at < ?`
+      )
+      .bind(prevMonth.start, prevMonth.end)
+      .first<{ c: number }>(),
+    db
+      .prepare(
+        `SELECT items FROM invoices
+         WHERE voided_at IS NULL AND created_at >= ?
+         ORDER BY id DESC LIMIT 2000`
+      )
+      .bind(r90.start)
+      .all<{ items: string }>(),
+    db
+      .prepare(
+        `SELECT COUNT(*) AS all_customers,
+                SUM(CASE WHEN last_visit_date IS NOT NULL
+                          AND last_visit_date >= datetime('now', '-30 days') THEN 1 ELSE 0 END) AS active
+         FROM users WHERE role = 'customer'`
+      )
+      .first<{ all_customers: number; active: number }>(),
+    db
+      .prepare(`SELECT COALESCE(SUM(points), 0) AS p FROM users WHERE role = 'customer'`)
+      .first<{ p: number }>(),
+  ]);
+
+  // فاکتورهای ۶ ماه اخیر (۶ کوئری شمارشی) — با Promise.all موازی اجرا می‌شوند
+  const monthRanges = [0, 1, 2, 3, 4, 5].map((offset) => jalaliMonthRangeAt(offset, timeZone));
+  const monthRows = await Promise.all(
+    monthRanges.map((range) =>
+      db
+        .prepare(
+          `SELECT COALESCE(SUM(amount), 0) AS s, COUNT(*) AS c
+           FROM invoices WHERE voided_at IS NULL AND created_at >= ? AND created_at < ?`
+        )
+        .bind(range.start, range.end)
+        .first<{ s: number; c: number }>()
+    )
+  );
+
+  // جمع‌بندی آیتم‌های منو در ۹۰ روز اخیر
+  const itemMap = new Map<string, MenuItemSalesRow>();
+  for (const row of itemRows.results ?? []) {
+    const parsed = safeJsonParse<Array<{ name?: unknown; qty?: unknown; price?: unknown }>>(
+      row.items,
+      []
+    );
+    if (!Array.isArray(parsed)) continue;
+    for (const item of parsed) {
+      const name = String(item?.name ?? '').trim().slice(0, 60);
+      if (!name) continue;
+      const qty = Math.max(0, Math.floor(Number(item?.qty) || 0));
+      const price = Math.max(0, Math.floor(Number(item?.price) || 0));
+      const current = itemMap.get(name) ?? { name, qty: 0, amount: 0 };
+      current.qty += qty;
+      current.amount += qty * price;
+      itemMap.set(name, current);
+    }
+  }
+
+  const topItems = Array.from(itemMap.values())
+    .sort((a, b) => b.qty - a.qty || b.amount - a.amount)
+    .slice(0, 10);
+
+  const thisSales = thisRow?.s ?? 0;
+  const prevSales = prevRow?.s ?? 0;
+  const thisCount = thisRow?.c ?? 0;
+  const prevCount = prevRow?.c ?? 0;
+
+  const pct = (current: number, previous: number): number | null => {
+    if (!previous) return current > 0 ? 100 : null;
+    return Math.round(((current - previous) / previous) * 1000) / 10;
+  };
+
+  const buyers = retentionRow?.buyers ?? 0;
+  const repeatBuyers = retentionRow?.repeat_buyers ?? 0;
+
+  const sleepingRow = await db
+    .prepare(
+      `SELECT COUNT(*) AS c FROM users u
+       WHERE u.role = 'customer' AND u.last_visit_date IS NOT NULL
+         AND julianday('now') - julianday(u.last_visit_date) >
+             (CASE WHEN (SELECT COUNT(*) FROM invoices i
+                          WHERE i.user_id = u.id AND i.voided_at IS NULL) >= ?
+                     AND u.avg_visit_interval > 0
+                   THEN u.avg_visit_interval ELSE ? END) + ?`
+    )
+    .bind(settings.churn_min_visits, CHURN_DEFAULT_INTERVAL, settings.churn_grace_days)
+    .first<{ c: number }>();
+
+  return {
+    thisMonth: {
+      label: month.label,
+      sales: thisSales,
+      invoices: thisCount,
+      customers: thisCustomers?.c ?? 0,
+      avgBasket: thisCount > 0 ? Math.round(thisSales / thisCount) : 0,
+    },
+    lastMonth: {
+      label: prevMonth.label,
+      sales: prevSales,
+      invoices: prevCount,
+      customers: prevCustomers?.c ?? 0,
+      avgBasket: prevCount > 0 ? Math.round(prevSales / prevCount) : 0,
+    },
+    growth: { salesPct: pct(thisSales, prevSales), invoicesPct: pct(thisCount, prevCount) },
+    staff: staffRows.results ?? [],
+    retention: {
+      buyers,
+      repeatBuyers,
+      rate: buyers > 0 ? Math.round((repeatBuyers / buyers) * 1000) / 10 : null,
+      newThisMonth: newThisRow?.c ?? 0,
+      newLastMonth: newPrevRow?.c ?? 0,
+    },
+    topItems,
+    months: monthRanges.map((range, index) => ({
+      label: range.label,
+      amount: monthRows[index]?.s ?? 0,
+      invoices: monthRows[index]?.c ?? 0,
+    })),
+    totals: {
+      customers: totalsRow?.all_customers ?? 0,
+      active: totalsRow?.active ?? 0,
+      sleeping: sleepingRow?.c ?? 0,
+      points: pointsRow?.p ?? 0,
+    },
+  };
 }

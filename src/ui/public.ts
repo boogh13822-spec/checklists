@@ -25,8 +25,11 @@ export function landingPage(settings: AppSettings): string {
   const benefits = [
     {
       icon: 'star',
-      title: 'با هر خرید امتیاز بگیر',
-      desc: `هر ${unit} تومان خرید = ${ratio} امتیاز؛ امتیازها جمع می‌شوند و سطحت را بالا می‌برند.`,
+      title: settings.points_mode === 'visit' ? 'هر روز که بیایی، امتیاز بگیر' : 'با هر خرید امتیاز بگیر',
+      desc:
+        settings.points_mode === 'visit'
+          ? `هر روزی که در ${settings.cafe_name} خرید کنی ${toPersianDigits(settings.visit_points)} امتیاز می‌گیری؛ سطحت با مجموع امتیازها بالا می‌رود.`
+          : `هر ${unit} تومان خرید = ${ratio} امتیاز؛ امتیازها جمع می‌شوند و سطحت را بالا می‌برند.`,
     },
     {
       icon: 'gift',
@@ -75,6 +78,11 @@ export function landingPage(settings: AppSettings): string {
         <p class="mt-3 text-[11px] text-cream/35">
           کمتر از یک دقیقه · فقط نام، شماره موبایل و تاریخ تولد
         </p>
+
+        <a href="/me/login" class="inline-flex items-center gap-1.5 text-[11.5px] text-cream/45 hover:text-gold transition mt-4">
+          ${icon('star', 'w-3.5 h-3.5')}
+          عضو هستید؟ امتیازهایم را ببینم
+        </a>
       </div>
 
       <!-- سه مزیت اصلی -->
@@ -198,6 +206,11 @@ export function registerPage(
             <span>با عضویت در باشگاه مشتریان موافقم و می‌دانم اطلاعات شماره موبایل برای ارسال پیامک‌های باشگاه استفاده می‌شود.</span>
           </label>
 
+          <label class="flex items-start gap-2.5 text-[11.5px] text-cream/50 leading-6 cursor-pointer select-none">
+            <input id="sms-opt-in" type="checkbox" class="mt-1 accent-amber-500 w-4 h-4" checked />
+            <span>پیامک‌های پیشنهاد ویژه، هدیه تولد و یادآوری را دریافت می‌کنم. (رسید خرید همیشه ارسال می‌شود)</span>
+          </label>
+
           <button type="submit" id="submit-btn" class="btn btn-primary w-full !py-3">
             ${icon('sparkles', 'w-5 h-5')}
             <span>ثبت‌نام و دریافت کارت عضویت</span>
@@ -219,7 +232,9 @@ export function registerPage(
           </h2>
           <ul class="space-y-3.5">
             ${[
-              `به ازای هر ${formatNumberFa(settings.currency_unit)} تومان خرید، ${toPersianDigits(settings.points_per_currency)} امتیاز`,
+              settings.points_mode === 'visit'
+                ? `هر روز خرید = ${toPersianDigits(settings.visit_points)} امتیاز (حداقل ${formatNumberFa(settings.visit_min_amount)} تومان)`
+                : `به ازای هر ${formatNumberFa(settings.currency_unit)} تومان خرید، ${toPersianDigits(settings.points_per_currency)} امتیاز`,
               `کد تخفیف ${toPersianDigits(settings.birthday_coupon_percent)} درصدی در روز تولد`,
               `${toPersianDigits(settings.referral_reward_points)} امتیاز پاداش برای هر معرفی موفق`,
               'پیامک وضعیت آب‌وهوا و پیشنهادهای ویژه',
@@ -335,6 +350,7 @@ export function registerPage(
       var phone = normalizePhone($('#phone').value);
       var referral = $('#referral').value.trim();
       var terms = $('#terms').checked;
+      var smsOptIn = $('#sms-opt-in').checked;
 
       if (name.length < 2) { toast('نام را کامل وارد کنید.', 'error'); $('#name').focus(); return; }
       if (!/^09\\d{9}$/.test(phone)) { toast('شماره موبایل باید با ۰۹ شروع شده و ۱۱ رقم باشد.', 'error'); $('#phone').focus(); return; }
@@ -347,7 +363,13 @@ export function registerPage(
       try {
         var data = await api('/api/auth/register', {
           method: 'POST',
-          body: { name: name, phone: phone, birth_date: birth, referral: referral }
+          body: {
+            name: name,
+            phone: phone,
+            birth_date: birth,
+            referral: referral,
+            sms_opt_in: smsOptIn ? 1 : 0
+          }
         });
         lastReferral = data.referralCode;
         $('#s-name').textContent = data.name;

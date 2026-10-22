@@ -19,6 +19,7 @@ import {
   getActiveUser,
   homeForRole,
   isSecureRequest,
+  customerSessionTtl,
   requireApiRole,
   requirePageRole,
   resetRateLimit,
@@ -34,14 +35,22 @@ import {
   findUserByPhone,
   findUserById,
   getCustomerDetail,
+  exportAdminLogs,
+  getCustomerPanelData,
   getDashboardStats,
+  getReportsData,
+  listAdminLogs,
+  logAdminAction,
+  hasVisitPointsToday,
   listCoupons,
   listCustomers,
   listInvoices,
   listSmsLogs,
   listStaff,
   recordInvoice,
+  redeemPointsForCoupon,
   registerCustomer,
+  voidInvoice,
 } from './lib/db';
 import { coerceSmsProvider, loadMenuItems, loadSettings, saveSetting } from './lib/settings';
 import { fetchSmsCredit, fetchWeather, renderSms, sendSms, weatherSummary } from './lib/sms';
@@ -52,6 +61,7 @@ import {
   runJobByName,
 } from './lib/jobs';
 import { hashPassword, verifyPassword, generateCouponCode } from './lib/crypto';
+import { requestOtpCode, verifyOtpCode } from './lib/otp';
 import {
   DEFAULT_TIMEZONE,
   fail,
@@ -62,6 +72,8 @@ import {
   jalaliWeekday,
   normalizePhone,
   ok,
+  resolveTimeZone as resolveTimeZoneName,
+  safeJsonParse,
   todayISO,
   toIntInRange,
   toPersianDigits,
@@ -72,6 +84,10 @@ import {
 } from './lib/utils';
 
 import { errorPage } from './ui/layout';
+import {
+  customerLoginPage,
+  customerPanelPage,
+} from './ui/customer';
 import { landingPage, loginPage, registerPage } from './ui/public';
 import { staffPage, staffHistoryPage, customerSummaryForApi } from './ui/staff';
 import {
@@ -87,6 +103,7 @@ import {
   adminSmsPage,
   adminStaffPage,
 } from './ui/adminManage';
+import { adminLogsCsv, adminLogsPage, adminReportsPage, reportsCsv } from './ui/reports';
 
 /* ==========================================================================
  *  راه‌اندازی اپلیکیشن
@@ -99,14 +116,34 @@ const app = new Hono<AppEnv>();
  * اگر مقدار نامعتبر باشد، به پیش‌فرض برمی‌گردیم تا اپ کرش نکند.
  */
 function resolveTimeZone(env: Bindings): string {
-  const raw = (env.TZ_NAME ?? '').trim();
-  if (!raw) return DEFAULT_TIMEZONE;
-  try {
-    new Intl.DateTimeFormat('en-US', { timeZone: raw });
-    return raw;
-  } catch {
-    return DEFAULT_TIMEZONE;
-  }
+  return resolveTimeZoneName(env.TZ_NAME);
+}
+
+/** ثبت اقدام حساس مدیر در گزارش اقدامات (بدون شکست دادن عملیات اصلی) */
+async function audit(
+  c: {
+    env: Bindings;
+    get: (key: 'user') => { uid: number; name: string } | undefined;
+    req: { header: (name: string) => string | undefined };
+  },
+  action: string,
+  opts: { targetType?: string; targetId?: string | number | null; details?: string } = {}
+): Promise<void> {
+  const actor = c.get('user');
+  const ip =
+    c.req.header('CF-Connecting-IP') ||
+    c.req.header('X-Forwarded-For')?.split(',')[0]?.trim() ||
+    null;
+
+  await logAdminAction(c.env.DB, {
+    adminId: actor?.uid ?? null,
+    adminName: actor?.name ?? 'سیستم',
+    action,
+    targetType: opts.targetType ?? null,
+    targetId: opts.targetId ?? null,
+    details: opts.details ?? null,
+    ip,
+  });
 }
 
 /**
@@ -269,7 +306,7 @@ app.get('/staff', requirePageRole('staff', 'admin'), async (c) => {
 
   const statsRow = await c.env.DB.prepare(
     `SELECT COUNT(*) AS c, COALESCE(SUM(amount), 0) AS s
-     FROM invoices WHERE registered_by = ? AND created_at >= ? AND created_at < ?`
+     FROM invoices WHERE voided_at IS NULL AND registered_by = ? AND created_at >= ? AND created_at < ?`
   )
     .bind(user.uid, day.start, day.end)
     .first<{ c: number; s: number }>();
@@ -277,7 +314,7 @@ app.get('/staff', requirePageRole('staff', 'admin'), async (c) => {
   const { results } = await c.env.DB.prepare(
     `SELECT i.id, i.amount, i.created_at, u.name AS customer_name
      FROM invoices i JOIN users u ON u.id = i.user_id
-     WHERE i.registered_by = ? AND i.created_at >= ? AND i.created_at < ?
+     WHERE i.voided_at IS NULL AND i.registered_by = ? AND i.created_at >= ? AND i.created_at < ?
      ORDER BY i.id DESC LIMIT 8`
   )
     .bind(user.uid, day.start, day.end)
@@ -312,7 +349,8 @@ app.get('/staff/history', requirePageRole('staff', 'admin'), async (c) => {
     .all<InvoiceRowWithCustomer>();
 
   const summaryRow = await c.env.DB.prepare(
-    `SELECT COUNT(*) AS c, COALESCE(SUM(amount), 0) AS s FROM invoices WHERE registered_by = ?`
+    `SELECT COUNT(*) AS c, COALESCE(SUM(amount), 0) AS s
+     FROM invoices WHERE voided_at IS NULL AND registered_by = ?`
   )
     .bind(user.uid)
     .first<{ c: number; s: number }>();
@@ -592,6 +630,66 @@ app.get('/admin/coupons', requirePageRole('admin'), async (c) => {
   );
 });
 
+app.get('/admin/reports', requirePageRole('admin'), async (c) => {
+  const settings = c.get('settings');
+  const user = c.get('user')!;
+  const data = await getReportsData(c.env.DB, settings, resolveTimeZone(c.env));
+
+  return c.html(adminReportsPage({ settings, userName: user.name, data }));
+});
+
+app.get('/admin/reports/export.csv', requirePageRole('admin'), async (c) => {
+  const settings = c.get('settings');
+  const data = await getReportsData(c.env.DB, settings, resolveTimeZone(c.env));
+  const filename = `reports-${todayISO(resolveTimeZone(c.env))}.csv`;
+
+  return new Response(reportsCsv(data), {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Cache-Control': 'no-store',
+    },
+  });
+});
+
+app.get('/admin/logs', requirePageRole('admin'), async (c) => {
+  const settings = c.get('settings');
+  const user = c.get('user')!;
+  const page = toPositiveInt(c.req.query('page'), 1) || 1;
+  const action = String(c.req.query('action') ?? '').slice(0, 60);
+  const q = String(c.req.query('q') ?? '').slice(0, 60);
+
+  const result = await listAdminLogs(c.env.DB, { page, pageSize: 50, action, q });
+
+  return c.html(
+    adminLogsPage({
+      settings,
+      userName: user.name,
+      logs: result.items,
+      total: result.total,
+      page: result.page,
+      pageSize: result.pageSize,
+      action,
+      q,
+    })
+  );
+});
+
+app.get('/admin/logs/export.csv', requirePageRole('admin'), async (c) => {
+  const rows = await exportAdminLogs(c.env.DB);
+  const filename = `admin-logs-${todayISO(resolveTimeZone(c.env))}.csv`;
+
+  return new Response(adminLogsCsv(rows), {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Cache-Control': 'no-store',
+    },
+  });
+});
+
 app.get('/admin/export/customers.csv', requirePageRole('admin'), async (c) => {
   // یک کوئری، بدون حلقه‌ی صفحه‌بندی: روی پلن رایگان سقف ۵۰ کوئری در هر اجرا داریم
   // و نسخه‌ی قبلی هم به همین دلیل حداکثر ۲۰۰۰ مشتری را (بی‌صدا) خروجی می‌داد.
@@ -697,6 +795,8 @@ app.post('/api/auth/register', async (c) => {
   const phone = normalizePhone(String(body.phone ?? ''));
   const birthDate = String(body.birth_date ?? '').slice(0, 10);
   const referral = String(body.referral ?? '').trim().slice(0, 30);
+  // رضایت پیامکی: فقط اگر صریحاً false/0 بفرستند غیرفعال می‌شود
+  const smsOptIn = body.sms_opt_in === false || body.sms_opt_in === 0 ? 0 : 1;
 
   if (name.length < 2) {
     return fail(c, 'نام و نام خانوادگی را کامل وارد کنید.', 400, 'INVALID_NAME');
@@ -713,6 +813,7 @@ app.post('/api/auth/register', async (c) => {
     phone,
     birth_date: birthDate,
     referral: referral || null,
+    sms_opt_in: smsOptIn,
   });
 
   if (result.ok === false) {
@@ -742,6 +843,151 @@ app.post('/api/auth/logout', (c) => {
 app.get('/api/auth/logout', (c) => {
   clearSessionCookie(c, isSecureRequest(c));
   return c.redirect('/login', 302);
+});
+
+app.post('/api/auth/logout', (c) => {
+  clearSessionCookie(c, isSecureRequest(c));
+  return ok(c, { loggedOut: true });
+});
+
+/* ==========================================================================
+ *  مشتری — ورود با کد یک‌بارمصرف و باشگاه من
+ * ========================================================================== */
+
+app.get('/me/login', (c) => {
+  const settings = c.get('settings');
+  const user = c.get('user');
+  if (user) return c.redirect(homeForRole(user.role), 302);
+
+  return c.html(
+    customerLoginPage(settings, {
+      expired: c.req.query('expired') === '1',
+      disabled: settings.otp_login_enabled !== 1,
+    })
+  );
+});
+
+app.get('/me', async (c) => {
+  const settings = c.get('settings');
+  const user = c.get('user');
+
+  if (!user) {
+    return c.redirect('/me/login', 302);
+  }
+  if (user.role !== 'customer') {
+    return c.redirect(homeForRole(user.role), 302);
+  }
+
+  const data = await getCustomerPanelData(c.env.DB, user.uid, settings);
+  if (!data) {
+    clearSessionCookie(c, isSecureRequest(c));
+    return c.redirect('/me/login?expired=1', 302);
+  }
+
+  return c.html(customerPanelPage(settings, data));
+});
+
+app.post('/api/auth/otp/request', async (c) => {
+  const settings = c.get('settings');
+
+  let body: Record<string, unknown>;
+  try {
+    body = (await c.req.json()) as Record<string, unknown>;
+  } catch {
+    return fail(c, 'داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
+  }
+
+  const phone = normalizePhone(String(body.phone ?? ''));
+  if (!/^09\d{9}$/.test(phone)) {
+    return fail(c, 'شماره موبایل نامعتبر است.', 400, 'INVALID_PHONE');
+  }
+
+  const result = await requestOtpCode(c.env, settings, phone, clientKey(c));
+  if (result.ok === false) {
+    if (result.retryAfter) c.header('Retry-After', String(result.retryAfter));
+    return fail(c, result.error, result.code === 'RATE_LIMITED' ? 429 : 400, result.code);
+  }
+
+  return ok(c, { sent: result.sent, ttl: result.ttl });
+});
+
+app.post('/api/auth/otp/verify', async (c) => {
+  const secret = assertJwtSecret(c.env);
+  if (!secret) return fail(c, 'پیکربندی سرور کامل نیست (JWT_SECRET).', 500, 'NO_SECRET');
+
+  let body: Record<string, unknown>;
+  try {
+    body = (await c.req.json()) as Record<string, unknown>;
+  } catch {
+    return fail(c, 'داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
+  }
+
+  const phone = normalizePhone(String(body.phone ?? ''));
+  const code = String(body.code ?? '').replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)));
+
+  if (!/^09\d{9}$/.test(phone)) {
+    return fail(c, 'شماره موبایل نامعتبر است.', 400, 'INVALID_PHONE');
+  }
+
+  const limited = checkRateLimit(`otp-verify:${clientKey(c)}`, 15, 10 * 60_000);
+  if (!limited.allowed) {
+    c.header('Retry-After', String(limited.retryAfter));
+    return fail(c, 'تعداد تلاش‌ها زیاد است؛ کمی بعد دوباره امتحان کنید.', 429, 'RATE_LIMITED');
+  }
+
+  const result = await verifyOtpCode(c.env, phone, code);
+  if (result.ok === false) {
+    return fail(c, result.error, 400, result.code);
+  }
+
+  const user = await getActiveUser(c.env.DB, result.userId);
+  if (!user) return fail(c, 'این حساب در دسترس نیست.', 403, 'ACCOUNT_DISABLED');
+
+  resetRateLimit(`otp-verify:${clientKey(c)}`);
+
+  const ttl = customerSessionTtl(c.env);
+  const token = await createToken(secret, user, ttl);
+  setSessionCookie(c, token, isSecureRequest(c), ttl);
+
+  return ok(c, { redirect: '/me', name: user.name });
+});
+
+app.post('/api/me/redeem', requireApiRole('customer'), async (c) => {
+  const user = c.get('user')!;
+  const settings = c.get('settings');
+
+  const result = await redeemPointsForCoupon(c.env, settings, user.uid);
+  if (result.ok === false) {
+    const status = result.code === 'NOT_FOUND' ? 404 : 400;
+    return fail(c, result.error, status, result.code);
+  }
+
+  return ok(c, {
+    code: result.code,
+    value: result.value,
+    expiresAt: result.expiresAt,
+    pointsLeft: result.pointsLeft,
+  });
+});
+
+app.post('/api/me/sms-opt-in', requireApiRole('customer'), async (c) => {
+  const user = c.get('user')!;
+
+  let body: Record<string, unknown>;
+  try {
+    body = (await c.req.json()) as Record<string, unknown>;
+  } catch {
+    return fail(c, 'داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
+  }
+
+  const optIn = body.optIn === 1 || body.optIn === true ? 1 : 0;
+  await c.env.DB.prepare(
+    "UPDATE users SET sms_opt_in = ? WHERE id = ? AND role = 'customer'"
+  )
+    .bind(optIn, user.uid)
+    .run();
+
+  return ok(c, { smsOptIn: optIn });
 });
 
 app.get('/api/auth/me', async (c) => {
@@ -780,7 +1026,7 @@ app.get('/api/staff/customer', requireApiRole('staff', 'admin'), async (c) => {
   }
 
   const visitsRow = await c.env.DB.prepare(
-    'SELECT COUNT(*) AS c FROM invoices WHERE user_id = ?'
+    'SELECT COUNT(*) AS c FROM invoices WHERE user_id = ? AND voided_at IS NULL'
   )
     .bind(user.id)
     .first<{ c: number }>();
@@ -801,9 +1047,20 @@ app.get('/api/staff/customer', requireApiRole('staff', 'admin'), async (c) => {
     .bind(user.id)
     .all<{ code: string; kind: string; value: number }>();
 
+  const visitEarnedToday = await hasVisitPointsToday(
+    c.env.DB,
+    user.id,
+    resolveTimeZone(c.env)
+  );
+
   return ok(c, {
     found: true,
-    customer: customerSummaryForApi(user, status, coupons ?? []),
+    customer: customerSummaryForApi(user, status, coupons ?? [], {
+      visitEarnedToday,
+      pointsMode: settings.points_mode,
+      visitPoints: settings.visit_points,
+      visitMinAmount: settings.visit_min_amount,
+    }),
   });
 });
 
@@ -850,12 +1107,17 @@ app.post('/api/staff/invoices', requireApiRole('staff', 'admin'), async (c) => {
   const amountRaw = body.amount === null || body.amount === undefined ? null : Number(body.amount);
   const couponCode = body.couponCode ? String(body.couponCode).trim().slice(0, 30) : null;
 
+  const clientRequestId = body.clientRequestId
+    ? String(body.clientRequestId).slice(0, 64)
+    : null;
+
   const result = await recordInvoice(c.env, settings, {
     userId,
     items,
     amount: amountRaw === null || !Number.isFinite(amountRaw) ? null : Math.floor(amountRaw),
     couponCode,
     registeredBy: user.uid,
+    clientRequestId,
   });
 
   if (result.ok === false) {
@@ -874,7 +1136,7 @@ app.get('/api/staff/invoices/today', requireApiRole('staff', 'admin'), async (c)
   const { results } = await c.env.DB.prepare(
     `SELECT i.id, i.amount, i.created_at, u.name AS customer_name
      FROM invoices i JOIN users u ON u.id = i.user_id
-     WHERE i.registered_by = ? AND i.created_at >= ? AND i.created_at < ?
+     WHERE i.voided_at IS NULL AND i.registered_by = ? AND i.created_at >= ? AND i.created_at < ?
      ORDER BY i.id DESC LIMIT 50`
   )
     .bind(user.uid, day.start, day.end)
@@ -930,6 +1192,7 @@ app.post('/api/admin/customers', requireApiRole('admin'), async (c) => {
     phone,
     birth_date: birthDate,
     referral: referral || null,
+    sms_opt_in: body.sms_opt_in === false || body.sms_opt_in === 0 ? 0 : 1,
   });
 
   if (result.ok === false) {
@@ -1007,6 +1270,12 @@ app.post('/api/admin/customers/:id/points', requireApiRole('admin'), async (c) =
     return fail(c, result.error, 404, 'NOT_FOUND');
   }
 
+  await audit(c, 'points_adjust', {
+    targetType: 'customer',
+    targetId: id,
+    details: `${delta > 0 ? '+' : ''}${delta} امتیاز → موجودی ${result.points}`,
+  });
+
   return ok(c, { points: result.points, tier: result.tier });
 });
 
@@ -1020,6 +1289,7 @@ app.post('/api/admin/customers/:id/deactivate', requireApiRole('admin'), async (
     .bind(id)
     .run();
   if (!result.meta?.changes) return fail(c, 'مشتری یافت نشد.', 404, 'NOT_FOUND');
+  await audit(c, 'customer_update', { targetType: 'customer', targetId: id, details: 'حساب مشتری غیرفعال شد.' });
   return ok(c, { isActive: false });
 });
 
@@ -1033,7 +1303,143 @@ app.post('/api/admin/customers/:id/activate', requireApiRole('admin'), async (c)
     .bind(id)
     .run();
   if (!result.meta?.changes) return fail(c, 'مشتری یافت نشد.', 404, 'NOT_FOUND');
+  await audit(c, 'customer_update', { targetType: 'customer', targetId: id, details: 'حساب مشتری فعال شد.' });
   return ok(c, { isActive: true });
+});
+
+app.post('/api/admin/invoices/:id/void', requireApiRole('admin'), async (c) => {
+  const user = c.get('user')!;
+  const settings = c.get('settings');
+  const id = toPositiveInt(c.req.param('id'), 0);
+  if (!id) return fail(c, 'شناسه فاکتور نامعتبر است.', 400, 'INVALID_ID');
+
+  const result = await voidInvoice(c.env, settings, id, user.uid);
+  if (result.ok === false) {
+    const status = result.code === 'NOT_FOUND' ? 404 : 409;
+    return fail(c, result.error, status, result.code);
+  }
+
+  await audit(c, 'invoice_void', {
+    targetType: 'invoice',
+    targetId: id,
+    details: `فاکتور ${result.customerName} باطل شد؛ ${result.pointsReversed} امتیاز برگشت خورد.`,
+  });
+
+  return ok(c, {
+    voided: true,
+    pointsReversed: result.pointsReversed,
+    customerId: result.customerId,
+    customerName: result.customerName,
+  });
+});
+
+app.delete('/api/admin/customers/:id', requireApiRole('admin'), async (c) => {
+  const id = toPositiveInt(c.req.param('id'), 0);
+  if (!id) return fail(c, 'شناسه نامعتبر است.', 400, 'INVALID_ID');
+
+  const user = await findUserById(c.env.DB, id);
+  if (!user || user.role !== 'customer') {
+    return fail(c, 'مشتری یافت نشد.', 404, 'NOT_FOUND');
+  }
+
+  // فاکتورها، کدهای تخفیف و لاگ‌های پیامک طبق کلیدهای خارجی مدیریت می‌شوند
+  await c.env.DB.prepare("DELETE FROM users WHERE id = ? AND role = 'customer'")
+    .bind(id)
+    .run();
+
+  await audit(c, 'customer_delete', {
+    targetType: 'customer',
+    targetId: id,
+    details: `مشتری «${user.name}» با شماره ${user.phone} حذف شد.`,
+  });
+
+  return ok(c, { deleted: true, id });
+});
+
+app.post('/api/admin/sms/test', requireApiRole('admin'), async (c) => {
+  const settings = c.get('settings');
+
+  let body: Record<string, unknown>;
+  try {
+    body = (await c.req.json()) as Record<string, unknown>;
+  } catch {
+    return fail(c, 'داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
+  }
+
+  const phone = normalizePhone(String(body.phone ?? ''));
+  if (!/^09\d{9}$/.test(phone)) {
+    return fail(c, 'شماره موبایل نامعتبر است.', 400, 'INVALID_PHONE');
+  }
+
+  const result = await sendSms(c.env, settings, {
+    userId: null,
+    phone,
+    type: 'admin',
+    message: `پیامک آزمایشی از باشگاه ${settings.cafe_name} ☕\nاگر این پیام را دریافت کردید، تنظیمات sms.ir درست است.`,
+  });
+
+  if (result.status === 'sent') {
+    return ok(c, { status: result.status, message: 'پیامک آزمایشی ارسال شد.' });
+  }
+
+  return fail(
+    c,
+    result.error || 'ارسال پیامک آزمایشی ناموفق بود.',
+    400,
+    'SMS_FAILED'
+  );
+});
+
+app.get('/admin/export/backup.json', requirePageRole('admin'), async (c) => {
+  // خروجی پشتیبان کامل (بدون هیچ کلید یا رمزی)
+  const [usersRes, invoicesRes, couponsRes, settingsRes, smsRes] = await Promise.all([
+    c.env.DB.prepare(
+      `SELECT id, name, phone, birth_date, points, lifetime_points, tier, referred_by,
+              referral_code, last_visit_date, avg_visit_interval, role, is_active,
+              first_purchase_at, referral_rewarded, sms_opt_in, created_at
+       FROM users ORDER BY id ASC`
+    ).all<Record<string, unknown>>(),
+    c.env.DB.prepare('SELECT * FROM invoices ORDER BY id ASC LIMIT 50000').all<Record<string, unknown>>(),
+    c.env.DB.prepare('SELECT * FROM coupons ORDER BY id ASC').all<Record<string, unknown>>(),
+    c.env.DB.prepare('SELECT key, value FROM settings').all<{ key: string; value: string }>(),
+    c.env.DB.prepare(
+      'SELECT id, user_id, type, status, sent_at FROM sms_logs ORDER BY id DESC LIMIT 20000'
+    ).all<Record<string, unknown>>(),
+  ]);
+
+  const blocked = new Set(['sms_api_key', 'weather_api_key']);
+  const settings: Record<string, unknown> = {};
+  for (const row of settingsRes.results ?? []) {
+    if (blocked.has(row.key)) continue;
+    settings[row.key] = safeJsonParse<unknown>(row.value, row.value);
+  }
+
+  const backup = {
+    app: 'cafe-club',
+    version: 1,
+    generated_at: new Date().toISOString(),
+    counts: {
+      users: usersRes.results?.length ?? 0,
+      invoices: invoicesRes.results?.length ?? 0,
+      coupons: couponsRes.results?.length ?? 0,
+      sms_logs: smsRes.results?.length ?? 0,
+    },
+    users: usersRes.results ?? [],
+    invoices: invoicesRes.results ?? [],
+    coupons: couponsRes.results ?? [],
+    sms_logs: smsRes.results ?? [],
+    settings,
+  };
+
+  const date = todayISO(resolveTimeZone(c.env));
+  return new Response(JSON.stringify(backup, null, 2), {
+    status: 200,
+    headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Content-Disposition': `attachment; filename="cafe-club-backup-${date}.json"`,
+      'Cache-Control': 'no-store',
+    },
+  });
 });
 
 app.get('/api/admin/settings', requireApiRole('admin'), async (c) => {
@@ -1069,8 +1475,32 @@ app.put('/api/admin/settings', requireApiRole('admin'), async (c) => {
     if (body.currency_unit !== undefined) {
       await saveSetting(c.env, 'currency_unit', toIntInRange(body.currency_unit, 1, 10_000_000, 1000));
     }
+    if (body.points_mode !== undefined) {
+      await saveSetting(c.env, 'points_mode', body.points_mode === 'visit' ? 'visit' : 'amount');
+    }
     if (body.points_per_currency !== undefined) {
       await saveSetting(c.env, 'points_per_currency', toIntInRange(body.points_per_currency, 1, 1000, 1));
+    }
+    if (body.visit_points !== undefined) {
+      await saveSetting(c.env, 'visit_points', toIntInRange(body.visit_points, 1, 100_000, 15));
+    }
+    if (body.visit_min_amount !== undefined) {
+      await saveSetting(c.env, 'visit_min_amount', toIntInRange(body.visit_min_amount, 0, 100_000_000, 30_000));
+    }
+    if (body.redeem_enabled !== undefined) {
+      await saveSetting(c.env, 'redeem_enabled', body.redeem_enabled ? 1 : 0);
+    }
+    if (body.redeem_points !== undefined) {
+      await saveSetting(c.env, 'redeem_points', toIntInRange(body.redeem_points, 1, 10_000_000, 200));
+    }
+    if (body.redeem_value !== undefined) {
+      await saveSetting(c.env, 'redeem_value', toIntInRange(body.redeem_value, 1000, 100_000_000, 20_000));
+    }
+    if (body.redeem_expiry_days !== undefined) {
+      await saveSetting(c.env, 'redeem_expiry_days', toIntInRange(body.redeem_expiry_days, 1, 365, 30));
+    }
+    if (body.otp_login_enabled !== undefined) {
+      await saveSetting(c.env, 'otp_login_enabled', body.otp_login_enabled ? 1 : 0);
     }
     if (body.referral_reward_points !== undefined) {
       await saveSetting(c.env, 'referral_reward_points', toIntInRange(body.referral_reward_points, 0, 1_000_000, 50));
@@ -1119,7 +1549,7 @@ app.put('/api/admin/settings', requireApiRole('admin'), async (c) => {
 
     if (body.sms_templates && typeof body.sms_templates === 'object') {
       const templates = body.sms_templates as Record<string, unknown>;
-      const keys = ['welcome', 'invoice', 'birthday', 'churn', 'weather'] as const;
+      const keys = ['welcome', 'invoice', 'birthday', 'churn', 'weather', 'otp', 'redeem'] as const;
       const current = c.get('settings').sms_templates;
       const next: Record<string, string> = { ...current };
       for (const key of keys) {
@@ -1144,6 +1574,11 @@ app.put('/api/admin/settings', requireApiRole('admin'), async (c) => {
       }
       await saveSetting(c.env, 'menu_items', menu);
     }
+
+    await audit(c, 'settings_update', {
+      targetType: 'settings',
+      details: 'تنظیمات باشگاه از پنل مدیریت به‌روزرسانی شد.',
+    });
 
     return ok(c, { saved: true });
   } catch (error) {
@@ -1359,6 +1794,7 @@ app.delete('/api/admin/staff/:id', requireApiRole('admin'), async (c) => {
   }
 
   await c.env.DB.prepare('DELETE FROM users WHERE id = ?').bind(id).run();
+  await audit(c, 'staff_delete', { targetType: 'user', targetId: id, details: `کاربر «${target.name}» حذف شد.` });
   return ok(c, { deleted: true });
 });
 
@@ -1519,6 +1955,10 @@ type InvoiceRowWithCustomer = {
   discount: number;
   coupon_code: string | null;
   points_earned: number;
+  visit_day: string | null;
+  client_request_id: string | null;
+  voided_at: string | null;
+  voided_by: number | null;
   created_at: string;
   registered_by: number | null;
   customer_name: string;

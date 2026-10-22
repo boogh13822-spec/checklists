@@ -14,7 +14,16 @@
 import type { AppSettings, Bindings } from '../types';
 import { renderTemplate, toPersianDigits, sqliteToMs } from './utils';
 
-export type SmsType = 'welcome' | 'invoice' | 'birthday' | 'churn' | 'weather' | 'referral' | 'admin';
+export type SmsType =
+  | 'welcome'
+  | 'invoice'
+  | 'birthday'
+  | 'churn'
+  | 'weather'
+  | 'referral'
+  | 'otp'
+  | 'redeem'
+  | 'admin';
 
 export type SendSmsParams = {
   userId: number | null;
