@@ -26,16 +26,14 @@ import {
 } from './utils';
 import { renderSms, sendSms, fetchWeather } from './sms';
 import { createCoupon, getDashboardStats, recomputeAvgInterval, tierLabel } from './db';
-import { getRawSetting, saveSetting } from './settings';
+import { CHURN_DEFAULT_INTERVAL, getRawSetting, saveSetting } from './settings';
 
 const MAX_SMS_PER_RUN = 50;
 const CHURN_COOLDOWN_DAYS = 30;
-/**
- * اگر مشتری فقط یک روز خرید کرده باشد، میانگین فاصله صفر است.
- * در این حالت از یک بازه‌ی پیش‌فرض ۳۰ روزه برای سنجش دلتنگی استفاده می‌کنیم
- * تا مشتری تک‌خرید هم از دست نرود.
+/*
+ * CHURN_DEFAULT_INTERVAL از settings.ts می‌آید تا داشبورد، فیلتر مشتریان و
+ * جاب ریزش دقیقاً یک قاعده را دنبال کنند.
  */
-const CHURN_DEFAULT_INTERVAL = 30;
 
 export type JobResult = {
   job: string;

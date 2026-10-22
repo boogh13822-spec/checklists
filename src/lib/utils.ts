@@ -255,7 +255,7 @@ export function utcStamp(ms: number): string {
 
 /**
  * بازه‌ی یک روز تقویمی (به وقت منطقه زمانی) در قالب UTC.
- * @param offsetDays 0 = امروز، 1- = دیروز
+ * @param offsetDays 0 = امروز، 1 = دیروز، 2 = پریروز …
  */
 export function zonedDayRange(
   timeZone = DEFAULT_TIMEZONE,
@@ -279,6 +279,47 @@ export function zonedDayRange(
     endMs: startMs + 86_400_000,
     dateISO,
   };
+}
+
+/**
+ * بازه‌ی N روز تقویمی آخر (به وقت منطقه زمانی)، از قدیمی به جدید.
+ * برای نمودار فروش استفاده می‌شود تا مرز روزها با کارت «فروش امروز» یکی باشد.
+ */
+export function zonedDaySeries(
+  timeZone = DEFAULT_TIMEZONE,
+  count = 7
+): Array<{ start: string; end: string; date: string }> {
+  const out: Array<{ start: string; end: string; date: string }> = [];
+  for (let i = count - 1; i >= 0; i -= 1) {
+    const r = zonedDayRange(timeZone, i);
+    out.push({ start: r.start, end: r.end, date: r.dateISO });
+  }
+  return out;
+}
+
+/**
+ * لحظه‌ی UTC شروع یک «روز تقویمی» در منطقه‌ی زمانی داده‌شده (میلی‌ثانیه).
+ * برای تبدیل تاریخ‌هایی که کاربر در فیلترها انتخاب می‌کند به بازه‌ی درست UTC.
+ * @returns null اگر رشته تاریخ معتبر نباشد
+ */
+export function zonedDateStartMs(dateISO: string, timeZone = DEFAULT_TIMEZONE): number | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateISO).trim());
+  if (!m) return null;
+  const year = Number(m[1]);
+  const month = Number(m[2]);
+  const day = Number(m[3]);
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+
+  const guess = Date.UTC(year, month - 1, day, 0, 0, 0);
+  let ms = guess;
+  // دو تکرار برای پوشش تغییر ساعت (DST) کافی است
+  for (let i = 0; i < 2; i += 1) {
+    const p = zonedParts(new Date(ms), timeZone);
+    const asUTC = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, 0);
+    const offset = asUTC - Math.floor(ms / 60_000) * 60_000;
+    ms = guess - offset;
+  }
+  return ms;
 }
 
 /**

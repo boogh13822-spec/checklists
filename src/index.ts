@@ -57,16 +57,17 @@ import {
   formatJalali,
   formatNumberFa,
   isValidBirthDate,
+  jalaliMonthRange,
+  jalaliWeekday,
   normalizePhone,
   ok,
+  todayISO,
   toIntInRange,
   toPersianDigits,
   toPositiveInt,
-  todayISO,
   utcStamp,
   zonedDayRange,
-  jalaliMonthRange,
-  jalaliWeekday,
+  zonedDaySeries,
 } from './lib/utils';
 
 import { errorPage } from './ui/layout';
@@ -92,7 +93,20 @@ import {
 
 const app = new Hono<AppEnv>();
 
-const TIMEZONE = DEFAULT_TIMEZONE;
+/**
+ * منطقه‌ی زمانی از متغیر محیطی TZ_NAME (پیش‌فرض Asia/Tehran).
+ * اگر مقدار نامعتبر باشد، به پیش‌فرض برمی‌گردیم تا اپ کرش نکند.
+ */
+function resolveTimeZone(env: Bindings): string {
+  const raw = (env.TZ_NAME ?? '').trim();
+  if (!raw) return DEFAULT_TIMEZONE;
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: raw });
+    return raw;
+  } catch {
+    return DEFAULT_TIMEZONE;
+  }
+}
 
 /**
  * هش رمزهای پیش‌فرضی که در schema.sql / مستندات عمومی آمده‌اند.
@@ -107,6 +121,27 @@ const DEFAULT_PASSWORD_HASHES: string[] = [
 /* --------------------------------------------------------------------------
  *  هدرهای امنیتی
  * -------------------------------------------------------------------------- */
+/**
+ * سیاست امنیتی محتوا (CSP).
+ *  - script: خودِ اپ + CDN تیلویند. «unsafe-inline/unsafe-eval» چون Tailwind در مرورگر
+ *    استایل می‌سازد و رابط کاربری از onclick استفاده می‌کند. اگر روزی استایل‌ها
+ *    کامپایل شد و onclick‌ها به addEventListener تبدیل شدند، این دو را حذف کنید.
+ *  - style/font: Google Fonts (وزیرمتن)
+ *  - frame-ancestors 'none' ⇢ جایگزین مدرن X-Frame-Options
+ */
+const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' data: https://fonts.gstatic.com",
+  "img-src 'self' data: blob:",
+  "connect-src 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join('; ');
+
 app.use('*', async (c, next) => {
   await next();
   c.header('X-Content-Type-Options', 'nosniff');
@@ -114,6 +149,12 @@ app.use('*', async (c, next) => {
   c.header('X-XSS-Protection', '0');
   c.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
   c.header('Cross-Origin-Opener-Policy', 'same-origin');
+  c.header('X-Frame-Options', 'DENY');
+  c.header('Content-Security-Policy', CONTENT_SECURITY_POLICY);
+  // HSTS فقط روی HTTPS معنا دارد؛ در wrangler dev نادیده گرفته می‌شود
+  if (new URL(c.req.url).protocol === 'https:') {
+    c.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
 
   const contentType = c.res.headers.get('Content-Type') ?? '';
   if (contentType.includes('text/html')) {
@@ -222,7 +263,8 @@ app.get('/staff', requirePageRole('staff', 'admin'), async (c) => {
   const settings = c.get('settings');
   const user = c.get('user')!;
   const menu = await loadMenuItems(c.env);
-  const day = zonedDayRange(TIMEZONE);
+  const tz = resolveTimeZone(c.env);
+  const day = zonedDayRange(tz);
 
   const statsRow = await c.env.DB.prepare(
     `SELECT COUNT(*) AS c, COALESCE(SUM(amount), 0) AS s
@@ -289,8 +331,9 @@ app.get('/staff/history', requirePageRole('staff', 'admin'), async (c) => {
 app.get('/admin', requirePageRole('admin'), async (c) => {
   const settings = c.get('settings');
   const user = c.get('user')!;
-  const day = zonedDayRange(TIMEZONE);
-  const month = jalaliMonthRange(TIMEZONE);
+  const tz = resolveTimeZone(c.env);
+  const day = zonedDayRange(tz);
+  const month = jalaliMonthRange(tz);
   const thirtyDaysAgo = utcStamp(Date.now() - 30 * 86_400_000);
 
   const [stats, jobRuns] = await Promise.all([
@@ -300,7 +343,8 @@ app.get('/admin', requirePageRole('admin'), async (c) => {
       day.start,
       day.end,
       month.start,
-      thirtyDaysAgo
+      thirtyDaysAgo,
+      zonedDaySeries(tz, 7)
     ),
     getJobRuns(c.env),
   ]);
@@ -367,6 +411,7 @@ app.get('/admin/customers', requirePageRole('admin'), async (c) => {
     page,
     pageSize: 20,
     graceDays: settings.churn_grace_days,
+    minVisits: settings.churn_min_visits,
   });
 
   return c.html(
@@ -421,6 +466,7 @@ app.get('/admin/invoices', requirePageRole('admin'), async (c) => {
   const settings = c.get('settings');
   const user = c.get('user')!;
   const page = toPositiveInt(c.req.query('page'), 1) || 1;
+  const tz = resolveTimeZone(c.env);
 
   const result = await listInvoices(c.env.DB, {
     q: c.req.query('q') ?? '',
@@ -428,6 +474,7 @@ app.get('/admin/invoices', requirePageRole('admin'), async (c) => {
     to: c.req.query('to') ?? '',
     page,
     pageSize: 25,
+    timeZone: tz,
   });
 
   return c.html(
@@ -452,7 +499,8 @@ app.get('/admin/settings', requirePageRole('admin'), async (c) => {
   const settings = c.get('settings');
   const user = c.get('user')!;
   const menu = await loadMenuItems(c.env);
-  const day = zonedDayRange(TIMEZONE);
+  const tz = resolveTimeZone(c.env);
+  const day = zonedDayRange(tz);
 
   const smsRow = await c.env.DB.prepare(
     `SELECT
@@ -497,7 +545,8 @@ app.get('/admin/sms', requirePageRole('admin'), async (c) => {
 
   const result = await listSmsLogs(c.env.DB, { type, status, page, pageSize: 30 });
 
-  const day = zonedDayRange(TIMEZONE);
+  const tz = resolveTimeZone(c.env);
+  const day = zonedDayRange(tz);
   const statsRow = await c.env.DB.prepare(
     `SELECT
        COALESCE(SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END), 0) AS sent,
@@ -555,6 +604,7 @@ app.get('/admin/export/customers.csv', requirePageRole('admin'), async (c) => {
       page,
       pageSize: 100,
       graceDays: settings.churn_grace_days,
+      minVisits: settings.churn_min_visits,
     });
     total = chunk.total;
     all.push(...chunk.items);
@@ -745,7 +795,16 @@ app.get('/api/staff/customer', requireApiRole('staff', 'admin'), async (c) => {
     return ok(c, { found: false, customer: null });
   }
 
-  const status = customerActivityStatus(user, settings.churn_grace_days);
+  const visitsRow = await c.env.DB.prepare(
+    'SELECT COUNT(*) AS c FROM invoices WHERE user_id = ?'
+  )
+    .bind(user.id)
+    .first<{ c: number }>();
+  const status = customerActivityStatus(
+    { ...user, visits: visitsRow?.c ?? 0 },
+    settings.churn_grace_days,
+    settings.churn_min_visits
+  );
 
   const { results: coupons } = await c.env.DB.prepare(
     `SELECT code, kind, value FROM coupons
@@ -825,7 +884,8 @@ app.post('/api/staff/invoices', requireApiRole('staff', 'admin'), async (c) => {
 
 app.get('/api/staff/invoices/today', requireApiRole('staff', 'admin'), async (c) => {
   const user = c.get('user')!;
-  const day = zonedDayRange(TIMEZONE);
+  const tz = resolveTimeZone(c.env);
+  const day = zonedDayRange(tz);
 
   const { results } = await c.env.DB.prepare(
     `SELECT i.id, i.amount, i.created_at, u.name AS customer_name
@@ -845,8 +905,9 @@ app.get('/api/staff/invoices/today', requireApiRole('staff', 'admin'), async (c)
 
 app.get('/api/admin/stats', requireApiRole('admin'), async (c) => {
   const settings = c.get('settings');
-  const day = zonedDayRange(TIMEZONE);
-  const month = jalaliMonthRange(TIMEZONE);
+  const tz = resolveTimeZone(c.env);
+  const day = zonedDayRange(tz);
+  const month = jalaliMonthRange(tz);
 
   const stats = await getDashboardStats(
     c.env.DB,
@@ -854,7 +915,8 @@ app.get('/api/admin/stats', requireApiRole('admin'), async (c) => {
     day.start,
     day.end,
     month.start,
-    utcStamp(Date.now() - 30 * 86_400_000)
+    utcStamp(Date.now() - 30 * 86_400_000),
+    zonedDaySeries(tz, 7)
   );
 
   return ok(c, stats);
@@ -905,7 +967,11 @@ app.put('/api/admin/customers/:id', requireApiRole('admin'), async (c) => {
   }
 
   const user = await findUserById(c.env.DB, id);
-  if (!user) return fail(c, 'مشتری یافت نشد.', 404, 'NOT_FOUND');
+  if (!user)
+    return fail(c, 'مشتری یافت نشد.', 404, 'NOT_FOUND');
+  // این مسیر فقط برای مشتری است؛ حساب پرسنل/ادمین نباید از اینجا ویرایش شود.
+  if (user.role !== 'customer')
+    return fail(c, 'این کاربر مشتری نیست.', 400, 'NOT_CUSTOMER');
 
   const name = String(body.name ?? '').replace(/[<>]/g, '').trim().slice(0, 60);
   const phone = normalizePhone(String(body.phone ?? ''));
@@ -950,7 +1016,12 @@ app.post('/api/admin/customers/:id/points', requireApiRole('admin'), async (c) =
   }
 
   const result = await adjustPoints(c.env.DB, settings, id, delta);
-  if (result.ok === false) return fail(c, result.error, 404, 'NOT_FOUND');
+  if (result.ok === false) {
+    if (result.code === 'NOT_CUSTOMER') {
+      return fail(c, result.error, 400, 'NOT_CUSTOMER');
+    }
+    return fail(c, result.error, 404, 'NOT_FOUND');
+  }
 
   return ok(c, { points: result.points, tier: result.tier });
 });

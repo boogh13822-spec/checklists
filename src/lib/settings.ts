@@ -6,6 +6,13 @@
 import type { AppSettings, Bindings } from '../types';
 import { safeJsonParse, toIntInRange } from './utils';
 
+/**
+ * مبنای پیش‌فرض «دلتنگی» وقتی میانگین فاصله‌ی خرید معتبر نیست
+ * (مثلاً مشتری تک‌خرید). هم در جاب ریزش، هم در داشبورد و هم در فیلترها استفاده می‌شود
+ * تا همه‌جا یک عدد واحد دیده شود.
+ */
+export const CHURN_DEFAULT_INTERVAL = 30;
+
 export type MenuItem = { name: string; price: number; category?: string };
 
 export const DEFAULT_MENU_ITEMS: MenuItem[] = [

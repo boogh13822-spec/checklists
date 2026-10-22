@@ -4,9 +4,20 @@
  * ----------------------------------------------------------------------------
  */
 import type { AppSettings, Bindings, InvoiceItem, InvoiceRow, UserRow, CouponRow, Role, SmsLogRow } from '../types';
-import { safeJsonParse, normalizePhone, toPersianDigits, sqliteToMs, formatNumberFa, formatJalali } from './utils';
+import {
+  DEFAULT_TIMEZONE,
+  safeJsonParse,
+  normalizePhone,
+  toPersianDigits,
+  sqliteToMs,
+  utcStamp,
+  zonedDateStartMs,
+  formatNumberFa,
+  formatJalali,
+} from './utils';
 import { generateCouponCode } from './crypto';
 import { renderSms, sendSms } from './sms';
+import { CHURN_DEFAULT_INTERVAL } from './settings';
 
 /* ==========================================================================
  * ۱) محاسبات امتیاز و سطح
@@ -314,9 +325,11 @@ export async function recordInvoice(
 
   const amount = subtotal - discount;
   const pointsEarned = calculatePoints(amount, settings);
-  const newPoints = Math.max(0, customer.points + pointsEarned);
-  const newTier = calculateTier(newPoints, settings);
-  const tierChanged = newTier !== customer.tier;
+  // مقدار «تخمینی» بر اساس داده‌ی خوانده‌شده؛ بعد از ثبت، مقدار نهایی را از DB می‌خوانیم
+  // تا دو فاکتور هم‌زمان باعث نمایش موجودی اشتباه در پیامک نشوند.
+  let newPoints = Math.max(0, customer.points + pointsEarned);
+  let newTier = calculateTier(newPoints, settings);
+  let tierChanged = newTier !== customer.tier;
   const nowISO = new Date().toISOString().slice(0, 19).replace('T', ' ');
 
   const statements = [
@@ -334,14 +347,33 @@ export async function recordInvoice(
       subtotal,
       nowISO
     ),
+    // افزایش امتیاز به‌صورت اتمیک (points = points + ?) تا دو فاکتور هم‌زمان
+    // امتیاز یکدیگر را بازنویسی نکنند. سطح هم در همان UPDATE از مقدار جدید
+    // محاسبه می‌شود؛ در SQLite سمت راست عبارت‌ها مقدار «قبل از به‌روزرسانی» را می‌بیند.
     env.DB.prepare(
       `UPDATE users
-       SET points = ?,
-           tier = ?,
+       SET points = points + ?,
+           tier = CASE
+                    WHEN points + ? >= ? THEN 'vip'
+                    WHEN points + ? >= ? THEN 'gold'
+                    WHEN points + ? >= ? THEN 'silver'
+                    ELSE 'bronze'
+                  END,
            last_visit_date = ?,
            first_purchase_at = COALESCE(first_purchase_at, ?)
-       WHERE id = ?`
-    ).bind(newPoints, newTier, nowISO, nowISO, customer.id),
+       WHERE id = ? AND role = 'customer'`
+    ).bind(
+      pointsEarned,
+      pointsEarned,
+      settings.tiers.vip,
+      pointsEarned,
+      settings.tiers.gold,
+      pointsEarned,
+      settings.tiers.silver,
+      nowISO,
+      nowISO,
+      customer.id
+    ),
   ];
 
   if (coupon) {
@@ -357,6 +389,16 @@ export async function recordInvoice(
   } catch (error) {
     console.error('recordInvoice batch failed:', error);
     return { ok: false, error: 'خطا در ثبت فاکتور.', code: 'DB_ERROR' };
+  }
+
+  // خواندن مقدار نهایی امتیاز/سطح از دیتابیس (منبع حقیقت)
+  const after = await env.DB.prepare('SELECT points, tier FROM users WHERE id = ?')
+    .bind(customer.id)
+    .first<{ points: number; tier: string }>();
+  if (after) {
+    newPoints = after.points;
+    newTier = after.tier;
+    tierChanged = newTier !== customer.tier;
   }
 
   // به‌روزرسانی میانگین فاصله خرید (خارج از تراکنش اصلی)
@@ -409,19 +451,30 @@ async function rewardReferrer(
   if (!referrer || referrer.is_active !== 1) return;
 
   const reward = Math.max(0, settings.referral_reward_points);
-  const newPoints = referrer.points + reward;
-  const newTier = calculateTier(newPoints, settings);
 
-  await env.DB.batch([
-    env.DB.prepare('UPDATE users SET points = ?, tier = ? WHERE id = ?').bind(
-      newPoints,
-      newTier,
-      referrer.id
-    ),
-    env.DB.prepare('UPDATE users SET referral_rewarded = 1 WHERE id = ?').bind(customer.id),
-  ]);
+  // «ثبت پاداش» را اول و به‌صورت شرطی انجام می‌دهیم: اگر دو فاکتور هم‌زمان برسد،
+  // فقط یکی از آن‌ها می‌تواند این ردیف را از 0 به 1 ببرد و پاداش دوبار داده نشود.
+  const claim = await env.DB.prepare(
+    'UPDATE users SET referral_rewarded = 1 WHERE id = ? AND referral_rewarded = 0'
+  )
+    .bind(customer.id)
+    .run();
+  if (!claim.meta?.changes) return;
 
   if (reward > 0) {
+    // افزایش اتمیک امتیاز معرف + محاسبه‌ی سطح از مقدار نهایی
+    const updated = await env.DB.prepare(
+      `UPDATE users SET points = points + ? WHERE id = ? AND role = 'customer' RETURNING points`
+    )
+      .bind(reward, referrer.id)
+      .first<{ points: number }>();
+
+    if (updated) {
+      await env.DB.prepare('UPDATE users SET tier = ? WHERE id = ?')
+        .bind(calculateTier(updated.points, settings), referrer.id)
+        .run();
+    }
+
     await sendSms(env, settings, {
       userId: referrer.id,
       phone: referrer.phone,
@@ -516,7 +569,12 @@ export async function getDashboardStats(
   dayStartUtc: string,
   dayEndUtc: string,
   monthStartUtc: string,
-  daysAgo30Utc: string
+  daysAgo30Utc: string,
+  /**
+   * بازه‌های از پیش محاسبه‌شده‌ی نمودار فروش (به ترتیب قدیمی → جدید).
+   * اگر داده نشود، از روزهای UTC استفاده می‌شود (سازگاری با فراخوانی‌های قدیمی).
+   */
+  seriesDays?: Array<{ start: string; end: string; date: string }>
 ): Promise<DashboardStats> {
   const [
     totalCustomers,
@@ -562,18 +620,28 @@ export async function getDashboardStats(
 
   const { results: sleepRows } = await db
     .prepare(
-      `SELECT id, name, last_visit_date, avg_visit_interval
-       FROM users
-       WHERE role = 'customer' AND is_active = 1 AND last_visit_date IS NOT NULL
+      `SELECT u.id, u.name, u.last_visit_date, u.avg_visit_interval,
+              (SELECT COUNT(*) FROM invoices i WHERE i.user_id = u.id) AS visits
+       FROM users u
+       WHERE u.role = 'customer' AND u.is_active = 1 AND u.last_visit_date IS NOT NULL
        LIMIT 5000`
     )
-    .all<{ id: number; name: string; last_visit_date: string; avg_visit_interval: number }>();
+    .all<{
+      id: number;
+      name: string;
+      last_visit_date: string;
+      avg_visit_interval: number;
+      visits: number;
+    }>();
 
+  // هم‌قاعده با جاب ریزش: میانگین فقط وقتی معتبر است که تعداد خرید به حداقل برسد،
+  // در غیر این صورت مبنای ۳۰ روز.
   const sleeping = (sleepRows ?? []).filter((row) => {
     const ms = sqliteToMs(row.last_visit_date);
     if (ms === null) return false;
     const days = Math.floor((Date.now() - ms) / 86_400_000);
-    const baseline = row.avg_visit_interval > 0 ? row.avg_visit_interval : 30;
+    const reliable = row.visits >= settings.churn_min_visits && row.avg_visit_interval > 0;
+    const baseline = reliable ? row.avg_visit_interval : CHURN_DEFAULT_INTERVAL;
     return days > baseline + settings.churn_grace_days;
   });
 
@@ -599,20 +667,39 @@ export async function getDashboardStats(
       customer_id: number;
     }>();
 
-  const { results: seriesRows } = await db
-    .prepare(
-      `SELECT substr(created_at, 1, 10) AS day, COALESCE(SUM(amount), 0) AS total
-       FROM invoices
-       WHERE created_at >= datetime('now', '-6 days')
-       GROUP BY day ORDER BY day ASC`
-    )
-    .all<{ day: string; total: number }>();
+  let salesSeries: Array<{ date: string; total: number }> = [];
 
-  const salesByDay = new Map((seriesRows ?? []).map((r) => [r.day, r.total]));
-  const salesSeries: Array<{ date: string; total: number }> = [];
-  for (let i = 6; i >= 0; i -= 1) {
-    const d = new Date(Date.now() - i * 86_400_000).toISOString().slice(0, 10);
-    salesSeries.push({ date: d, total: salesByDay.get(d) ?? 0 });
+  if (seriesDays && seriesDays.length > 0) {
+    // روزهای تقویمی تهران — هم‌خوان با کارت «فروش امروز» و برچسب‌های نمودار
+    const totals = await Promise.all(
+      seriesDays.map((range) =>
+        db
+          .prepare(
+            'SELECT COALESCE(SUM(amount), 0) AS s FROM invoices WHERE created_at >= ? AND created_at < ?'
+          )
+          .bind(range.start, range.end)
+          .first<{ s: number }>()
+      )
+    );
+    salesSeries = seriesDays.map((range, index) => ({
+      date: range.date,
+      total: totals[index]?.s ?? 0,
+    }));
+  } else {
+    const { results: seriesRows } = await db
+      .prepare(
+        `SELECT substr(created_at, 1, 10) AS day, COALESCE(SUM(amount), 0) AS total
+         FROM invoices
+         WHERE created_at >= datetime('now', '-6 days')
+         GROUP BY day ORDER BY day ASC`
+      )
+      .all<{ day: string; total: number }>();
+
+    const salesByDay = new Map((seriesRows ?? []).map((r) => [r.day, r.total]));
+    for (let i = 6; i >= 0; i -= 1) {
+      const d = new Date(Date.now() - i * 86_400_000).toISOString().slice(0, 10);
+      salesSeries.push({ date: d, total: salesByDay.get(d) ?? 0 });
+    }
   }
 
   return {
@@ -660,6 +747,8 @@ export type ListCustomersParams = {
   pageSize?: number;
   sort?: 'points' | 'recent' | 'created' | 'name';
   graceDays?: number;
+  /** حداقل تعداد خرید برای معتبر بودن میانگین (هم‌قاعده با جاب ریزش) */
+  minVisits?: number;
 };
 
 export async function listCustomers(
@@ -683,18 +772,23 @@ export async function listCustomers(
     where.push('u.tier = ?');
     binds.push(params.tier);
   }
-  if (params.status === 'sleeping') {
-    where.push(
-      `u.last_visit_date IS NOT NULL AND u.avg_visit_interval > 0
-       AND (julianday('now') - julianday(u.last_visit_date)) > (u.avg_visit_interval + ?)`
-    );
-    binds.push(params.graceDays ?? 2);
-  } else if (params.status === 'active') {
+  if (params.status === 'sleeping' || params.status === 'active') {
+    // همان قاعدهٔ جاب ریزش: میانگین فقط با تعداد خرید کافی معتبر است،
+    // وگرنه مبنای ۳۰ روز (تا مشتری تک‌خرید هم درست دسته‌بندی شود).
+    const baseline =
+      `(CASE WHEN u.avg_visit_interval > 0
+             AND (SELECT COUNT(*) FROM invoices i WHERE i.user_id = u.id) >= ?
+        THEN u.avg_visit_interval ELSE ? END)`;
+    const comparison = params.status === 'sleeping' ? '>' : '<=';
     where.push(
       `u.last_visit_date IS NOT NULL
-       AND (julianday('now') - julianday(u.last_visit_date)) <= (u.avg_visit_interval + ?)`
+       AND (julianday('now') - julianday(u.last_visit_date)) ${comparison} (${baseline} + ?)`
     );
-    binds.push(params.graceDays ?? 2);
+    binds.push(
+      Math.max(1, Math.floor(params.minVisits ?? 3)),
+      CHURN_DEFAULT_INTERVAL,
+      params.graceDays ?? 2
+    );
   } else if (params.status === 'no_visit') {
     where.push('u.last_visit_date IS NULL');
   }
@@ -850,13 +944,17 @@ export async function createCoupon(
 
 /** وضعیت مشتری برای نمایش (خوابیده / در خطر / فعال) */
 export function customerActivityStatus(
-  user: Pick<UserRow, 'last_visit_date' | 'avg_visit_interval'>,
-  graceDays: number
+  user: Pick<UserRow, 'last_visit_date' | 'avg_visit_interval'> & { visits?: number },
+  graceDays: number,
+  minVisits = 3
 ): { label: string; tone: string } {
   const ms = sqliteToMs(user.last_visit_date);
   if (ms === null) return { label: 'بدون خرید', tone: 'muted' };
   const days = Math.floor((Date.now() - ms) / 86_400_000);
-  const threshold = user.avg_visit_interval + graceDays;
+  // میانگینِ مشتریِ کم‌خرید (مثلاً تک‌خرید) معتبر نیست → مبنای ۳۰ روز
+  const reliable = (user.visits ?? 0) >= minVisits && user.avg_visit_interval > 0;
+  const baseline = reliable ? user.avg_visit_interval : CHURN_DEFAULT_INTERVAL;
+  const threshold = baseline + graceDays;
   if (days > threshold + 14) return { label: 'خوابیده', tone: 'danger' };
   if (days > threshold) return { label: 'در خطر ریزش', tone: 'warning' };
   return { label: 'فعال', tone: 'success' };
@@ -889,7 +987,16 @@ export type InvoiceListItem = InvoiceRow & {
 
 export async function listInvoices(
   db: D1Database,
-  params: { q?: string; from?: string; to?: string; page?: number; pageSize?: number; staffId?: number }
+  params: {
+    q?: string;
+    from?: string;
+    to?: string;
+    page?: number;
+    pageSize?: number;
+    staffId?: number;
+    /** منطقه‌ی زمانی مرز روزها (پیش‌فرض تهران) */
+    timeZone?: string;
+  }
 ): Promise<{ items: InvoiceListItem[]; total: number; sum: number; page: number; pageSize: number }> {
   const page = Math.max(1, Math.floor(params.page ?? 1));
   const pageSize = Math.min(100, Math.max(5, Math.floor(params.pageSize ?? 25)));
@@ -903,13 +1010,21 @@ export async function listInvoices(
     where.push('(u.name LIKE ? OR u.phone LIKE ? OR CAST(i.id AS TEXT) = ?)');
     binds.push(`%${q}%`, `%${q}%`, q);
   }
+  const tz = params.timeZone ?? DEFAULT_TIMEZONE;
+  // مرز روزها به وقت محلی (نه UTC) و «تا» به‌صورت بازه‌ی نیم‌باز تا ثانیه‌ی آخر از دست نرود
   if (params.from && /^\d{4}-\d{2}-\d{2}$/.test(params.from)) {
-    where.push('i.created_at >= ?');
-    binds.push(`${params.from} 00:00:00`);
+    const startMs = zonedDateStartMs(params.from, tz);
+    if (startMs !== null) {
+      where.push('i.created_at >= ?');
+      binds.push(utcStamp(startMs));
+    }
   }
   if (params.to && /^\d{4}-\d{2}-\d{2}$/.test(params.to)) {
-    where.push('i.created_at < ?');
-    binds.push(`${params.to} 23:59:59`);
+    const startMs = zonedDateStartMs(params.to, tz);
+    if (startMs !== null) {
+      where.push('i.created_at < ?');
+      binds.push(utcStamp(startMs + 86_400_000));
+    }
   }
   if (params.staffId) {
     where.push('i.registered_by = ?');
@@ -1090,13 +1205,31 @@ export async function adjustPoints(
   settings: AppSettings,
   userId: number,
   delta: number
-): Promise<{ ok: true; points: number; tier: string } | { ok: false; error: string }> {
+): Promise<
+  { ok: true; points: number; tier: string } | { ok: false; error: string; code: 'NOT_FOUND' | 'NOT_CUSTOMER' }
+> {
   const user = await findUserById(db, userId);
-  if (!user) return { ok: false, error: 'کاربر یافت نشد.' };
+  if (!user) return { ok: false, error: 'کاربر یافت نشد.', code: 'NOT_FOUND' };
+  // امتیاز فقط برای مشتری معنا دارد؛ حساب پرسنل/ادمین نباید امتیاز بگیرد.
+  if (user.role !== 'customer')
+    return { ok: false, error: 'این کاربر مشتری نیست.', code: 'NOT_CUSTOMER' };
 
-  const newPoints = Math.max(0, user.points + Math.trunc(delta));
-  const newTier = calculateTier(newPoints, settings);
+  // یک UPDATE اتمیک: دو درخواست هم‌زمان نمی‌توانند امتیاز یکدیگر را بازنویسی کنند.
+  const signed = Math.trunc(delta);
+  const row = await db
+    .prepare(
+      `UPDATE users
+       SET points = MAX(0, points + ?)
+       WHERE id = ? AND role = 'customer'
+       RETURNING points`
+    )
+    .bind(signed, userId)
+    .first<{ points: number }>();
+  if (!row) return { ok: false, error: 'کاربر یافت نشد.', code: 'NOT_FOUND' };
 
-  await db.prepare('UPDATE users SET points = ?, tier = ? WHERE id = ?').bind(newPoints, newTier, userId).run();
-  return { ok: true, points: newPoints, tier: newTier };
+  // سطح از همان مقدار نهاییِ ذخیره‌شده محاسبه می‌شود (نه از مقدار خوانده‌شده‌ی قبلی)
+  const tier = calculateTier(row.points, settings);
+  await db.prepare('UPDATE users SET tier = ? WHERE id = ?').bind(tier, userId).run();
+
+  return { ok: true, points: row.points, tier };
 }

@@ -369,7 +369,7 @@ export function adminCustomersPage(input: {
 
   const rows = customers
     .map((customer) => {
-      const status = customerActivityStatus(customer, settings.churn_grace_days);
+      const status = customerActivityStatus(customer, settings.churn_grace_days, settings.churn_min_visits);
       return `<tr>
         <td>
           <a href="/admin/customers/${customer.id}" class="flex items-center gap-2.5 group">
@@ -397,7 +397,7 @@ export function adminCustomersPage(input: {
 
   const cards = customers
     .map((customer) => {
-      const status = customerActivityStatus(customer, settings.churn_grace_days);
+      const status = customerActivityStatus(customer, settings.churn_grace_days, settings.churn_min_visits);
       return `<a href="/admin/customers/${customer.id}" class="block glass rounded-2xl p-4 active:scale-[.99] transition">
         <div class="flex items-start gap-3">
           <span class="w-10 h-10 rounded-full bg-gradient-to-br from-amber-300 to-amber-800 text-coffee-950 font-bold flex items-center justify-center shrink-0">${escapeHtml(customer.name.slice(0, 1))}</span>
@@ -604,7 +604,11 @@ export function adminCustomerDetailPage(input: {
   visitCount: number;
 }): string {
   const { settings, userName, user, invoices, coupons, referrer, referrals, totalSpent, visitCount } = input;
-  const status = customerActivityStatus(user, settings.churn_grace_days);
+  const status = customerActivityStatus(
+    { ...user, visits: visitCount },
+    settings.churn_grace_days,
+    settings.churn_min_visits
+  );
 
   const body = `
   <div class="p-4 sm:p-6 lg:p-8 max-w-6xl mx-auto">
