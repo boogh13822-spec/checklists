@@ -28,7 +28,15 @@ import { renderSms, sendSms, fetchWeather } from './sms';
 import { createCoupon, getDashboardStats, recomputeAvgInterval, tierLabel } from './db';
 import { CHURN_DEFAULT_INTERVAL, getRawSetting, saveSetting } from './settings';
 
-const MAX_SMS_PER_RUN = 50;
+/**
+ * سقف پیامک هر اجرا.
+ * پلن رایگان Workers سقف ۵۰ کوئری D1 و ۵۰ subrequest در هر اجرا دارد.
+ * هر پیامک دست‌کم ۱ fetch + ۲ کوئری D1 مصرف می‌کند (ثبت لاگ + به‌روزرسانی کاربر)
+ * و جاب تولد یک کوئری هم برای کد تخفیف اضافه می‌کند؛ پس ۱۰ پیامک با حاشیه‌ی امن،
+ * هم زیر سقف D1 می‌ماند هم زیر سقف fetch.
+ * اگر پلن پولی (Workers Paid) دارید، می‌توانید این عدد را تا ۵۰ بالا ببرید.
+ */
+const MAX_SMS_PER_RUN = 10;
 const CHURN_COOLDOWN_DAYS = 30;
 /*
  * CHURN_DEFAULT_INTERVAL از settings.ts می‌آید تا داشبورد، فیلتر مشتریان و
@@ -395,11 +403,14 @@ export async function runWeatherJob(
  * ========================================================================== */
 
 export async function runMaintenanceJob(env: Bindings): Promise<JobResult> {
+  // هر کاربر ۲ کوئری D1 می‌خواهد؛ با سقف ۵۰ کوئریِ پلن رایگان، ۲۰ کاربر در هر اجرا
+  // امن است. چون این جاب هر ساعت اجرا می‌شود، در عمل همه‌ی مشتریان هر روز بازمحاسبه می‌شوند
+  // (میانگین هر مشتری بعد از هر فاکتور هم به‌صورت جداگانه به‌روز می‌شود).
   const { results: users } = await env.DB.prepare(
     `SELECT id FROM users
      WHERE last_visit_date IS NOT NULL
      ORDER BY last_visit_date DESC
-     LIMIT 200`
+     LIMIT 20`
   ).all<{ id: number }>();
 
   for (const user of users ?? []) {

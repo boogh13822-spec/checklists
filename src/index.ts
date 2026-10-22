@@ -30,6 +30,7 @@ import {
   createCoupon,
   customerActivityStatus,
   evaluateCoupon,
+  exportCustomers,
   findUserByPhone,
   findUserById,
   getCustomerDetail,
@@ -592,26 +593,9 @@ app.get('/admin/coupons', requirePageRole('admin'), async (c) => {
 });
 
 app.get('/admin/export/customers.csv', requirePageRole('admin'), async (c) => {
-  const settings = c.get('settings');
-  const all: Awaited<ReturnType<typeof listCustomers>>['items'] = [];
-  let page = 1;
-  let total = Infinity;
-
-  while (all.length < total && page <= 20) {
-    const chunk = await listCustomers(c.env.DB, {
-      q: c.req.query('q') ?? '',
-      tier: c.req.query('tier') ?? '',
-      page,
-      pageSize: 100,
-      graceDays: settings.churn_grace_days,
-      minVisits: settings.churn_min_visits,
-    });
-    total = chunk.total;
-    all.push(...chunk.items);
-    if (chunk.items.length < 100) break;
-    page += 1;
-  }
-
+  // یک کوئری، بدون حلقه‌ی صفحه‌بندی: روی پلن رایگان سقف ۵۰ کوئری در هر اجرا داریم
+  // و نسخه‌ی قبلی هم به همین دلیل حداکثر ۲۰۰۰ مشتری را (بی‌صدا) خروجی می‌داد.
+  const all = await exportCustomers(c.env.DB);
   const csv = customersCsv(all);
   const filename = `customers-${todayISO()}.csv`;
 

@@ -739,6 +739,27 @@ export type CustomerListItem = {
   is_active: number;
 };
 
+/**
+ * همه‌ی مشتریان برای خروجی CSV — با یک کوئری.
+ * (نسخه‌ی صفحه‌به‌صفحه روی پلن رایگان به سقف ۵۰ کوئری D1 می‌خورد و خروجی را ناقص می‌کرد.)
+ */
+export async function exportCustomers(db: D1Database): Promise<CustomerListItem[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT u.id, u.name, u.phone, u.birth_date, u.points, u.tier, u.last_visit_date,
+              u.avg_visit_interval, u.created_at, u.referral_code, u.is_active,
+              (SELECT COUNT(*) FROM invoices i WHERE i.user_id = u.id) AS visits,
+              (SELECT COALESCE(SUM(amount), 0) FROM invoices i WHERE i.user_id = u.id) AS total_spent
+       FROM users u
+       WHERE u.role = 'customer'
+       ORDER BY u.created_at DESC
+       LIMIT 20000`
+    )
+    .all<CustomerListItem>();
+
+  return results ?? [];
+}
+
 export type ListCustomersParams = {
   q?: string;
   tier?: string;
