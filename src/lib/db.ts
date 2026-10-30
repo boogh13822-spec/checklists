@@ -22,6 +22,7 @@ import {
   safeJsonParse,
   normalizePhone,
   toPersianDigits,
+  toLatinDigits,
   sqliteToMs,
   utcStamp,
   jalaliMonthRangeAt,
@@ -1433,8 +1434,17 @@ export async function listInvoices(
 
   const q = String(params.q ?? '').trim().slice(0, 60);
   if (q) {
-    where.push('(u.name LIKE ? OR u.phone LIKE ? OR CAST(i.id AS TEXT) = ?)');
-    binds.push(`%${q}%`, `%${q}%`, q);
+    // ارقام فارسی/عربی هم پذیرفته می‌شوند تا جستجوی شمارهٔ فاکتور همیشه کار کند
+    const latin = toLatinDigits(q);
+    const onlyDigits = /^\d{1,12}$/.test(latin);
+    where.push(
+      onlyDigits
+        ? '(u.name LIKE ? OR u.phone LIKE ? OR CAST(i.id AS TEXT) = ? OR i.items LIKE ?)'
+        : '(u.name LIKE ? OR u.phone LIKE ? OR i.items LIKE ?)'
+    );
+    binds.push(`%${q}%`, `%${latin}%`);
+    if (onlyDigits) binds.push(latin);
+    binds.push(`%${q}%`);
   }
   const tz = params.timeZone ?? DEFAULT_TIMEZONE;
   // مرز روزها به وقت محلی (نه UTC) و «تا» به‌صورت بازه‌ی نیم‌باز تا ثانیه‌ی آخر از دست نرود

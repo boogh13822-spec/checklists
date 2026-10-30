@@ -91,6 +91,7 @@ import {
   todayISO,
   toIntInRange,
   toPersianDigits,
+  toLatinDigits,
   toPositiveInt,
   utcStamp,
   zonedDayRange,
@@ -502,8 +503,16 @@ app.get('/staff/history', requirePageRole('staff', 'admin'), async (c) => {
   const where = ['i.registered_by = ?'];
   const binds: Array<string | number> = [user.uid];
   if (q) {
-    where.push('(u.name LIKE ? OR u.phone LIKE ? OR CAST(i.id AS TEXT) = ?)');
-    binds.push(`%${q}%`, `%${q}%`, q);
+    const latin = toLatinDigits(q);
+    const onlyDigits = /^\d{1,12}$/.test(latin);
+    where.push(
+      onlyDigits
+        ? '(u.name LIKE ? OR u.phone LIKE ? OR CAST(i.id AS TEXT) = ? OR i.items LIKE ?)'
+        : '(u.name LIKE ? OR u.phone LIKE ? OR i.items LIKE ?)'
+    );
+    binds.push(`%${q}%`, `%${latin}%`);
+    if (onlyDigits) binds.push(latin);
+    binds.push(`%${q}%`);
   }
   if (onlyVoided) where.push('i.voided_at IS NOT NULL');
 
@@ -2375,9 +2384,18 @@ app.post('/api/admin/staff/:id/password', requireApiRole('admin'), async (c) => 
   const newPassword = generateReadablePassword(12);
   const passwordHash = await hashPassword(newPassword);
 
-  await c.env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = ?')
+  // ریست رمز باید نشست فعلی آن کاربر را هم ببندد
+  await c.env.DB.prepare(
+    'UPDATE users SET password_hash = ?, token_version = token_version + 1 WHERE id = ?'
+  )
     .bind(passwordHash, id)
     .run();
+
+  await audit(c, 'staff_password_reset', {
+    targetType: 'user',
+    targetId: id,
+    details: `رمز عبور «${target.name}» بازنشانی شد و نشست‌های قبلی او باطل شد.`,
+  });
 
   return ok(c, { password: newPassword });
 });
@@ -2432,12 +2450,34 @@ app.post('/api/admin/me/password', requireApiRole('admin', 'staff'), async (c) =
   const valid = await verifyPassword(current, dbUser.password_hash);
   if (!valid) return fail(c, 'رمز فعلی اشتباه است.', 401, 'INVALID_PASSWORD');
 
-  const passwordHash = await hashPassword(next);
-  await c.env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = ?')
-    .bind(passwordHash, dbUser.id)
-    .run();
+  if (next === current) {
+    return fail(c, 'رمز جدید باید با رمز فعلی متفاوت باشد.', 400, 'SAME_PASSWORD');
+  }
 
-  return ok(c, { changed: true });
+  const passwordHash = await hashPassword(next);
+
+  // افزایش token_version همهٔ نشست‌های قبلی (مثلاً کوکی دزدیده‌شده) را باطل می‌کند
+  const updated = await c.env.DB.prepare(
+    'UPDATE users SET password_hash = ?, token_version = token_version + 1 WHERE id = ? RETURNING token_version'
+  )
+    .bind(passwordHash, dbUser.id)
+    .first<{ token_version: number }>();
+
+  // نشست جاری با توکن تازه ادامه می‌یابد تا کاربر وسط کار بیرون نیفتد
+  const secret = assertJwtSecret(c.env);
+  if (secret && updated) {
+    const ttl = sessionTtl(c.env);
+    const fresh = await createToken(secret, { ...dbUser, token_version: updated.token_version }, ttl);
+    setSessionCookie(c, fresh, isSecureRequest(c), ttl);
+  }
+
+  await audit(c, 'password_change', {
+    targetType: 'user',
+    targetId: dbUser.id,
+    details: 'رمز عبور خودِ کاربر تغییر کرد؛ همهٔ نشست‌های قبلی باطل شد.',
+  });
+
+  return ok(c, { changed: true, sessionsRevoked: true });
 });
 
 /* ------------------------------ کدهای تخفیف ------------------------------ */

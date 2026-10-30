@@ -843,10 +843,12 @@ export function adminStaffPage(input: {
         <span class="w-8 h-8 rounded-xl bg-gold/10 border border-gold/20 text-gold flex items-center justify-center">${icon('key', 'w-4 h-4')}</span>
         <h2 class="font-bold text-sm">تغییر رمز عبور خودم</h2>
       </div>
-      <form id="my-password-form" class="p-5 grid sm:grid-cols-3 gap-3">
+      <form id="my-password-form" class="p-5 grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <input id="cur-pass" type="password" class="field" placeholder="رمز فعلی" autocomplete="current-password" />
         <input id="new-pass" type="password" class="field" placeholder="رمز جدید (حداقل ۸ کاراکتر)" autocomplete="new-password" />
+        <input id="new-pass2" type="password" class="field" placeholder="تکرار رمز جدید" autocomplete="new-password" />
         <button type="submit" id="my-pass-btn" class="btn btn-primary">${icon('check', 'w-4 h-4')} تغییر رمز</button>
+        <p class="hint sm:col-span-2 lg:col-span-4">با تغییر رمز، همهٔ نشست‌های دیگر این حساب بسته می‌شوند؛ همین صفحه فعال می‌ماند.</p>
       </form>
     </div>
   </div>
@@ -996,13 +998,19 @@ export function adminStaffPage(input: {
       event.preventDefault();
       var current = $('#cur-pass').value;
       var next = $('#new-pass').value;
+      var confirmPass = $('#new-pass2').value;
       if (!current || next.length < 8) { toast('رمز فعلی و رمز جدید (حداقل ۸ کاراکتر) را وارد کنید.', 'error'); return; }
+      if (next !== confirmPass) { toast('رمز جدید و تکرار آن یکسان نیستند.', 'error'); $('#new-pass2').focus(); return; }
       var btn = $('#my-pass-btn');
       setLoading(btn, true, 'در حال تغییر…');
       try {
         await api('/api/admin/me/password', { method: 'POST', body: { current: current, next: next } });
-        toast('رمز عبور تغییر کرد. لطفاً دوباره وارد شوید.', 'success');
-        setTimeout(function () { window.location.href = '/api/auth/logout'; }, 1200);
+        // نشست‌های دیگر بسته می‌شوند ولی همین نشست با توکن تازه ادامه می‌یابد
+        toast('رمز عبور تغییر کرد و همهٔ نشست‌های دیگر بسته شد.', 'success');
+        $('#cur-pass').value = '';
+        $('#new-pass').value = '';
+        $('#new-pass2').value = '';
+        setLoading(btn, false);
       } catch (error) {
         toast(error.message, 'error');
         setLoading(btn, false);
