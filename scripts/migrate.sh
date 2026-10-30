@@ -137,6 +137,69 @@ apply "ALTER TABLE invoices ADD COLUMN voided_at TEXT" \
 apply "ALTER TABLE invoices ADD COLUMN voided_by INTEGER" \
   "ستون voided_by (ابطان فاکتور)"
 
+# --- ۳.۵) ستون‌های پرداخت و شیفت در invoices ---------------------------------
+apply "ALTER TABLE invoices ADD COLUMN void_reason TEXT" \
+  "ستون void_reason (دلیل ابطال)"
+
+apply "ALTER TABLE invoices ADD COLUMN payment_method TEXT" \
+  "ستون payment_method (روش پرداخت)"
+
+apply "ALTER TABLE invoices ADD COLUMN paid_cash INTEGER NOT NULL DEFAULT 0" \
+  "ستون paid_cash (پرداخت نقد)"
+
+apply "ALTER TABLE invoices ADD COLUMN paid_card INTEGER NOT NULL DEFAULT 0" \
+  "ستون paid_card (پرداخت کارتی)"
+
+apply "ALTER TABLE invoices ADD COLUMN paid_online INTEGER NOT NULL DEFAULT 0" \
+  "ستون paid_online (پرداخت آنلاین)"
+
+apply "ALTER TABLE invoices ADD COLUMN change_amount INTEGER NOT NULL DEFAULT 0" \
+  "ستون change_amount (باقیمانده)"
+
+apply "ALTER TABLE invoices ADD COLUMN shift_id INTEGER" \
+  "ستون shift_id (اتصال فاکتور به شیفت)"
+
+apply "ALTER TABLE invoices ADD COLUMN replaces_invoice_id INTEGER" \
+  "ستون replaces_invoice_id (اصلاح فاکتور)"
+
+# --- ۳.۶) جدول‌های شیفت صندوق -------------------------------------------------
+apply "CREATE TABLE IF NOT EXISTS shifts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  staff_id INTEGER,
+  staff_name TEXT NOT NULL,
+  opened_at TEXT NOT NULL DEFAULT (datetime('now')),
+  closed_at TEXT,
+  opening_cash INTEGER NOT NULL DEFAULT 0,
+  counted_cash INTEGER,
+  expected_cash INTEGER,
+  difference INTEGER,
+  status TEXT NOT NULL DEFAULT 'open',
+  closed_by INTEGER,
+  closed_by_name TEXT,
+  notes TEXT,
+  invoice_count INTEGER NOT NULL DEFAULT 0,
+  cash_sales INTEGER NOT NULL DEFAULT 0,
+  card_sales INTEGER NOT NULL DEFAULT 0,
+  online_sales INTEGER NOT NULL DEFAULT 0,
+  total_sales INTEGER NOT NULL DEFAULT 0,
+  void_count INTEGER NOT NULL DEFAULT 0
+)" "جدول شیفت‌ها (shifts)"
+
+apply "CREATE TABLE IF NOT EXISTS cash_movements (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  shift_id INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  amount INTEGER NOT NULL,
+  reason TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  created_by INTEGER
+)" "جدول دریافت/پرداخت نقدی (cash_movements)"
+
+apply "CREATE INDEX IF NOT EXISTS idx_shifts_status ON shifts (status, opened_at)" "ایندکس وضعیت شیفت"
+apply "CREATE INDEX IF NOT EXISTS idx_shifts_staff ON shifts (staff_id, opened_at)" "ایندکس شیفت کارمند"
+apply "CREATE UNIQUE INDEX IF NOT EXISTS ux_shifts_open_staff ON shifts (staff_id) WHERE status = 'open' AND staff_id IS NOT NULL" "ایندکس یکتا: یک صندوق باز برای هر کارمند"
+apply "CREATE INDEX IF NOT EXISTS idx_cash_movements_shift ON cash_movements (shift_id, created_at)" "ایندکس تراکنش‌های نقدی"
+
 # --- ۴) ایندکس‌ها -------------------------------------------------------------
 apply "CREATE INDEX IF NOT EXISTS idx_invoices_voided ON invoices (voided_at)" \
   "ایندکس فاکتورهای باطل‌شده"
@@ -148,6 +211,15 @@ apply "CREATE UNIQUE INDEX IF NOT EXISTS ux_invoices_visit_day
 apply "CREATE UNIQUE INDEX IF NOT EXISTS ux_invoices_client_request
   ON invoices (client_request_id) WHERE client_request_id IS NOT NULL" \
   "ایندکس یکتا: هر درخواست یک فاکتور"
+
+apply "CREATE INDEX IF NOT EXISTS idx_invoices_payment ON invoices (payment_method, created_at)" \
+  "ایندکس روش پرداخت"
+
+apply "CREATE INDEX IF NOT EXISTS idx_invoices_shift ON invoices (shift_id)" \
+  "ایندکس شیفت فاکتور"
+
+apply "CREATE INDEX IF NOT EXISTS idx_invoices_staff_day ON invoices (registered_by, created_at)" \
+  "ایندکس صندوق‌دار و تاریخ"
 
 # --- ۵) پر کردن داده‌های قدیمی ------------------------------------------------
 apply "UPDATE users SET lifetime_points = points WHERE lifetime_points = 0 AND points > 0" \

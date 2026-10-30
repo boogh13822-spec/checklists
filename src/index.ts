@@ -8,10 +8,12 @@
  */
 import { Hono } from 'hono';
 
-import type { AppEnv, Bindings, InvoiceItem, Role } from './types';
+import type { Context } from 'hono';
+import type { AppEnv, Bindings, InvoiceItem, InvoiceRow, Role } from './types';
 import {
   attachUser,
   assertJwtSecret,
+  sessionInfo,
   checkRateLimit,
   clearSessionCookie,
   clientKey,
@@ -33,11 +35,13 @@ import {
   evaluateCoupon,
   exportCustomers,
   findUserByPhone,
+  findUserByPhoneLoose,
   findUserById,
   getCustomerDetail,
   exportAdminLogs,
   getCustomerPanelData,
   getDashboardStats,
+  getPopularItems,
   getReportsData,
   listAdminLogs,
   logAdminAction,
@@ -62,6 +66,16 @@ import {
 } from './lib/jobs';
 import { hashPassword, verifyPassword, generateCouponCode } from './lib/crypto';
 import { requestOtpCode, verifyOtpCode } from './lib/otp';
+import {
+  addCashMovement,
+  closeShift,
+  getOpenShift,
+  getShiftDetail,
+  getShiftSummary,
+  listOpenShifts,
+  listShifts,
+  openShift,
+} from './lib/shifts';
 import {
   DEFAULT_TIMEZONE,
   fail,
@@ -90,6 +104,7 @@ import {
 } from './ui/customer';
 import { landingPage, loginPage, registerPage } from './ui/public';
 import { staffPage, staffHistoryPage, customerSummaryForApi } from './ui/staff';
+import { staffShiftPage, adminShiftsPage, adminShiftDetailPage } from './ui/shift';
 import {
   adminCustomerDetailPage,
   adminCustomersPage,
@@ -144,6 +159,37 @@ async function audit(
     details: opts.details ?? null,
     ip,
   });
+}
+
+
+/**
+ * ثبت تلاش ناموفق ورود (بدون رمز و بدون توکن) برای پشتیبانی.
+ * فقط وقتی کاربر وجود دارد ثبت می‌شود تا جدول لاگ با شماره‌های تصادفی پر نشود.
+ */
+async function logLoginFailure(
+  c: Context<AppEnv>,
+  phone: string,
+  reason: 'unknown_phone' | 'wrong_password' | 'inactive' | 'not_staff'
+): Promise<void> {
+  try {
+    const reasonText: Record<typeof reason, string> = {
+      unknown_phone: 'شماره در سیستم ثبت نشده است',
+      wrong_password: 'رمز عبور نادرست',
+      inactive: 'حساب غیرفعال است',
+      not_staff: 'حساب مشتری است (ورود پرسنل نیست)',
+    };
+    await logAdminAction(c.env.DB, {
+      adminId: null,
+      adminName: 'ورود ناموفق',
+      action: 'login_failed',
+      targetType: 'auth',
+      targetId: null,
+      details: `تلاش ورود با شمارهٔ ${phone} — ${reasonText[reason]}`,
+      ip: clientKey(c),
+    });
+  } catch (error) {
+    console.error('logLoginFailure failed:', error);
+  }
 }
 
 /**
@@ -290,7 +336,8 @@ app.get('/login', (c) => {
   if (user) return c.redirect(homeForRole(user.role), 302);
   const next = (c.req.query('next') ?? '').slice(0, 200);
   const expired = c.req.query('expired') === '1';
-  return c.html(loginPage(settings, next, expired));
+  const notice = (c.req.query('e') ?? '').slice(0, 20);
+  return c.html(loginPage(settings, next, expired, notice));
 });
 
 /* ==========================================================================
@@ -304,21 +351,32 @@ app.get('/staff', requirePageRole('staff', 'admin'), async (c) => {
   const tz = resolveTimeZone(c.env);
   const day = zonedDayRange(tz);
 
-  const statsRow = await c.env.DB.prepare(
-    `SELECT COUNT(*) AS c, COALESCE(SUM(amount), 0) AS s
-     FROM invoices WHERE voided_at IS NULL AND registered_by = ? AND created_at >= ? AND created_at < ?`
-  )
-    .bind(user.uid, day.start, day.end)
-    .first<{ c: number; s: number }>();
-
-  const { results } = await c.env.DB.prepare(
-    `SELECT i.id, i.amount, i.created_at, u.name AS customer_name
-     FROM invoices i JOIN users u ON u.id = i.user_id
-     WHERE i.voided_at IS NULL AND i.registered_by = ? AND i.created_at >= ? AND i.created_at < ?
-     ORDER BY i.id DESC LIMIT 8`
-  )
-    .bind(user.uid, day.start, day.end)
-    .all<{ id: number; amount: number; created_at: string; customer_name: string }>();
+  const [statsRow, recentRes, openShiftRow, popular] = await Promise.all([
+    c.env.DB.prepare(
+      `SELECT COUNT(*) AS c,
+              COALESCE(SUM(amount), 0) AS s,
+              COALESCE(SUM(paid_cash), 0) AS cash
+       FROM invoices WHERE voided_at IS NULL AND registered_by = ? AND created_at >= ? AND created_at < ?`
+    )
+      .bind(user.uid, day.start, day.end)
+      .first<{ c: number; s: number; cash: number }>(),
+    c.env.DB.prepare(
+      `SELECT i.id, i.amount, i.created_at, i.payment_method, u.name AS customer_name
+       FROM invoices i JOIN users u ON u.id = i.user_id
+       WHERE i.voided_at IS NULL AND i.registered_by = ? AND i.created_at >= ? AND i.created_at < ?
+       ORDER BY i.id DESC LIMIT 8`
+    )
+      .bind(user.uid, day.start, day.end)
+      .all<{
+        id: number;
+        amount: number;
+        created_at: string;
+        customer_name: string;
+        payment_method: string | null;
+      }>(),
+    getOpenShift(c.env.DB, user.uid),
+    getPopularItems(c.env.DB, 8),
+  ]);
 
   return c.html(
     staffPage(
@@ -326,26 +384,139 @@ app.get('/staff', requirePageRole('staff', 'admin'), async (c) => {
       { name: user.name },
       menu,
       { count: statsRow?.c ?? 0, total: statsRow?.s ?? 0 },
-      results ?? [],
-      user.role === 'admin'
+      recentRes.results ?? [],
+      user.role === 'admin',
+      {
+        popular,
+        openShift: openShiftRow
+          ? { id: openShiftRow.id, opening_cash: openShiftRow.opening_cash, opened_at: openShiftRow.opened_at }
+          : null,
+        todayCash: statsRow?.cash ?? 0,
+        requireShift: settings.require_shift === 1,
+      }
     )
+  );
+});
+
+app.get('/staff/shift', requirePageRole('staff', 'admin'), async (c) => {
+  const settings = c.get('settings');
+  const user = c.get('user')!;
+
+  const openShiftRow = await getOpenShift(c.env.DB, user.uid);
+  const summary = openShiftRow ? await getShiftSummary(c.env.DB, openShiftRow) : null;
+
+  const own = await listShifts(c.env.DB, { pageSize: 8 });
+  const history = user.role === 'admin' ? own.items : await filterShiftsForStaff(c.env.DB, user.uid);
+
+  return c.html(
+    staffShiftPage({
+      settings,
+      userName: user.name,
+      role: user.role === 'admin' ? 'admin' : 'staff',
+      openShift: openShiftRow,
+      summary,
+      history,
+      canViewAll: user.role === 'admin',
+    })
+  );
+});
+
+/** ۸ شیفت آخرِ یک کارمند (برای صفحهٔ صندوق) */
+async function filterShiftsForStaff(db: D1Database, staffId: number) {
+  const page = await listShifts(db, { pageSize: 8, staffId });
+  return page.items;
+}
+
+app.get('/admin/shifts', requirePageRole('admin'), async (c) => {
+  const settings = c.get('settings');
+  const user = c.get('user')!;
+  const page = toPositiveInt(c.req.query('page'), 1) || 1;
+  const statusParam = c.req.query('status') ?? 'all';
+  const status = statusParam === 'open' || statusParam === 'closed' ? statusParam : 'all';
+  const staffId = toPositiveInt(c.req.query('staff'), 0) || undefined;
+
+  const result = await listShifts(c.env.DB, {
+    page,
+    pageSize: 20,
+    status: status === 'all' ? undefined : status,
+    staffId,
+    from: c.req.query('from') ?? '',
+    to: c.req.query('to') ?? '',
+  });
+
+  const [staffOptions, openShifts] = await Promise.all([
+    c.env.DB.prepare(`SELECT id, name FROM users WHERE role IN ('staff','admin') ORDER BY name ASC`).all<{
+      id: number;
+      name: string;
+    }>(),
+    listOpenShifts(c.env.DB),
+  ]);
+
+  return c.html(
+    adminShiftsPage({
+      settings,
+      userName: user.name,
+      shifts: result.items,
+      total: result.total,
+      page: result.page,
+      pageSize: result.pageSize,
+      filters: {
+        from: c.req.query('from') ?? '',
+        to: c.req.query('to') ?? '',
+        staffId: staffId ?? null,
+        status,
+      },
+      staffOptions: staffOptions.results ?? [],
+      openShifts,
+    })
+  );
+});
+
+app.get('/admin/shifts/:id', requirePageRole('admin'), async (c) => {
+  const settings = c.get('settings');
+  const user = c.get('user')!;
+  const id = toPositiveInt(c.req.param('id'), 0);
+  if (!id) return c.notFound();
+
+  const detail = await getShiftDetail(c.env.DB, id);
+  if (!detail) return c.notFound();
+
+  return c.html(
+    adminShiftDetailPage({
+      settings,
+      userName: user.name,
+      shift: detail.shift,
+      summary: detail.summary,
+      movements: detail.movements,
+      invoices: detail.invoices,
+    })
   );
 });
 
 app.get('/staff/history', requirePageRole('staff', 'admin'), async (c) => {
   const settings = c.get('settings');
   const user = c.get('user')!;
+  const q = (c.req.query('q') ?? '').trim().slice(0, 40);
+  const onlyVoided = c.req.query('voided') === '1';
+
+  const where = ['i.registered_by = ?'];
+  const binds: Array<string | number> = [user.uid];
+  if (q) {
+    where.push('(u.name LIKE ? OR u.phone LIKE ? OR CAST(i.id AS TEXT) = ?)');
+    binds.push(`%${q}%`, `%${q}%`, q);
+  }
+  if (onlyVoided) where.push('i.voided_at IS NOT NULL');
 
   const { results } = await c.env.DB.prepare(
     `SELECT i.*, u.name AS customer_name, u.phone AS customer_phone, s.name AS registered_name
      FROM invoices i
      JOIN users u ON u.id = i.user_id
      LEFT JOIN users s ON s.id = i.registered_by
-     WHERE i.registered_by = ?
+     WHERE ${where.join(' AND ')}
      ORDER BY i.id DESC
      LIMIT 100`
   )
-    .bind(user.uid)
+    .bind(...binds)
     .all<InvoiceRowWithCustomer>();
 
   const summaryRow = await c.env.DB.prepare(
@@ -356,10 +527,16 @@ app.get('/staff/history', requirePageRole('staff', 'admin'), async (c) => {
     .first<{ c: number; s: number }>();
 
   return c.html(
-    staffHistoryPage(settings, { name: user.name }, results ?? [], {
-      count: summaryRow?.c ?? 0,
-      total: summaryRow?.s ?? 0,
-    })
+    staffHistoryPage(
+      settings,
+      { name: user.name },
+      results ?? [],
+      {
+        count: summaryRow?.c ?? 0,
+        total: summaryRow?.s ?? 0,
+      },
+      { q, onlyVoided }
+    )
   );
 });
 
@@ -375,7 +552,7 @@ app.get('/admin', requirePageRole('admin'), async (c) => {
   const month = jalaliMonthRange(tz);
   const thirtyDaysAgo = utcStamp(Date.now() - 30 * 86_400_000);
 
-  const [stats, jobRuns] = await Promise.all([
+  const [stats, jobRuns, openShifts] = await Promise.all([
     getDashboardStats(
       c.env.DB,
       settings,
@@ -386,6 +563,7 @@ app.get('/admin', requirePageRole('admin'), async (c) => {
       zonedDaySeries(tz, 7)
     ),
     getJobRuns(c.env),
+    listOpenShifts(c.env.DB),
   ]);
 
   // هشدار امنیتی: اگر رمز پیش‌فرض مستندات هنوز استفاده می‌شود، به مدیر اطلاع بده
@@ -421,6 +599,7 @@ app.get('/admin', requirePageRole('admin'), async (c) => {
       monthLabel: month.label,
       todayLabel: `${jalaliWeekday(day.dateISO)} ${formatJalali(day.dateISO)}`,
       defaultPassword,
+      openShifts,
     })
   );
 });
@@ -507,6 +686,11 @@ app.get('/admin/invoices', requirePageRole('admin'), async (c) => {
   const page = toPositiveInt(c.req.query('page'), 1) || 1;
   const tz = resolveTimeZone(c.env);
 
+  const statusParam = c.req.query('status') ?? 'all';
+  const status = statusParam === 'valid' || statusParam === 'voided' ? statusParam : 'all';
+  const paymentFilter = (c.req.query('payment') ?? '').slice(0, 20);
+  const staffFilter = toPositiveInt(c.req.query('staff'), 0) || undefined;
+
   const result = await listInvoices(c.env.DB, {
     q: c.req.query('q') ?? '',
     from: c.req.query('from') ?? '',
@@ -514,7 +698,14 @@ app.get('/admin/invoices', requirePageRole('admin'), async (c) => {
     page,
     pageSize: 25,
     timeZone: tz,
+    status,
+    paymentMethod: paymentFilter,
+    staffId: staffFilter,
   });
+
+  const staffOptions = await c.env.DB.prepare(
+    `SELECT id, name FROM users WHERE role IN ('staff','admin') ORDER BY name ASC`
+  ).all<{ id: number; name: string }>();
 
   return c.html(
     adminInvoicesPage({
@@ -523,12 +714,19 @@ app.get('/admin/invoices', requirePageRole('admin'), async (c) => {
       invoices: result.items,
       total: result.total,
       sum: result.sum,
+      discount: result.discount,
+      voidedCount: result.voidedCount,
+      paymentTotals: result.paymentTotals,
+      staffOptions: staffOptions.results ?? [],
       page: result.page,
       pageSize: result.pageSize,
       filters: {
         q: c.req.query('q') ?? '',
         from: c.req.query('from') ?? '',
         to: c.req.query('to') ?? '',
+        status,
+        payment: paymentFilter,
+        staff: staffFilter,
       },
     })
   );
@@ -741,20 +939,28 @@ app.post('/api/auth/login', async (c) => {
     return fail(c, 'تلاش‌های ناموفق زیاد بوده است. ۱۵ دقیقه بعد دوباره تلاش کنید.', 429, 'RATE_LIMITED');
   }
 
-  const user = await findUserByPhone(c.env.DB, phone);
-  if (!user || (user.role !== 'staff' && user.role !== 'admin')) {
+  // شماره با هر قالبی که ذخیره شده باشد پیدا می‌شود (+98 / 0098 / بدون صفر)
+  const user = await findUserByPhoneLoose(c.env.DB, phone);
+
+  // ترتیب بررسی مهم است: اول رمز، بعد وضعیت حساب.
+  // این‌طور هیچ‌کس بدون دانستن رمز نمی‌فهمد حساب «غیرفعال» یا «بدون رمز» است.
+  const passwordOk = await verifyPassword(password, user?.password_hash ?? null);
+  if (!user || !passwordOk) {
+    await logLoginFailure(c, phone, user ? 'wrong_password' : 'unknown_phone');
     return fail(c, 'شماره موبایل یا رمز عبور اشتباه است.', 401, 'INVALID_CREDENTIALS');
+  }
+  if (user.role !== 'staff' && user.role !== 'admin') {
+    await logLoginFailure(c, phone, 'not_staff');
+    return fail(
+      c,
+      'این حساب مشتری است؛ از صفحهٔ «باشگاه من» با کد پیامکی وارد شوید.',
+      403,
+      'WRONG_PORTAL'
+    );
   }
   if (user.is_active !== 1) {
+    await logLoginFailure(c, phone, 'inactive');
     return fail(c, 'حساب شما غیرفعال شده است. با مدیر تماس بگیرید.', 403, 'ACCOUNT_DISABLED');
-  }
-  if (!user.password_hash) {
-    return fail(c, 'برای این حساب رمز عبور تنظیم نشده است.', 403, 'NO_PASSWORD');
-  }
-
-  const valid = await verifyPassword(password, user.password_hash);
-  if (!valid) {
-    return fail(c, 'شماره موبایل یا رمز عبور اشتباه است.', 401, 'INVALID_CREDENTIALS');
   }
 
   resetRateLimit(rateKey);
@@ -767,7 +973,26 @@ app.post('/api/auth/login', async (c) => {
     name: user.name,
     role: user.role,
     redirect: homeForRole(user.role),
+    expiresIn: ttl,
+    /** برای تشخیص سریع مشکل کوکی در سمت مرورگر */
+    cookieName: 'cc_session',
+    secureCookie: isSecureRequest(c),
   });
+});
+
+/**
+ * وضعیت نشست فعلی — صفحهٔ ورود بعد از ورود موفق آن را صدا می‌زند تا مطمئن شود
+ * مرورگر واقعاً کوکی را ذخیره کرده است. این از حلقهٔ «ورود می‌کنم ولی باز به
+ * صفحهٔ ورود برمی‌گردم» جلوگیری می‌کند و علت را صریح نشان می‌دهد.
+ */
+app.get('/api/auth/session', (c) => {
+  return ok(c, sessionInfo(c.get('user') ?? null));
+});
+
+/** خروج کامل با انتقال به صفحهٔ ورود (برای لینک «پاک کردن نشست») */
+app.get('/logout', (c) => {
+  clearSessionCookie(c, isSecureRequest(c));
+  return c.redirect('/login?e=loggedout', 303);
 });
 
 app.post('/api/auth/register', async (c) => {
@@ -1104,12 +1329,63 @@ app.post('/api/staff/invoices', requireApiRole('staff', 'admin'), async (c) => {
   const items = Array.isArray(body.items) ? (body.items as InvoiceItem[]) : [];
   if (items.length > 50) return fail(c, 'تعداد آیتم‌ها بیش از حد مجاز است.', 400, 'TOO_MANY_ITEMS');
 
+  // اعتبارسنجی سخت‌گیرانهٔ آیتم‌ها: قیمت منفی، تعداد صفر و نام خالی پذیرفته نمی‌شود
+  for (const item of items) {
+    const price = Number(item?.price);
+    const qty = Number(item?.qty);
+    if (!Number.isFinite(price) || price < 0 || price > 1_000_000_000) {
+      return fail(c, 'قیمت یکی از آیتم‌ها نامعتبر است.', 400, 'INVALID_ITEM');
+    }
+    if (!Number.isFinite(qty) || qty <= 0 || qty > 999) {
+      return fail(c, 'تعداد یکی از آیتم‌ها نامعتبر است.', 400, 'INVALID_ITEM');
+    }
+  }
+
   const amountRaw = body.amount === null || body.amount === undefined ? null : Number(body.amount);
   const couponCode = body.couponCode ? String(body.couponCode).trim().slice(0, 30) : null;
 
   const clientRequestId = body.clientRequestId
     ? String(body.clientRequestId).slice(0, 64)
     : null;
+
+  // پرداخت: فقط مبالغ عددی نامنفی پذیرفته می‌شوند
+  let payment: { cash?: number; card?: number; online?: number } | null = null;
+  if (body.payment && typeof body.payment === 'object') {
+    const raw = body.payment as Record<string, unknown>;
+    const toAmount = (value: unknown): number | undefined => {
+      if (value === undefined || value === null || value === '') return undefined;
+      const n = Number(value);
+      if (!Number.isFinite(n) || n < 0) return Number.NaN;
+      return Math.floor(n);
+    };
+    const cash = toAmount(raw.cash);
+    const card = toAmount(raw.card);
+    const online = toAmount(raw.online);
+    if ([cash, card, online].some((value) => value !== undefined && Number.isNaN(value))) {
+      return fail(c, 'مبلغ پرداختی نامعتبر است.', 400, 'INVALID_PAYMENT');
+    }
+    // فقط وقتی حداقل یک مبلغ واقعاً فرستاده شده باشد، پرداخت اعمال می‌شود؛
+    // ارسال شیء خالی نباید فاکتور معتبر را «پرداخت ناقص» کند.
+    const hasAny = 'cash' in raw || 'card' in raw || 'online' in raw;
+    if (hasAny) {
+      payment = {
+        cash: cash ?? 0,
+        card: card ?? 0,
+        online: online ?? 0,
+      };
+    }
+  }
+
+  // شیفت بازِ همین کاربر: برای انتساب فاکتور و کنترل صندوق
+  const openShift = await getOpenShift(c.env.DB, user.uid);
+  if (settings.require_shift === 1 && !openShift && (payment?.cash ?? 0) > 0) {
+    return fail(
+      c,
+      'صندوق بسته است. برای ثبت پرداخت نقدی اول صندوق را با مبلغ اولیه باز کنید.',
+      409,
+      'SHIFT_REQUIRED'
+    );
+  }
 
   const result = await recordInvoice(c.env, settings, {
     userId,
@@ -1118,6 +1394,8 @@ app.post('/api/staff/invoices', requireApiRole('staff', 'admin'), async (c) => {
     couponCode,
     registeredBy: user.uid,
     clientRequestId,
+    payment,
+    shiftId: openShift?.id ?? null,
   });
 
   if (result.ok === false) {
@@ -1307,13 +1585,341 @@ app.post('/api/admin/customers/:id/activate', requireApiRole('admin'), async (c)
   return ok(c, { isActive: true });
 });
 
+/* ---------------------------------------------------------------- شیفت‌ها */
+
+app.get('/api/staff/shift', requireApiRole('staff', 'admin'), async (c) => {
+  const user = c.get('user')!;
+  const shift = await getOpenShift(c.env.DB, user.uid);
+  if (!shift) return ok(c, { open: false, shift: null, summary: null });
+
+  const summary = await getShiftSummary(c.env.DB, shift);
+  return ok(c, { open: true, shift, summary });
+});
+
+app.post('/api/staff/shift/open', requireApiRole('staff', 'admin'), async (c) => {
+  const user = c.get('user')!;
+  let body: Record<string, unknown> = {};
+  try {
+    body = (await c.req.json()) as Record<string, unknown>;
+  } catch {
+    // بدنهٔ خالی یعنی موجودی اولیه صفر
+  }
+
+  const openingCash = Number(body.openingCash ?? 0);
+  if (!Number.isFinite(openingCash) || openingCash < 0 || openingCash > 5_000_000_000) {
+    return fail(c, 'مبلغ اولیهٔ صندوق نامعتبر است.', 400, 'INVALID_AMOUNT');
+  }
+
+  const result = await openShift(c.env, {
+    staffId: user.uid,
+    staffName: user.name,
+    openingCash,
+  });
+
+  if (result.ok === false) {
+    return fail(c, result.error, result.code === 'ALREADY_OPEN' ? 409 : 400, result.code);
+  }
+
+  await audit(c, 'shift_open', {
+    targetType: 'shift',
+    targetId: result.shift.id,
+    details: `صندوق با موجودی ${openingCash} تومان باز شد.`,
+  });
+
+  return ok(c, { shift: result.shift });
+});
+
+app.post('/api/staff/shift/movements', requireApiRole('staff', 'admin'), async (c) => {
+  const user = c.get('user')!;
+  let body: Record<string, unknown> = {};
+  try {
+    body = (await c.req.json()) as Record<string, unknown>;
+  } catch {
+    return fail(c, 'داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
+  }
+
+  const kind = body.kind === 'out' ? 'out' : body.kind === 'in' ? 'in' : null;
+  if (!kind) return fail(c, 'نوع گردش نقد نامعتبر است.', 400, 'INVALID_KIND');
+
+  const amount = Number(body.amount);
+  if (!Number.isFinite(amount) || amount <= 0 || amount > 5_000_000_000) {
+    return fail(c, 'مبلغ گردش نقد نامعتبر است.', 400, 'INVALID_AMOUNT');
+  }
+
+  const shift = await getOpenShift(c.env.DB, user.uid);
+  if (!shift) return fail(c, 'صندوق باز ندارید. اول صندوق را باز کنید.', 409, 'SHIFT_CLOSED');
+
+  const result = await addCashMovement(c.env, {
+    shiftId: shift.id,
+    kind,
+    amount: Math.floor(amount),
+    reason: String(body.note ?? body.reason ?? '').slice(0, 120),
+    actorId: user.uid,
+  });
+
+  if (result.ok === false) {
+    return fail(c, result.error, result.code === 'SHIFT_CLOSED' ? 409 : 400, result.code);
+  }
+
+  await audit(c, kind === 'in' ? 'cash_in' : 'cash_out', {
+    targetType: 'shift',
+    targetId: shift.id,
+    details: `${kind === 'in' ? 'ورود' : 'خروج'} نقد ${Math.floor(amount)} تومان — ${String(body.note ?? '').slice(0, 80)}`,
+  });
+
+  return ok(c, { summary: result.summary });
+});
+
+app.post('/api/staff/shift/close', requireApiRole('staff', 'admin'), async (c) => {
+  const user = c.get('user')!;
+  let body: Record<string, unknown> = {};
+  try {
+    body = (await c.req.json()) as Record<string, unknown>;
+  } catch {
+    return fail(c, 'داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
+  }
+
+  const shift = await getOpenShift(c.env.DB, user.uid);
+  if (!shift) return fail(c, 'صندوق باز ندارید.', 409, 'ALREADY_CLOSED');
+
+  const countedCash = Number(body.countedCash);
+  if (!Number.isFinite(countedCash) || countedCash < 0 || countedCash > 5_000_000_000) {
+    return fail(c, 'مبلغ شمارش‌شده نامعتبر است.', 400, 'INVALID_AMOUNT');
+  }
+
+  const result = await closeShift(c.env, {
+    shiftId: shift.id,
+    countedCash: Math.floor(countedCash),
+    notes: String(body.note ?? '').slice(0, 200),
+    closedBy: user.uid,
+    closedByName: user.name,
+    allowOtherStaff: user.role === 'admin',
+  });
+
+  if (result.ok === false) {
+    const status = result.code === 'NOT_FOUND' ? 404 : 409;
+    return fail(c, result.error, status, result.code);
+  }
+
+  await audit(c, 'shift_close', {
+    targetType: 'shift',
+    targetId: shift.id,
+    details: `صندوق بسته شد؛ شمارش ${Math.floor(countedCash)}، مورد انتظار ${result.summary.expectedCash}، اختلاف ${result.summary.difference ?? 0}.`,
+  });
+
+  return ok(c, { shift: result.shift, summary: result.summary });
+});
+
+app.get('/api/admin/shifts', requireApiRole('admin'), async (c) => {
+  const result = await listShifts(c.env.DB, {
+    page: toPositiveInt(c.req.query('page'), 1) || 1,
+    pageSize: toPositiveInt(c.req.query('pageSize'), 20) || 20,
+    status: c.req.query('status') ?? undefined,
+    staffId: toPositiveInt(c.req.query('staff'), 0) || undefined,
+    from: c.req.query('from') ?? '',
+    to: c.req.query('to') ?? '',
+  });
+  return ok(c, result);
+});
+
+app.get('/api/admin/shifts/:id', requireApiRole('admin'), async (c) => {
+  const id = toPositiveInt(c.req.param('id'), 0);
+  if (!id) return fail(c, 'شناسه شیفت نامعتبر است.', 400, 'INVALID_ID');
+  const detail = await getShiftDetail(c.env.DB, id);
+  if (!detail) return fail(c, 'شیفت یافت نشد.', 404, 'NOT_FOUND');
+  return ok(c, detail);
+});
+
+app.get('/api/admin/invoices/:id', requireApiRole('admin'), async (c) => {
+  const id = toPositiveInt(c.req.param('id'), 0);
+  if (!id) return fail(c, 'شناسه فاکتور نامعتبر است.', 400, 'INVALID_ID');
+
+  const invoice = await c.env.DB.prepare(
+    `SELECT i.*, u.name AS customer_name, u.phone AS customer_phone, s.name AS staff_name
+     FROM invoices i
+     JOIN users u ON u.id = i.user_id
+     LEFT JOIN users s ON s.id = i.registered_by
+     WHERE i.id = ? LIMIT 1`
+  )
+    .bind(id)
+    .first<Record<string, unknown>>();
+
+  if (!invoice) return fail(c, 'فاکتور یافت نشد.', 404, 'NOT_FOUND');
+  return ok(c, invoice);
+});
+
+/**
+ * اصلاح فاکتور (فقط مدیر) — الگوی استاندارد صندوق‌ها:
+ *   ۱) فاکتور اصلاحیِ تازه ثبت می‌شود (با پیوند به فاکتور اصلی)
+ *   ۲) فاکتور اصلی با دلیل باطل می‌شود
+ *   ۳) اگر مرحلهٔ ۲ شکست بخورد، فاکتور تازه خودکار باطل می‌شود تا هیچ‌وقت
+ *      دو فاکتور معتبر برای یک خرید باقی نماند.
+ */
+app.post('/api/admin/invoices/:id/correct', requireApiRole('admin'), async (c) => {
+  const user = c.get('user')!;
+  const settings = c.get('settings');
+  const id = toPositiveInt(c.req.param('id'), 0);
+  if (!id) return fail(c, 'شناسه فاکتور نامعتبر است.', 400, 'INVALID_ID');
+
+  let body: Record<string, unknown>;
+  try {
+    body = (await c.req.json()) as Record<string, unknown>;
+  } catch {
+    return fail(c, 'داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
+  }
+
+  const reason = String(body.reason ?? '').trim().slice(0, 160);
+  if (reason.length < 3) {
+    return fail(c, 'دلیل اصلاح را بنویسید (حداقل ۳ نویسه).', 400, 'REASON_REQUIRED');
+  }
+
+  const original = await c.env.DB.prepare('SELECT * FROM invoices WHERE id = ? LIMIT 1')
+    .bind(id)
+    .first<InvoiceRow>();
+  if (!original) return fail(c, 'فاکتور یافت نشد.', 404, 'NOT_FOUND');
+  if (original.voided_at) {
+    return fail(c, 'این فاکتور قبلاً باطل شده و قابل اصلاح نیست.', 409, 'ALREADY_VOID');
+  }
+
+  // آیتم‌های جدید
+  const rawItems = Array.isArray(body.items) ? (body.items as Array<Record<string, unknown>>) : [];
+  if (rawItems.length === 0) return fail(c, 'حداقل یک آیتم لازم است.', 400, 'INVALID_ITEMS');
+  if (rawItems.length > 50) return fail(c, 'تعداد آیتم‌ها بیش از حد مجاز است.', 400, 'TOO_MANY_ITEMS');
+
+  const items: InvoiceItem[] = [];
+  for (const raw of rawItems) {
+    const name = String(raw?.name ?? '').trim().slice(0, 60);
+    const qty = Math.floor(Number(raw?.qty));
+    const price = Math.floor(Number(raw?.price));
+    if (!name) return fail(c, 'نام آیتم خالی است.', 400, 'INVALID_ITEMS');
+    if (!Number.isFinite(qty) || qty <= 0 || qty > 999) {
+      return fail(c, 'تعداد یکی از آیتم‌ها نامعتبر است.', 400, 'INVALID_ITEMS');
+    }
+    if (!Number.isFinite(price) || price < 0 || price > 1_000_000_000) {
+      return fail(c, 'قیمت یکی از آیتم‌ها نامعتبر است.', 400, 'INVALID_ITEMS');
+    }
+    items.push({ name, qty, price });
+  }
+
+  const subtotal = items.reduce((sum, item) => sum + item.price * item.qty, 0);
+  const discountRaw = body.discount === undefined ? 0 : Number(body.discount);
+  if (!Number.isFinite(discountRaw) || discountRaw < 0) {
+    return fail(c, 'مبلغ تخفیف نامعتبر است.', 400, 'INVALID_DISCOUNT');
+  }
+  const discount = Math.floor(discountRaw);
+  const newAmount = subtotal - discount;
+  if (newAmount <= 0) {
+    return fail(c, 'مبلغ نهایی فاکتور باید بیشتر از صفر باشد.', 400, 'INVALID_AMOUNT');
+  }
+
+  // پرداخت: اگر فرستاده نشود و مبلغ عوض نشده باشد، پرداخت قبلی حفظ می‌شود
+  let payment: { cash?: number; card?: number; online?: number } | null = null;
+  if (body.payment && typeof body.payment === 'object') {
+    const raw = body.payment as Record<string, unknown>;
+    const toAmount = (value: unknown): number | undefined => {
+      if (value === undefined || value === null || value === '') return undefined;
+      const n = Number(value);
+      return Number.isFinite(n) && n >= 0 ? Math.floor(n) : Number.NaN;
+    };
+    const cash = toAmount(raw.cash);
+    const card = toAmount(raw.card);
+    const online = toAmount(raw.online);
+    if ([cash, card, online].some((value) => value !== undefined && Number.isNaN(value))) {
+      return fail(c, 'مبلغ پرداختی نامعتبر است.', 400, 'INVALID_PAYMENT');
+    }
+    payment = { cash: cash ?? 0, card: card ?? 0, online: online ?? 0 };
+  } else if (newAmount === original.amount && original.payment_method) {
+    payment = { cash: original.paid_cash, card: original.paid_card, online: original.paid_online };
+  } else {
+    return fail(
+      c,
+      'مبلغ فاکتور تغییر کرده است؛ مبالغ پرداخت جدید را هم وارد کنید.',
+      400,
+      'PAYMENT_REQUIRED'
+    );
+  }
+
+  const openShift = await getOpenShift(c.env.DB, user.uid);
+  const allowClosedShift = body.allowClosedShift === true;
+
+  // ۱) ثبت فاکتور اصلاحی
+  const created = await recordInvoice(c.env, settings, {
+    userId: original.user_id,
+    items,
+    amount: null,
+    couponCode: null,
+    registeredBy: user.uid,
+    clientRequestId: body.clientRequestId
+      ? String(body.clientRequestId).slice(0, 64)
+      : `fix-${id}-${Date.now()}`,
+    payment,
+    shiftId: openShift?.id ?? null,
+    replacesInvoiceId: original.id,
+    manualDiscount: discount,
+  });
+
+  if (created.ok === false) {
+    return fail(c, created.error, 400, created.code);
+  }
+
+  // ۲) باطل کردن فاکتور اصلی
+  const voided = await voidInvoice(c.env, settings, id, user.uid, {
+    reason: `اصلاح: جایگزین با فاکتور #${created.invoiceId} — ${reason}`,
+    allowClosedShift,
+  });
+
+  if (voided.ok === false) {
+    // ۳) جبران: فاکتور تازه باطل می‌شود تا وضعیت مالی مبهم نماند
+    const rollback = await voidInvoice(c.env, settings, created.invoiceId, user.uid, {
+      reason: 'ابطال خودکار: اصلاح فاکتور اصلی انجام نشد',
+      allowClosedShift: true,
+    });
+    return fail(
+      c,
+      `${voided.error}${rollback.ok ? ' فاکتور اصلاحی هم برگشت داده شد.' : ' فاکتور اصلاحی دستی بررسی شود.'}`,
+      409,
+      voided.code
+    );
+  }
+
+  await audit(c, 'invoice_correct', {
+    targetType: 'invoice',
+    targetId: id,
+    details: `فاکتور #${id} (${formatNumberFa(original.amount)} تومان) با فاکتور #${created.invoiceId} (${formatNumberFa(
+      created.amount
+    )} تومان) اصلاح شد. دلیل: ${reason}`,
+  });
+
+  return ok(c, {
+    corrected: true,
+    newInvoiceId: created.invoiceId,
+    amount: created.amount,
+    discount: created.discount,
+    replaces: id,
+  });
+});
+
 app.post('/api/admin/invoices/:id/void', requireApiRole('admin'), async (c) => {
   const user = c.get('user')!;
   const settings = c.get('settings');
   const id = toPositiveInt(c.req.param('id'), 0);
   if (!id) return fail(c, 'شناسه فاکتور نامعتبر است.', 400, 'INVALID_ID');
 
-  const result = await voidInvoice(c.env, settings, id, user.uid);
+  let body: Record<string, unknown> = {};
+  try {
+    body = (await c.req.json()) as Record<string, unknown>;
+  } catch {
+    // بدنهٔ خالی مجاز نیست چون دلیل الزامی است
+  }
+  const reason = body.reason === undefined || body.reason === null ? '' : String(body.reason).trim().slice(0, 200);
+  if (reason.length < 3) {
+    return fail(c, 'دلیل ابطال الزامی است (حداقل ۳ نویسه).', 400, 'REASON_REQUIRED');
+  }
+
+  const result = await voidInvoice(c.env, settings, id, user.uid, {
+    reason,
+    allowClosedShift: body.allowClosedShift === true && user.role === 'admin',
+  });
   if (result.ok === false) {
     const status = result.code === 'NOT_FOUND' ? 404 : 409;
     return fail(c, result.error, status, result.code);
@@ -1322,7 +1928,7 @@ app.post('/api/admin/invoices/:id/void', requireApiRole('admin'), async (c) => {
   await audit(c, 'invoice_void', {
     targetType: 'invoice',
     targetId: id,
-    details: `فاکتور ${result.customerName} باطل شد؛ ${result.pointsReversed} امتیاز برگشت خورد.`,
+    details: `فاکتور ${result.customerName} باطل شد؛ ${result.pointsReversed} امتیاز برگشت خورد. دلیل: ${reason}`,
   });
 
   return ok(c, {
@@ -1501,6 +2107,9 @@ app.put('/api/admin/settings', requireApiRole('admin'), async (c) => {
     }
     if (body.otp_login_enabled !== undefined) {
       await saveSetting(c.env, 'otp_login_enabled', body.otp_login_enabled ? 1 : 0);
+    }
+    if (body.require_shift !== undefined) {
+      await saveSetting(c.env, 'require_shift', body.require_shift ? 1 : 0);
     }
     if (body.referral_reward_points !== undefined) {
       await saveSetting(c.env, 'referral_reward_points', toIntInRange(body.referral_reward_points, 0, 1_000_000, 50));
@@ -1946,21 +2555,7 @@ app.onError((error, c) => {
  *  ابزارهای محلی
  * ========================================================================== */
 
-type InvoiceRowWithCustomer = {
-  id: number;
-  user_id: number;
-  amount: number;
-  items: string;
-  subtotal: number;
-  discount: number;
-  coupon_code: string | null;
-  points_earned: number;
-  visit_day: string | null;
-  client_request_id: string | null;
-  voided_at: string | null;
-  voided_by: number | null;
-  created_at: string;
-  registered_by: number | null;
+type InvoiceRowWithCustomer = InvoiceRow & {
   customer_name: string;
   customer_phone: string;
   registered_name: string | null;

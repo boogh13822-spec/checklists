@@ -3,7 +3,7 @@
  *  پنل ادمین: داشبورد، مشتریان، جزئیات مشتری و فاکتورها
  * ----------------------------------------------------------------------------
  */
-import type { AppSettings, CouponRow, InvoiceRow, UserRow, Role } from '../types';
+import type { AppSettings, CouponRow, InvoiceRow, ShiftRow, UserRow, Role } from '../types';
 import type {
   CustomerListItem,
   DashboardStats,
@@ -95,9 +95,30 @@ export function adminDashboardPage(input: {
   monthLabel: string;
   todayLabel: string;
   defaultPassword?: boolean;
+  openShifts?: ShiftRow[];
 }): string {
   const { settings, userName, stats, weather, jobRuns, monthLabel, todayLabel } = input;
   const defaultPassword = input.defaultPassword === true;
+  const openShifts = input.openShifts ?? [];
+
+  const shiftStrip = openShifts.length
+    ? `<div class="glass rounded-2xl px-4 py-3 mb-4 flex flex-wrap items-center gap-2 border border-emerald-500/25">
+        <span class="badge tone-success">${icon('wallet', 'w-3 h-3')} ${formatNumberFa(openShifts.length)} صندوق باز</span>
+        <div class="flex flex-wrap gap-1.5">
+          ${openShifts
+            .map(
+              (shift) =>
+                `<span class="badge tone-muted">${escapeHtml(shift.staff_name)} · اولیه ${formatNumberFa(shift.opening_cash)}</span>`
+            )
+            .join('')}
+        </div>
+        <a href="/admin/shifts" class="btn btn-ghost btn-sm me-auto">${icon('chart', 'w-4 h-4')} گزارش صندوق‌ها</a>
+      </div>`
+    : `<div class="glass rounded-2xl px-4 py-3 mb-4 flex flex-wrap items-center gap-2">
+        <span class="badge tone-muted">${icon('lock', 'w-3 h-3')} هیچ صندوقی باز نیست</span>
+        <span class="text-[10.5px] text-cream/35">برای کنترل نقد و اختلاف صندوق، صندوق‌دار شیفت را باز کند.</span>
+        <a href="/admin/shifts" class="btn btn-ghost btn-sm me-auto">${icon('chart', 'w-4 h-4')} گزارش صندوق‌ها</a>
+      </div>`;
 
   const maxSale = Math.max(...stats.salesSeries.map((d) => d.total), 1);
   const bars = stats.salesSeries
@@ -149,6 +170,8 @@ export function adminDashboardPage(input: {
       actions: `<a href="/staff" class="btn btn-primary btn-sm">${icon('receipt', 'w-4 h-4')} ثبت فاکتور</a>
         <a href="/admin/settings" class="btn btn-ghost btn-sm">${icon('settings', 'w-4 h-4')} تنظیمات</a>`,
     })}
+
+    ${shiftStrip}
 
     ${
       defaultPassword
@@ -968,11 +991,28 @@ export function adminInvoicesPage(input: {
   invoices: InvoiceListItem[];
   total: number;
   sum: number;
+  discount?: number;
+  voidedCount?: number;
+  paymentTotals?: { cash: number; card: number; online: number };
+  staffOptions?: Array<{ id: number; name: string }>;
   page: number;
   pageSize: number;
-  filters: { q?: string; from?: string; to?: string };
+  filters: { q?: string; from?: string; to?: string; status?: string; payment?: string; staff?: number };
 }): string {
-  const { settings, userName, invoices, total, sum, page, pageSize, filters } = input;
+  const {
+    settings,
+    userName,
+    invoices,
+    total,
+    sum,
+    discount = 0,
+    voidedCount = 0,
+    paymentTotals = { cash: 0, card: 0, online: 0 },
+    staffOptions = [],
+    page,
+    pageSize,
+    filters,
+  } = input;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   const pageLink = (newPage: number): string => {
@@ -980,6 +1020,9 @@ export function adminInvoicesPage(input: {
     if (filters.q) search.set('q', filters.q);
     if (filters.from) search.set('from', filters.from);
     if (filters.to) search.set('to', filters.to);
+    if (filters.status && filters.status !== 'all') search.set('status', filters.status);
+    if (filters.payment) search.set('payment', filters.payment);
+    if (filters.staff) search.set('staff', String(filters.staff));
     search.set('page', String(newPage));
     return `/admin/invoices?${search.toString()}`;
   };
@@ -993,9 +1036,18 @@ export function adminInvoicesPage(input: {
       actions: `<a href="/staff" class="btn btn-primary btn-sm">${icon('plus', 'w-4 h-4')} ثبت فاکتور</a>`,
     })}
 
-    <div class="grid grid-cols-2 gap-3 mb-4">
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
       ${statCard({ label: 'تعداد فاکتورها', value: formatNumberFa(total), iconName: 'receipt', accent: 'gold' })}
-      ${statCard({ label: 'مجموع فروش', value: formatNumberFa(sum), unit: 'تومان', iconName: 'wallet', accent: 'emerald' })}
+      ${statCard({ label: 'مجموع فروش (معتبر)', value: formatNumberFa(sum), unit: 'تومان', iconName: 'wallet', accent: 'emerald' })}
+      ${statCard({ label: 'مجموع تخفیف', value: formatNumberFa(discount), unit: 'تومان', iconName: 'gift', accent: 'sky' })}
+      ${statCard({ label: 'فاکتور باطل‌شده', value: formatNumberFa(voidedCount), iconName: 'close', accent: 'rose' })}
+    </div>
+
+    <div class="flex flex-wrap items-center gap-2 mb-4 text-[11px]">
+      <span class="badge tone-success">نقد: ${formatNumberFa(paymentTotals.cash)}</span>
+      <span class="badge tone-info">کارت: ${formatNumberFa(paymentTotals.card)}</span>
+      <span class="badge tone-warning">آنلاین: ${formatNumberFa(paymentTotals.online)}</span>
+      <span class="text-cream/30">جمع پرداخت‌های همین فیلتر (فقط فاکتورهای معتبر)</span>
     </div>
 
     <form id="filter-form" method="get" action="/admin/invoices" class="glass rounded-2xl p-4 mb-4">
@@ -1018,6 +1070,37 @@ export function adminInvoicesPage(input: {
 
         <button type="submit" class="btn btn-primary btn-sm">${icon('filter', 'w-4 h-4')} فیلتر</button>
       </div>
+      <div class="grid sm:grid-cols-3 gap-2.5 mt-2.5">
+        <select name="payment" class="field !py-2 text-[12px]">
+          <option value="">همهٔ روش‌های پرداخت</option>
+          ${[
+            { value: 'cash', label: 'نقدی' },
+            { value: 'card', label: 'کارت‌خوان' },
+            { value: 'online', label: 'آنلاین' },
+            { value: 'mixed', label: 'ترکیبی' },
+            { value: 'unknown', label: 'ثبت‌نشده (قدیمی)' },
+          ]
+            .map(
+              (option) =>
+                `<option value="${option.value}" ${filters.payment === option.value ? 'selected' : ''}>${option.label}</option>`
+            )
+            .join('')}
+        </select>
+        <select name="status" class="field !py-2 text-[12px]">
+          <option value="all" ${!filters.status || filters.status === 'all' ? 'selected' : ''}>همهٔ وضعیت‌ها</option>
+          <option value="valid" ${filters.status === 'valid' ? 'selected' : ''}>فقط معتبر</option>
+          <option value="voided" ${filters.status === 'voided' ? 'selected' : ''}>فقط باطل‌شده</option>
+        </select>
+        <select name="staff" class="field !py-2 text-[12px]">
+          <option value="">همهٔ صندوق‌دارها</option>
+          ${staffOptions
+            .map(
+              (member) =>
+                `<option value="${member.id}" ${filters.staff === member.id ? 'selected' : ''}>${escapeHtml(member.name)}</option>`
+            )
+            .join('')}
+        </select>
+      </div>
       <input type="hidden" name="from" id="from-iso" value="${escapeHtml(filters.from ?? '')}" />
       <input type="hidden" name="to" id="to-iso" value="${escapeHtml(filters.to ?? '')}" />
       <p class="hint">تاریخ‌ها شمسی‌اند؛ خالی گذاشتن یعنی بدون محدودیت. بازه «تا» شامل همان روز هم می‌شود.</p>
@@ -1029,7 +1112,7 @@ export function adminInvoicesPage(input: {
           ? emptyState({ title: 'فاکتوری یافت نشد', message: 'با تغییر فیلترها دوباره تلاش کنید.', iconName: 'receipt' })
           : `<div class="table-wrap">
               <table class="data">
-                <thead><tr><th>#</th><th>مشتری</th><th>آیتم‌ها</th><th>مبلغ</th><th>تخفیف</th><th>امتیاز</th><th>ثبت‌کننده</th><th>تاریخ</th><th>وضعیت</th><th></th></tr></thead>
+                <thead><tr><th>#</th><th>مشتری</th><th>آیتم‌ها</th><th>مبلغ</th><th>پرداخت</th><th>تخفیف</th><th>امتیاز</th><th>ثبت‌کننده</th><th>تاریخ</th><th>وضعیت</th><th></th></tr></thead>
                 <tbody>
                   ${invoices
                     .map(
@@ -1039,22 +1122,33 @@ export function adminInvoicesPage(input: {
                           <a href="/admin/customers/${invoice.user_id}" class="text-[12.5px] hover:text-gold transition block">${escapeHtml(invoice.customer_name)}</a>
                           <span class="text-[10px] text-cream/30 font-mono" dir="ltr">${escapeHtml(invoice.customer_phone)}</span>
                         </td>
-                        <td class="text-[11px] text-cream/45 max-w-[200px] truncate">${escapeHtml(invoiceItemNames(invoice.items))}</td>
+                        <td class="text-[11px] text-cream/45 max-w-[180px] truncate">${escapeHtml(invoiceItemNames(invoice.items))}</td>
                         <td class="font-bold text-amber-200 whitespace-nowrap text-[12.5px]">${formatNumberFa(invoice.amount)}</td>
+                        <td class="whitespace-nowrap">${paymentBadge(invoice)}</td>
                         <td class="text-[11px] text-emerald-300/70">${invoice.discount > 0 ? formatNumberFa(invoice.discount) : '—'}</td>
                         <td class="text-[11px] text-cream/60">+${toPersianDigits(invoice.points_earned)}</td>
                         <td class="text-[11px] text-cream/45">${escapeHtml(invoice.staff_name ?? '—')}</td>
                         <td class="text-[10.5px] text-cream/40 whitespace-nowrap">${formatJalaliDateTime(invoice.created_at)}</td>
                         <td>${
                           invoice.voided_at
-                            ? `<span class="badge tone-danger" title="زمان ابطال: ${escapeHtml(invoice.voided_at)}">باطل‌شده</span>`
+                            ? `<span class="badge tone-danger" title="${escapeHtml(`ابطال: ${invoice.void_reason ?? 'بدون دلیل'} — ${invoice.voided_at}`)}">باطل‌شده</span>`
                             : `<span class="badge tone-success">معتبر</span>`
                         }</td>
-                        <td class="text-left">${
-                          invoice.voided_at
-                            ? ''
-                            : `<button type="button" data-void-id="${invoice.id}" class="btn btn-danger btn-sm whitespace-nowrap">${icon('close', 'w-3.5 h-3.5')} ابطال</button>`
-                        }</td>
+                        <td class="text-left">
+                          <div class="flex items-center justify-end gap-1">
+                            <button type="button" data-detail-id="${invoice.id}" class="btn btn-ghost btn-sm" title="جزئیات">${icon('eye', 'w-3.5 h-3.5')}</button>
+                            ${
+                              invoice.voided_at
+                                ? ''
+                                : `<button type="button" data-correct-id="${invoice.id}" class="btn btn-ghost btn-sm" title="اصلاح فاکتور">${icon('edit', 'w-3.5 h-3.5')}</button>`
+                            }
+                            ${
+                              invoice.voided_at
+                                ? ''
+                                : `<button type="button" data-void-id="${invoice.id}" data-void-amount="${invoice.amount}" class="btn btn-danger btn-sm whitespace-nowrap">${icon('close', 'w-3.5 h-3.5')} ابطال</button>`
+                            }
+                          </div>
+                        </td>
                       </tr>`
                     )
                     .join('')}
@@ -1069,6 +1163,119 @@ export function adminInvoicesPage(input: {
               </div>
             </div>`
       }
+    </div>
+  </div>
+
+  <!-- پنجرهٔ ابطال با دلیل -->
+  <div id="void-modal" class="hidden fixed inset-0 z-50 bg-black/70 backdrop-blur-sm p-4 overflow-y-auto">
+    <div class="glass rounded-3xl max-w-md mx-auto mt-16 p-5">
+      <div class="flex items-start justify-between gap-3 mb-3">
+        <div>
+          <h3 class="font-bold text-[15px]">ابطال فاکتور</h3>
+          <p class="text-[11px] text-cream/40 mt-1">این عملیات بازگشت‌ناپذیر است و در گزارش حسابرسی ثبت می‌شود.</p>
+        </div>
+        <button type="button" id="void-cancel" class="btn btn-ghost btn-sm">${icon('close', 'w-4 h-4')}</button>
+      </div>
+
+      <div class="rounded-xl bg-rose-500/10 border border-rose-400/25 px-3 py-2.5 text-[12px] text-rose-200 mb-3">
+        فاکتور <span id="void-id-text" class="font-bold"></span> به مبلغ
+        <span id="void-amount-text" class="font-bold"></span> تومان باطل خواهد شد؛ امتیازها و کد تخفیف برمی‌گردند.
+      </div>
+
+      <label class="label" for="void-reason">دلیل ابطال <span class="text-rose-300">*</span></label>
+      <textarea id="void-reason" class="field min-h-[76px] text-[12.5px]" maxlength="200"
+        placeholder="مثلاً: ثبت اشتباه مبلغ، انصراف مشتری، فاکتور تکراری…"></textarea>
+      <div class="flex flex-wrap gap-1.5 mt-2">
+        ${['ثبت اشتباه مبلغ', 'انصراف مشتری', 'فاکتور تکراری', 'خطای صندوق‌دار']
+          .map((reason) => `<button type="button" class="badge tone-muted hover:!text-gold" data-reason="${reason}">${reason}</button>`)
+          .join('')}
+      </div>
+
+      <div class="flex gap-2 mt-4">
+        <button type="button" id="void-confirm" class="btn btn-danger flex-1">${icon('close', 'w-4 h-4')} تأیید ابطال</button>
+        <button type="button" id="void-close" class="btn btn-ghost flex-1">انصراف</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- پنجرهٔ اصلاح فاکتور -->
+  <div id="correct-modal" class="hidden fixed inset-0 z-50 bg-black/70 backdrop-blur-sm p-4 overflow-y-auto">
+    <div class="glass rounded-3xl max-w-2xl mx-auto mt-8 p-5">
+      <div class="flex items-start justify-between gap-3 mb-3">
+        <div>
+          <h3 class="font-bold text-[15px]">اصلاح فاکتور <span id="correct-title" class="text-gold"></span></h3>
+          <p class="text-[11px] text-cream/40 mt-1">
+            فاکتور اصلی باطل و یک فاکتور جدید جایگزین آن می‌شود؛ هر دو در سابقه می‌مانند.
+          </p>
+        </div>
+        <button type="button" id="correct-cancel" class="btn btn-ghost btn-sm">${icon('close', 'w-4 h-4')}</button>
+      </div>
+
+      <div class="rounded-xl bg-black/25 border border-white/10 p-3 mb-3">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-[11.5px] text-cream/55">اقلام فاکتور</span>
+          <button type="button" id="correct-add-row" class="btn btn-ghost btn-sm">${icon('plus', 'w-3.5 h-3.5')} افزودن</button>
+        </div>
+        <div id="correct-rows" class="space-y-2"></div>
+        <div class="mt-3 flex items-center justify-between text-[12px]">
+          <span class="text-cream/50">جمع اقلام</span>
+          <span id="correct-subtotal" class="font-bold text-amber-200">۰ تومان</span>
+        </div>
+      </div>
+
+      <div class="grid sm:grid-cols-2 gap-3 mb-3">
+        <div>
+          <label class="label" for="correct-discount">تخفیف (تومان)</label>
+          <input id="correct-discount" type="text" inputmode="numeric" dir="ltr" class="field text-left" placeholder="0" />
+        </div>
+        <div>
+          <label class="label">مبلغ قابل پرداخت</label>
+          <div class="field !bg-black/40 text-left font-extrabold text-amber-200" id="correct-total">۰ تومان</div>
+        </div>
+      </div>
+
+      <div class="rounded-xl bg-black/25 border border-white/10 p-3 mb-3">
+        <div class="text-[11.5px] text-cream/55 mb-2">پرداخت جدید</div>
+        <div class="grid grid-cols-3 gap-2">
+          <div>
+            <label class="label !text-[10.5px]" for="correct-cash">نقد</label>
+            <input id="correct-cash" type="text" inputmode="numeric" dir="ltr" class="field text-left !py-2 text-[12px]" placeholder="0" />
+          </div>
+          <div>
+            <label class="label !text-[10.5px]" for="correct-card">کارت</label>
+            <input id="correct-card" type="text" inputmode="numeric" dir="ltr" class="field text-left !py-2 text-[12px]" placeholder="0" />
+          </div>
+          <div>
+            <label class="label !text-[10.5px]" for="correct-online">آنلاین</label>
+            <input id="correct-online" type="text" inputmode="numeric" dir="ltr" class="field text-left !py-2 text-[12px]" placeholder="0" />
+          </div>
+        </div>
+        <div class="mt-2 flex items-center justify-between text-[11.5px]">
+          <span class="text-cream/45">باقیمانده / کمبود</span>
+          <span id="correct-gap" class="font-bold text-cream/40">—</span>
+        </div>
+      </div>
+
+      <label class="label" for="correct-reason">دلیل اصلاح <span class="text-rose-300">*</span></label>
+      <textarea id="correct-reason" class="field min-h-[64px] text-[12px]" maxlength="160"
+        placeholder="مثلاً: تعداد اشتباه ثبت شده بود، مبلغ اشتباه بود…"></textarea>
+
+      <div class="flex gap-2 mt-4">
+        <button type="button" id="correct-confirm" class="btn btn-primary flex-1">${icon('edit', 'w-4 h-4')} ثبت اصلاح</button>
+        <button type="button" id="correct-close" class="btn btn-ghost flex-1">انصراف</button>
+      </div>
+      <p id="correct-error" class="hidden mt-2 text-[11px] text-rose-300 leading-5"></p>
+    </div>
+  </div>
+
+  <!-- پنجرهٔ جزئیات فاکتور -->
+  <div id="detail-modal" class="hidden fixed inset-0 z-50 bg-black/70 backdrop-blur-sm p-4 overflow-y-auto">
+    <div class="glass rounded-3xl max-w-lg mx-auto mt-10 p-5">
+      <div class="flex items-start justify-between gap-3 mb-3">
+        <h3 class="font-bold text-[15px]">جزئیات فاکتور</h3>
+        <button type="button" id="detail-close" class="btn btn-ghost btn-sm">${icon('close', 'w-4 h-4')}</button>
+      </div>
+      <div id="detail-body" class="text-[12.5px]"></div>
     </div>
   </div>
   `;
@@ -1096,22 +1303,329 @@ export function adminInvoicesPage(input: {
       $('#to-iso').value = to.iso || '';
     });
 
-    document.querySelectorAll('[data-void-id]').forEach(function (button) {
-      button.addEventListener('click', async function () {
-        var id = button.getAttribute('data-void-id');
-        if (!confirm('این فاکتور باطل شود؟ امتیازهای داده‌شده و استفاده از کد تخفیف برگشت می‌خورد.')) return;
+    // --- ابطال با دلیل ---
+    var voidModal = $('#void-modal');
+    var voidId = null;
+    var voidButton = null;
 
-        setLoading(button, true, 'در حال ابطال…');
+    function closeVoid() {
+      voidModal.classList.add('hidden');
+      voidId = null;
+      voidButton = null;
+      $('#void-reason').value = '';
+    }
+
+    document.querySelectorAll('[data-void-id]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        voidId = button.getAttribute('data-void-id');
+        voidButton = button;
+        $('#void-id-text').textContent = '#' + fa(voidId);
+        $('#void-amount-text').textContent = moneyFa(Number(button.getAttribute('data-void-amount')) || 0);
+        $('#void-reason').value = '';
+        voidModal.classList.remove('hidden');
+        $('#void-reason').focus();
+      });
+    });
+
+    document.querySelectorAll('[data-reason]').forEach(function (chip) {
+      chip.addEventListener('click', function () {
+        $('#void-reason').value = chip.getAttribute('data-reason');
+      });
+    });
+
+    $('#void-cancel').addEventListener('click', closeVoid);
+    $('#void-close').addEventListener('click', closeVoid);
+    voidModal.addEventListener('click', function (event) {
+      if (event.target === voidModal) closeVoid();
+    });
+
+    $('#void-confirm').addEventListener('click', async function () {
+      if (!voidId) return;
+      var reason = $('#void-reason').value.trim();
+      if (reason.length < 3) {
+        toast('دلیل ابطال را بنویسید (حداقل ۳ نویسه).', 'error');
+        $('#void-reason').focus();
+        return;
+      }
+
+      var button = $('#void-confirm');
+      setLoading(button, true, 'در حال ابطال…');
+
+      async function send(force) {
+        return api('/api/admin/invoices/' + voidId + '/void', {
+          method: 'POST',
+          body: force ? { reason: reason, allowClosedShift: true } : { reason: reason }
+        });
+      }
+
+      try {
+        var result;
         try {
-          var result = await api('/api/admin/invoices/' + id + '/void', { method: 'POST' });
-          toast('فاکتور باطل شد؛ ' + fa(result.pointsReversed) + ' امتیاز برگشت خورد.', 'success');
-          setTimeout(function () { location.reload(); }, 700);
+          result = await send(false);
+        } catch (firstError) {
+          // فاکتور متعلق به شیفت بسته‌شده است: تأیید صریح مدیر لازم است
+          if (/شیفت بسته/.test(String(firstError.message || ''))) {
+            setLoading(button, false);
+            var ok = confirm(
+              'این فاکتور مربوط به یک شیفت بسته‌شده است. با ابطال، گزارش آن شیفت و نقد مورد انتظار بازمحاسبه می‌شود. ادامه می‌دهید؟'
+            );
+            if (!ok) return;
+            setLoading(button, true, 'در حال ابطال…');
+            result = await send(true);
+          } else {
+            throw firstError;
+          }
+        }
+        toast('فاکتور باطل شد؛ ' + fa(result.pointsReversed) + ' امتیاز برگشت خورد.', 'success');
+        setTimeout(function () { location.reload(); }, 700);
+      } catch (error) {
+        toast(error.message, 'error');
+        setLoading(button, false);
+      }
+    });
+
+    // --- اصلاح فاکتور ---
+    var correctModal = $('#correct-modal');
+    var correctInvoice = null;
+
+    function moneyInput(el) {
+      el.addEventListener('input', function () {
+        var digits = this.value.replace(/[^0-9]/g, '');
+        this.value = digits ? moneyFa(Number(digits)) : '';
+        recalcCorrect();
+      });
+    }
+
+    function correctRows() {
+      return Array.prototype.slice.call(document.querySelectorAll('#correct-rows [data-row]'));
+    }
+
+    function readCorrectItems() {
+      return correctRows().map(function (row) {
+        return {
+          name: row.querySelector('[data-f="name"]').value.trim(),
+          qty: Number(row.querySelector('[data-f="qty"]').value.replace(/[^0-9]/g, '')) || 0,
+          price: Number(row.querySelector('[data-f="price"]').value.replace(/[^0-9]/g, '')) || 0
+        };
+      });
+    }
+
+    function recalcCorrect() {
+      var items = readCorrectItems();
+      var subtotal = items.reduce(function (sum, item) { return sum + item.price * item.qty; }, 0);
+      var discount = Number($('#correct-discount').value.replace(/[^0-9]/g, '')) || 0;
+      var total = Math.max(0, subtotal - discount);
+
+      $('#correct-subtotal').textContent = moneyFa(subtotal) + ' تومان';
+      $('#correct-total').textContent = moneyFa(total) + ' تومان';
+
+      var paid = ['#correct-cash', '#correct-card', '#correct-online'].reduce(function (sum, sel) {
+        return sum + (Number($(sel).value.replace(/[^0-9]/g, '')) || 0);
+      }, 0);
+      var gap = paid - total;
+      var gapEl = $('#correct-gap');
+      gapEl.textContent = (gap > 0 ? '+' : '') + moneyFa(gap) + ' تومان';
+      gapEl.className = 'font-bold ' + (gap === 0 ? 'text-emerald-300' : gap > 0 ? 'text-sky-300' : 'text-rose-300');
+    }
+
+    function addCorrectRow(item) {
+      var row = document.createElement('div');
+      row.setAttribute('data-row', '1');
+      row.className = 'grid grid-cols-[1fr_64px_96px_28px] gap-1.5 items-center';
+      row.innerHTML =
+        '<input data-f="name" class="field !py-1.5 text-[11.5px]" placeholder="نام آیتم" maxlength="60" value="' + escapeHtml(item.name || '') + '" />' +
+        '<input data-f="qty" class="field !py-1.5 text-[11.5px] text-center" inputmode="numeric" dir="ltr" placeholder="۱" value="' + (item.qty || 1) + '" />' +
+        '<input data-f="price" class="field !py-1.5 text-[11.5px] text-left" inputmode="numeric" dir="ltr" placeholder="قیمت" value="' + (item.price ? moneyFa(item.price) : '') + '" />' +
+        '<button type="button" class="btn btn-ghost btn-sm !px-1.5" data-remove-row title="حذف">' + '✕' + '</button>';
+
+      row.querySelector('[data-remove-row]').addEventListener('click', function () {
+        row.remove();
+        recalcCorrect();
+      });
+      row.querySelectorAll('input').forEach(function (input) {
+        input.addEventListener('input', recalcCorrect);
+      });
+      row.querySelector('[data-f="price"]').addEventListener('blur', function () {
+        var digits = this.value.replace(/[^0-9]/g, '');
+        this.value = digits ? moneyFa(Number(digits)) : '';
+        recalcCorrect();
+      });
+      $('#correct-rows').appendChild(row);
+      recalcCorrect();
+    }
+
+    async function openCorrect(id) {
+      setLoading($('#correct-confirm'), false);
+      $('#correct-rows').innerHTML = '';
+      $('#correct-discount').value = '';
+      $('#correct-reason').value = '';
+      $('#correct-error').classList.add('hidden');
+      try {
+        correctInvoice = await api('/api/admin/invoices/' + id);
+      } catch (error) {
+        toast(error.message, 'error');
+        return;
+      }
+
+      $('#correct-title').textContent = '#' + fa(correctInvoice.id);
+      var items = [];
+      try { items = JSON.parse(correctInvoice.items || '[]'); } catch (e) { items = []; }
+      if (!Array.isArray(items) || items.length === 0) {
+        items = [{ name: 'فاکتور دستی', qty: 1, price: correctInvoice.amount }];
+      }
+      items.forEach(function (item) {
+        addCorrectRow({ name: item.name, qty: item.qty, price: item.price });
+      });
+
+      $('#correct-discount').value = correctInvoice.discount ? moneyFa(correctInvoice.discount) : '';
+      $('#correct-cash').value = correctInvoice.paid_cash ? moneyFa(correctInvoice.paid_cash) : '';
+      $('#correct-card').value = correctInvoice.paid_card ? moneyFa(correctInvoice.paid_card) : '';
+      $('#correct-online').value = correctInvoice.paid_online ? moneyFa(correctInvoice.paid_online) : '';
+      recalcCorrect();
+      correctModal.classList.remove('hidden');
+      $('#correct-reason').focus();
+    }
+
+    document.querySelectorAll('[data-correct-id]').forEach(function (button) {
+      button.addEventListener('click', function () { openCorrect(button.getAttribute('data-correct-id')); });
+    });
+
+    $('#correct-add-row').addEventListener('click', function () { addCorrectRow({ name: '', qty: 1, price: 0 }); });
+    ['#correct-discount', '#correct-cash', '#correct-card', '#correct-online'].forEach(moneyInput);
+
+    function closeCorrect() {
+      correctModal.classList.add('hidden');
+      correctInvoice = null;
+    }
+    $('#correct-cancel').addEventListener('click', closeCorrect);
+    $('#correct-close').addEventListener('click', closeCorrect);
+    correctModal.addEventListener('click', function (event) { if (event.target === correctModal) closeCorrect(); });
+
+    $('#correct-confirm').addEventListener('click', async function () {
+      if (!correctInvoice) return;
+      var items = readCorrectItems().filter(function (item) { return item.name && item.qty > 0; });
+      var reason = $('#correct-reason').value.trim();
+      var errorEl = $('#correct-error');
+
+      var fail = function (message) {
+        errorEl.textContent = message;
+        errorEl.classList.remove('hidden');
+      };
+
+      if (items.length === 0) return fail('حداقل یک آیتم با تعداد معتبر لازم است.');
+      if (reason.length < 3) return fail('دلیل اصلاح را بنویسید (حداقل ۳ نویسه).');
+
+      var total = items.reduce(function (sum, item) { return sum + item.price * item.qty; }, 0) -
+        (Number($('#correct-discount').value.replace(/[^0-9]/g, '')) || 0);
+      if (total <= 0) return fail('مبلغ نهایی باید بیشتر از صفر باشد.');
+
+      var cash = Number($('#correct-cash').value.replace(/[^0-9]/g, '')) || 0;
+      var card = Number($('#correct-card').value.replace(/[^0-9]/g, '')) || 0;
+      var online = Number($('#correct-online').value.replace(/[^0-9]/g, '')) || 0;
+      if (cash + card + online < total) return fail('مبلغ پرداختی کمتر از مبلغ فاکتور است.');
+
+      errorEl.classList.add('hidden');
+      var button = this;
+      setLoading(button, true, 'در حال اصلاح…');
+      try {
+        var result = await api('/api/admin/invoices/' + correctInvoice.id + '/correct', {
+          method: 'POST',
+          body: {
+            items: items,
+            discount: Number($('#correct-discount').value.replace(/[^0-9]/g, '')) || 0,
+            payment: { cash: cash, card: card, online: online },
+            reason: reason
+          }
+        });
+        toast('فاکتور #' + fa(result.replaces) + ' اصلاح شد؛ فاکتور جدید: #' + fa(result.newInvoiceId), 'success');
+        setTimeout(function () { location.reload(); }, 800);
+      } catch (error) {
+        setLoading(button, false);
+        fail(error.message);
+      }
+    });
+
+    // --- جزئیات فاکتور ---
+    var detailModal = $('#detail-modal');
+
+    function closeDetail() {
+      detailModal.classList.add('hidden');
+    }
+
+    document.querySelectorAll('[data-detail-id]').forEach(function (button) {
+      button.addEventListener('click', async function () {
+        var id = button.getAttribute('data-detail-id');
+        setLoading(button, true, '');
+        try {
+          var invoice = await api('/api/admin/invoices/' + id);
+          $('#detail-body').innerHTML = renderInvoiceDetail(invoice);
+          detailModal.classList.remove('hidden');
         } catch (error) {
           toast(error.message, 'error');
+        } finally {
           setLoading(button, false);
         }
       });
     });
+
+    $('#detail-close').addEventListener('click', closeDetail);
+    detailModal.addEventListener('click', function (event) {
+      if (event.target === detailModal) closeDetail();
+    });
+
+    document.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape') {
+        if (!voidModal.classList.contains('hidden')) closeVoid();
+        if (!detailModal.classList.contains('hidden')) closeDetail();
+        if (!correctModal.classList.contains('hidden')) closeCorrect();
+      }
+    });
+
+    function renderInvoiceDetail(invoice) {
+      var items = [];
+      try { items = JSON.parse(invoice.items || '[]'); } catch (e) { items = []; }
+      var rows = (items || []).map(function (item) {
+        var line = (Number(item.price) || 0) * (Number(item.qty) || 0);
+        return '<div class="flex items-center justify-between py-1.5 border-b border-white/5">' +
+          '<span>' + escapeHtml(String(item.name || '—')) + ' × ' + fa(item.qty || 0) + '</span>' +
+          '<span class="font-bold text-amber-200">' + moneyFa(line) + '</span></div>';
+      }).join('');
+
+      var payRows = [];
+      if (invoice.payment_method) {
+        payRows.push(['روش پرداخت', { cash: 'نقدی', card: 'کارت‌خوان', online: 'آنلاین', mixed: 'ترکیبی' }[invoice.payment_method] || invoice.payment_method]);
+        if (invoice.paid_cash) payRows.push(['نقد دریافتی', moneyFa(invoice.paid_cash)]);
+        if (invoice.paid_card) payRows.push(['کارت', moneyFa(invoice.paid_card)]);
+        if (invoice.paid_online) payRows.push(['آنلاین', moneyFa(invoice.paid_online)]);
+        if (invoice.change_amount) payRows.push(['باقیمانده', moneyFa(invoice.change_amount)]);
+      } else {
+        payRows.push(['روش پرداخت', 'ثبت نشده (فاکتور قدیمی)']);
+      }
+      payRows.push(['شیفت صندوق', invoice.shift_id ? '#' + fa(invoice.shift_id) : '—']);
+
+      return '' +
+        '<div class="space-y-1.5 mb-3">' +
+          '<div class="flex items-center justify-between"><span class="text-cream/50">شماره فاکتور</span><span class="font-bold">#' + fa(invoice.id) + '</span></div>' +
+          '<div class="flex items-center justify-between"><span class="text-cream/50">مشتری</span><span class="font-bold">' + escapeHtml(invoice.customer_name || '—') + ' <span class="text-cream/35 font-mono text-[11px]" dir="ltr">' + escapeHtml(invoice.customer_phone || '') + '</span></span></div>' +
+          '<div class="flex items-center justify-between"><span class="text-cream/50">ثبت‌کننده</span><span>' + escapeHtml(invoice.staff_name || '—') + '</span></div>' +
+          '<div class="flex items-center justify-between"><span class="text-cream/50">زمان ثبت</span><span>' + formatJalaliDateTime(invoice.created_at) + '</span></div>' +
+        '</div>' +
+        '<div class="rounded-xl bg-black/25 border border-white/10 p-3 mb-3">' + (rows || '<p class="text-cream/40 text-[11px]">آیتمی ثبت نشده است.</p>') + '</div>' +
+        '<div class="space-y-1.5 mb-3">' +
+          '<div class="flex items-center justify-between"><span class="text-cream/50">جمع اقلام</span><span>' + moneyFa(invoice.subtotal || invoice.amount) + '</span></div>' +
+          '<div class="flex items-center justify-between"><span class="text-cream/50">تخفیف</span><span class="text-emerald-300">' + moneyFa(invoice.discount || 0) + '</span></div>' +
+          '<div class="flex items-center justify-between border-t border-white/10 pt-1.5"><span class="text-cream/50">مبلغ نهایی</span><span class="font-bold text-amber-200">' + moneyFa(invoice.amount) + ' تومان</span></div>' +
+          '<div class="flex items-center justify-between"><span class="text-cream/50">امتیاز</span><span>+' + fa(invoice.points_earned || 0) + '</span></div>' +
+        '</div>' +
+        '<div class="rounded-xl bg-black/25 border border-white/10 p-3 space-y-1.5">' +
+          payRows.map(function (row) {
+            return '<div class="flex items-center justify-between"><span class="text-cream/50">' + row[0] + '</span><span>' + row[1] + '</span></div>';
+          }).join('') +
+        '</div>' +
+        (invoice.voided_at
+          ? '<div class="mt-3 rounded-xl bg-rose-500/10 border border-rose-400/25 p-3 text-[11.5px] text-rose-200">این فاکتور در ' + formatJalaliDateTime(invoice.voided_at) + ' باطل شده است.<br>دلیل: ' + escapeHtml(invoice.void_reason || '—') + '</div>'
+          : '');
+    }
   `;
 
   return appShell({
@@ -1123,6 +1637,30 @@ export function adminInvoicesPage(input: {
     scripts,
     cafeName: settings.cafe_name,
   });
+}
+
+/** نشان روش پرداخت برای جدول فاکتورها */
+function paymentBadge(invoice: InvoiceListItem): string {
+  const method = invoice.payment_method;
+  if (!method) return '<span class="badge tone-muted" title="فاکتور قدیمی؛ روش پرداخت ثبت نشده">—</span>';
+
+  const map: Record<string, { label: string; tone: string }> = {
+    cash: { label: 'نقدی', tone: 'tone-success' },
+    card: { label: 'کارت', tone: 'tone-info' },
+    online: { label: 'آنلاین', tone: 'tone-warning' },
+    mixed: { label: 'ترکیبی', tone: 'tone-gold' },
+  };
+  const info = map[method] ?? { label: method, tone: 'tone-muted' };
+
+  const parts: string[] = [];
+  if (invoice.paid_cash > 0) parts.push(`نقد ${formatNumberFa(invoice.paid_cash)}`);
+  if (invoice.paid_card > 0) parts.push(`کارت ${formatNumberFa(invoice.paid_card)}`);
+  if (invoice.paid_online > 0) parts.push(`آنلاین ${formatNumberFa(invoice.paid_online)}`);
+  const tooltip = parts.length ? parts.join(' + ') + (invoice.change_amount > 0 ? ` | باقیمانده ${formatNumberFa(invoice.change_amount)}` : '') : info.label;
+
+  return `<span class="badge ${info.tone}" title="${escapeHtml(tooltip)}">${info.label}${
+    invoice.change_amount > 0 ? ' ↺' : ''
+  }</span>`;
 }
 
 function invoiceItemNames(raw: string): string {

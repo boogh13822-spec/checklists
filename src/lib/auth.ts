@@ -55,6 +55,10 @@ export function setSessionCookie(
   isSecure: boolean,
   ttlSeconds: number = SESSION_TTL_SECONDS
 ): void {
+  // اگر در همین پاسخ کوکی قبلی پاک شده باشد (مثلاً توکن منقضی)، هدر پاک‌سازی
+  // می‌تواند بعد از کوکی جدید اعمال شود و کاربر را در حلقهٔ «نشست منقضی» بیندازد.
+  // پس هر Set-Cookie قبلی مربوط به همین کوکی حذف می‌شود و فقط یکی می‌ماند.
+  dropSessionCookieHeaders(c);
   setCookie(c, SESSION_COOKIE, token, {
     httpOnly: true,
     secure: isSecure,
@@ -62,6 +66,22 @@ export function setSessionCookie(
     path: '/',
     maxAge: ttlSeconds,
   });
+}
+
+/** حذف هدرهای Set-Cookie قبلیِ همین کوکی از پاسخ در حال ساخت */
+function dropSessionCookieHeaders(c: Context<AppEnv>): void {
+  try {
+    const headers = c.res.headers;
+    const existing = typeof headers.getSetCookie === 'function'
+      ? headers.getSetCookie()
+      : (headers.get('Set-Cookie') ?? '').split(/,(?=\s*[a-zA-Z0-9_-]+=)/);
+    if (existing.length === 0) return;
+    const keep = existing.filter((value) => !String(value).trim().startsWith(`${SESSION_COOKIE}=`));
+    headers.delete('Set-Cookie');
+    for (const value of keep) headers.append('Set-Cookie', value);
+  } catch {
+    /* اگر مرورگر/رانتایم پشتیبانی نکند، هدر دست‌نخورده می‌ماند */
+  }
 }
 
 /** پاک کردن کوکی نشست */
@@ -144,15 +164,28 @@ export const attachUser: MiddlewareHandler<AppEnv> = async (c, next) => {
     // کوکی نامعتبر/منقضی باید پاک شود؛ وگرنه با هر درخواست دوباره پردازش می‌شود
     // و کاربر در چرخهٔ «نشست منقضی» گیر می‌کند.
     if (getCookie(c, SESSION_COOKIE)) {
+      c.set('sessionInvalid', true);
       clearSessionCookie(c, isSecureRequest(c));
     }
     c.set('user', null);
     await next();
     return;
   }
-  const user = await getActiveUser(c.env.DB, payload.uid);
+  let user: UserRow | null = null;
+  try {
+    user = await getActiveUser(c.env.DB, payload.uid);
+  } catch (error) {
+    // خطای دیتابیس (مثلاً ستون تازه‌ای که مایگریشن نشده) نباید کل برنامه را
+    // ۵۰۰ کند؛ کاربر مهمان در نظر گرفته می‌شود و خطا در کنسول می‌ماند.
+    console.error('attachUser:getActiveUser failed:', error);
+    c.set('user', null);
+    await next();
+    return;
+  }
+
   // توکن‌هایی که قبل از تغییر رمز صادر شده‌اند باطل می‌شوند
   if (!user || (payload.tv ?? 0) !== (user.token_version ?? 0)) {
+    c.set('sessionInvalid', true);
     clearSessionCookie(c, isSecureRequest(c));
     c.set('user', null);
     await next();
@@ -194,7 +227,10 @@ export function requirePageRole(...roles: Role[]): MiddlewareHandler<AppEnv> {
     const user = c.get('user');
     const url = new URL(c.req.url);
     if (!user) {
-      return c.redirect(`/login?next=${encodeURIComponent(url.pathname + url.search)}`, 302);
+      // اگر کوکی وجود داشت ولی معتبر نبود، پیام «نشست منقضی» دقیق است؛
+      // در ورود اول (بدون کوکی) نباید این پیام گمراه‌کننده نمایش داده شود.
+      const expired = c.get('sessionInvalid') ? '&expired=1' : '';
+      return c.redirect(`/login?next=${encodeURIComponent(url.pathname + url.search)}${expired}`, 302);
     }
     if (!roles.includes(user.role)) {
       return c.redirect(user.role === 'admin' ? '/admin' : '/staff', 302);
@@ -265,9 +301,36 @@ export function resetRateLimit(key: string): void {
   buckets.delete(key);
 }
 
-/** بررسی وجود Secret JWT و طول مناسب آن */
+/**
+ * بررسی وجود Secret JWT و طول مناسب آن.
+ * حداقل ۱۶ کاراکتر: اگر کسی قبلاً کلید کوتاه‌تری تنظیم کرده باشد، برنامه نباید
+ * قفل شود (خطای «JWT تنظیم نشده» در حالی که کلید وجود دارد)؛ فقط هشدار می‌دهیم.
+ */
 export function assertJwtSecret(env: Bindings): string | null {
   const secret = env.JWT_SECRET;
-  if (!secret || secret.length < 32) return null;
+  if (!secret || secret.length < 16) return null;
+  if (secret.length < 32) {
+    console.warn(
+      'JWT_SECRET کوتاه است؛ یک کلید تصادفی ۳۲ کاراکتری یا بیشتر تنظیم کنید: wrangler secret put JWT_SECRET'
+    );
+  }
   return secret;
+}
+
+/** وضعیت نشست برای صفحهٔ ورود/تشخیص عیب */
+export type SessionInfo = {
+  authenticated: boolean;
+  role: Role | null;
+  name: string | null;
+  expiresAt: number | null;
+};
+
+export function sessionInfo(user: JwtPayload | null): SessionInfo {
+  if (!user) return { authenticated: false, role: null, name: null, expiresAt: null };
+  return {
+    authenticated: true,
+    role: user.role,
+    name: user.name,
+    expiresAt: user.exp ? user.exp * 1000 : null,
+  };
 }

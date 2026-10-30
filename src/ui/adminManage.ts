@@ -342,6 +342,30 @@ export function adminSettingsPage(input: {
         </div>
       </section>
 
+      <!-- Cash / Shift -->
+      <section id="cash" class="glass rounded-3xl overflow-hidden scroll-mt-24">
+        <div class="px-5 py-4 border-b border-white/10 flex items-center gap-2">
+          <span class="w-8 h-8 rounded-xl bg-gold/10 border border-gold/20 text-gold flex items-center justify-center">${icon('wallet', 'w-4 h-4')}</span>
+          <h2 class="font-bold text-sm">صندوق و شیفت</h2>
+        </div>
+        <div class="p-5 space-y-3">
+          <label class="flex items-start gap-2.5 text-[12px] text-cream/70 leading-6 cursor-pointer select-none">
+            <input id="require_shift" type="checkbox" class="mt-1 accent-amber-500 w-4 h-4" ${settings.require_shift === 1 ? 'checked' : ''} />
+            <span>
+              باز کردن صندوق برای ثبت فاکتور نقدی الزامی باشد
+              <span class="block text-[10.5px] text-cream/35 mt-0.5">
+                با فعال بودن، تا وقتی صندوق بسته است پرداخت نقدی ثبت نمی‌شود؛ فروش کارت و آنلاین آزاد است.
+                گزارش صندوق در «صندوق‌ها» و «صندوق من» در دسترس است.
+              </span>
+            </span>
+          </label>
+          <div class="rounded-xl bg-black/25 border border-white/10 px-3 py-2.5 text-[10.5px] text-cream/40 leading-6">
+            محاسبهٔ نقد مورد انتظار = موجودی اولیه + فروش نقدی معتبر + ورود نقد − خروج نقد.
+            فاکتورهای باطل‌شده در هیچ‌کدام از جمع‌ها حساب نمی‌شوند.
+          </div>
+        </div>
+      </section>
+
       <!-- Automation -->
       <section id="automation" class="glass rounded-3xl overflow-hidden scroll-mt-24">
         <div class="px-5 py-4 border-b border-white/10 flex items-center gap-2">
@@ -641,6 +665,7 @@ export function adminSettingsPage(input: {
           gold: Number($('#tier_gold').value),
           vip: Number($('#tier_vip').value)
         },
+        require_shift: document.getElementById('require_shift').checked ? 1 : 0,
         churn_grace_days: Number($('#churn_grace_days').value),
         churn_min_visits: Number($('#churn_min_visits').value),
         birthday_coupon_percent: Number($('#birthday_coupon_percent').value),

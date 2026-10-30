@@ -7,6 +7,7 @@ import type { AppSettings, InvoiceRow, UserRow } from '../types';
 import type { MenuItem } from '../lib/settings';
 import {
   describeItems,
+  PAYMENT_LABELS,
   tierLabel,
 } from '../lib/db';
 import {
@@ -29,10 +30,59 @@ export function staffPage(
   user: { name: string },
   menu: MenuItem[],
   todayStats: { count: number; total: number },
-  todayInvoices: Array<{ id: number; amount: number; created_at: string; customer_name: string }>,
-  isAdmin = false
+  todayInvoices: Array<{
+    id: number;
+    amount: number;
+    created_at: string;
+    customer_name: string;
+    payment_method?: string | null;
+  }>,
+  isAdmin = false,
+  options: {
+    popular?: string[];
+    openShift?: { id: number; opening_cash: number; opened_at: string } | null;
+    todayCash?: number;
+    requireShift?: boolean;
+  } = {}
 ): string {
   const categories = Array.from(new Set(menu.map((item) => item.category ?? 'سایر')));
+  // «پرکاربرد» از سابقهٔ فروش می‌آید؛ روی نصب تازه که سابقه‌ای نیست،
+  // آیتم‌های اول منو نمایش داده می‌شوند تا دسترسی سریع همیشه در دسترس باشد.
+  const popularFromHistory = (options.popular ?? []).filter((name) =>
+    menu.some((item) => item.name === name)
+  );
+  const popular =
+    popularFromHistory.length > 0
+      ? popularFromHistory
+      : menu.slice(0, 8).map((item) => item.name);
+  const popularIsFallback = popularFromHistory.length === 0;
+  const openShift = options.openShift ?? null;
+  const todayCash = options.todayCash ?? 0;
+  const requireShift = options.requireShift === true;
+
+  const shiftBanner = openShift
+    ? `<div class="glass rounded-2xl px-4 py-3 mb-4 flex flex-wrap items-center gap-3 border border-emerald-500/25 bg-emerald-500/[0.05]" id="shift-banner">
+        <span class="w-9 h-9 rounded-xl bg-emerald-500/15 text-emerald-300 flex items-center justify-center shrink-0">${icon('wallet', 'w-4 h-4')}</span>
+        <div class="min-w-0">
+          <div class="text-[12px] font-semibold">صندوق باز است — شیفت ${toPersianDigits(openShift.id)}</div>
+          <div class="text-[10.5px] text-cream/45">مبلغ اولیه ${formatNumberFa(openShift.opening_cash)} تومان · فروش نقدی امروز ${formatNumberFa(todayCash)} تومان</div>
+        </div>
+        <div class="me-auto"></div>
+        <a href="/staff/shift" class="btn btn-ghost btn-sm">${icon('chart', 'w-4 h-4')} مدیریت صندوق</a>
+      </div>`
+    : `<div class="glass rounded-2xl px-4 py-3 mb-4 flex flex-wrap items-center gap-3 border border-amber-500/25 bg-amber-500/[0.05]" id="shift-banner">
+        <span class="w-9 h-9 rounded-xl bg-amber-500/15 text-amber-300 flex items-center justify-center shrink-0">${icon('warning', 'w-4 h-4')}</span>
+        <div class="min-w-0">
+          <div class="text-[12px] font-semibold">صندوق بسته است</div>
+          <div class="text-[10.5px] text-cream/45">${
+            requireShift
+              ? 'برای ثبت فاکتور نقدی، اول صندوق را باز کنید (مبلغ اولیه را وارد کنید).'
+              : 'می‌توانید فاکتور ثبت کنید، ولی برای کنترل نقدینگی بهتر است صندوق را باز کنید.'
+          }</div>
+        </div>
+        <div class="me-auto"></div>
+        <a href="/staff/shift" class="btn btn-primary btn-sm">${icon('plus', 'w-4 h-4')} باز کردن صندوق</a>
+      </div>`;
 
   const body = `
   <div class="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto">
@@ -55,6 +105,8 @@ export function staffPage(
         </div>
       </div>`,
     })}
+
+    ${shiftBanner}
 
     <div class="grid xl:grid-cols-[1.6fr_1fr] gap-5 items-start">
 
@@ -145,6 +197,31 @@ export function staffPage(
           </div>
 
           <div class="p-5 space-y-4">
+            <div class="relative">
+              <span class="absolute right-3 top-1/2 -translate-y-1/2 text-cream/30">${icon('search', 'w-4 h-4')}</span>
+              <input id="menu-search" type="search" class="field !pr-10 !py-2.5" placeholder="جستجوی محصول… (کلید /)" autocomplete="off" />
+              <kbd class="hidden sm:block absolute left-3 top-1/2 -translate-y-1/2 text-[10px] text-cream/25 border border-white/10 rounded px-1.5 py-0.5">/</kbd>
+            </div>
+
+            ${
+              popular.length > 0
+                ? `<div id="popular-wrap">
+                    <div class="text-[10.5px] text-cream/35 mb-1.5 flex items-center gap-1.5">
+                      ${icon('bolt', 'w-3 h-3')} ${popularIsFallback ? 'دسترسی سریع' : 'پرکاربردترین‌ها'}
+                    </div>
+                    <div class="flex flex-wrap gap-1.5">
+                      ${popular
+                        .slice(0, 8)
+                        .map(
+                          (name) =>
+                            `<button type="button" data-quick="${escapeHtml(name)}" class="badge tone-muted hover:!text-gold hover:border-gold/40 transition">${escapeHtml(name)}</button>`
+                        )
+                        .join('')}
+                    </div>
+                  </div>`
+                : ''
+            }
+
             <div class="flex gap-1.5 overflow-x-auto no-scrollbar pb-1" id="category-tabs">
               <button type="button" data-cat="__all__" class="cat-tab btn btn-sm btn-primary shrink-0">همه</button>
               ${categories
@@ -219,9 +296,67 @@ export function staffPage(
               <div id="sum-points-note" class="text-[10px] text-cream/30 text-start leading-5"></div>
             </div>
 
+            <!-- پرداخت -->
+            <div class="border-t border-white/10 pt-4">
+              <div class="flex items-center justify-between mb-2">
+                <label class="label !mb-0">روش پرداخت</label>
+                <span id="payment-hint" class="text-[10px] text-cream/30"></span>
+              </div>
+
+              <div class="grid grid-cols-4 gap-1.5" id="payment-modes">
+                <button type="button" data-pay="cash" class="pay-tab btn btn-sm btn-primary">${icon('banknote', 'w-3.5 h-3.5')} نقدی</button>
+                <button type="button" data-pay="card" class="pay-tab btn btn-sm btn-ghost">${icon('card', 'w-3.5 h-3.5')} کارت</button>
+                <button type="button" data-pay="online" class="pay-tab btn btn-sm btn-ghost">${icon('send', 'w-3.5 h-3.5')} آنلاین</button>
+                <button type="button" data-pay="mixed" class="pay-tab btn btn-sm btn-ghost">${icon('wallet', 'w-3.5 h-3.5')} ترکیبی</button>
+              </div>
+
+              <div id="pay-simple" class="mt-3">
+                <label class="label" for="pay-cash-input" id="pay-simple-label">پول دریافتی از مشتری (تومان)</label>
+                <div class="relative">
+                  <input id="pay-cash-input" type="text" inputmode="numeric" dir="ltr"
+                    class="field text-left !pl-16 font-bold tracking-wide" placeholder="0" />
+                  <span class="absolute left-3 top-1/2 -translate-y-1/2 text-[11px] text-cream/40">تومان</span>
+                </div>
+                <div class="flex flex-wrap gap-1.5 mt-2" id="pay-tender-chips">
+                  <button type="button" data-tender="exact" class="badge tone-muted hover:!text-gold">دقیق</button>
+                  <button type="button" data-tender="10000" class="badge tone-muted hover:!text-gold">+۱۰٬۰۰۰</button>
+                  <button type="button" data-tender="50000" class="badge tone-muted hover:!text-gold">+۵۰٬۰۰۰</button>
+                  <button type="button" data-tender="100000" class="badge tone-muted hover:!text-gold">+۱۰۰٬۰۰۰</button>
+                  <button type="button" data-tender="round" class="badge tone-muted hover:!text-gold">رُند به ۱۰ هزار</button>
+                </div>
+              </div>
+
+              <div id="pay-mixed" class="hidden mt-3 space-y-2">
+                <div class="grid grid-cols-3 gap-2">
+                  <div>
+                    <label class="label !text-[10.5px]" for="mix-cash">نقد</label>
+                    <input id="mix-cash" type="text" inputmode="numeric" dir="ltr" class="field text-left !py-2 text-[12px]" placeholder="0" />
+                  </div>
+                  <div>
+                    <label class="label !text-[10.5px]" for="mix-card">کارت</label>
+                    <input id="mix-card" type="text" inputmode="numeric" dir="ltr" class="field text-left !py-2 text-[12px]" placeholder="0" />
+                  </div>
+                  <div>
+                    <label class="label !text-[10.5px]" for="mix-online">آنلاین</label>
+                    <input id="mix-online" type="text" inputmode="numeric" dir="ltr" class="field text-left !py-2 text-[12px]" placeholder="0" />
+                  </div>
+                </div>
+                <button type="button" id="mix-fill-cash" class="text-[10.5px] text-gold/80 hover:underline">
+                  پر کردن باقی مبلغ با نقد
+                </button>
+              </div>
+
+              <div id="pay-change-row" class="mt-2.5 hidden items-center justify-between rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-[12px]">
+                <span class="text-cream/50">باقیمانده به مشتری</span>
+                <span id="pay-change" class="font-bold text-emerald-300">۰ تومان</span>
+              </div>
+              <p id="pay-error" class="hidden mt-2 text-[11px] text-rose-300 leading-5"></p>
+            </div>
+
             <button type="button" id="submit-invoice" class="btn btn-primary w-full !py-3">
               ${icon('check', 'w-5 h-5')}
-              <span>ثبت فاکتور</span>
+              <span id="submit-label">ثبت فاکتور</span>
+              <kbd class="hidden sm:inline text-[10px] opacity-60 border border-white/25 rounded px-1">Ctrl+↵</kbd>
             </button>
 
             <p class="text-[10.5px] text-cream/35 text-center leading-5">
@@ -247,7 +382,10 @@ export function staffPage(
                           <div class="text-[12px] font-medium truncate">${escapeHtml(invoice.customer_name)}</div>
                           <div class="text-[10px] text-cream/35">${formatJalaliDateTime(invoice.created_at)}</div>
                         </div>
-                        <div class="text-[12px] font-bold text-amber-200 whitespace-nowrap">${formatNumberFa(invoice.amount)}</div>
+                        <div class="text-left">
+                          <div class="text-[12px] font-bold text-amber-200 whitespace-nowrap">${formatNumberFa(invoice.amount)}</div>
+                          <div class="text-[9.5px] text-cream/30">${escapeHtml(PAYMENT_LABELS[invoice.payment_method ?? 'unknown'] ?? '—')}</div>
+                        </div>
                       </div>`
                     )
                     .join('')
@@ -276,6 +414,8 @@ export function staffPage(
           <div class="flex items-center justify-between"><span class="text-cream/50">موجودی امتیاز</span><span id="r-total" class="font-bold text-amber-300">—</span></div>
           <div class="flex items-center justify-between"><span class="text-cream/50">سطح مشتری</span><span id="r-tier" class="font-bold">—</span></div>
           <div id="r-discount-row" class="hidden flex items-center justify-between"><span class="text-cream/50">تخفیف اعمال‌شده</span><span id="r-discount" class="font-bold text-emerald-300">—</span></div>
+          <div class="border-t border-white/10 pt-2 flex items-center justify-between"><span class="text-cream/50">روش پرداخت</span><span id="r-payment" class="font-bold">—</span></div>
+          <div id="r-change-row" class="hidden flex items-center justify-between"><span class="text-cream/50">باقیمانده</span><span id="r-change" class="font-bold text-sky-300">—</span></div>
         </div>
 
         <button type="button" id="new-invoice" class="btn btn-primary w-full mt-5">${icon('plus', 'w-4 h-4')} فاکتور بعدی</button>
@@ -287,6 +427,8 @@ export function staffPage(
   const scripts = `
   (function () {
     var MENU = ${jsonForScript(menu)};
+    var HAS_OPEN_SHIFT = ${openShift ? 'true' : 'false'};
+    var REQUIRE_SHIFT = ${requireShift ? 'true' : 'false'};
     var POINTS_UNIT = ${Number(settings.currency_unit) || 1000};
     var POINTS_RATIO = ${Number(settings.points_per_currency) || 1};
     var POINTS_MODE = ${JSON.stringify(settings.points_mode)};
@@ -301,6 +443,13 @@ export function staffPage(
     var appliedCoupon = null;
     var requestId = null;
     var appliedDiscount = 0;
+    var searchQuery = '';
+    var payMode = 'cash';
+    var payTender = 0;        // پول دریافتی در حالت نقدی/کارت/آنلاین
+    var mixCash = 0;
+    var mixCard = 0;
+    var mixOnline = 0;
+    var submitting = false;
 
     var phoneInput = $('#phone-input');
     var menuGrid = $('#menu-grid');
@@ -315,6 +464,10 @@ export function staffPage(
       else if (v.indexOf('98') === 0 && v.length === 12) v = '0' + v.slice(2);
       else if (v.indexOf('9') === 0 && v.length === 10) v = '0' + v;
       return v;
+    }
+
+    function paymentLabel(method) {
+      return { cash: 'نقدی', card: 'کارت‌خوان', online: 'آنلاین', mixed: 'ترکیبی' }[method] || '—';
     }
 
     function parseAmount(value) {
@@ -335,10 +488,30 @@ export function staffPage(
       return Object.keys(selected).reduce(function (sum, key) { return sum + selected[key]; }, 0);
     }
 
+    function matchesSearch(item, query) {
+      if (!query) return true;
+      var name = String(item.name || '').toLowerCase();
+      var cat = String(item.category || '').toLowerCase();
+      var q = String(query).toLowerCase().trim();
+      if (!q) return true;
+      return name.indexOf(q) !== -1 || cat.indexOf(q) !== -1;
+    }
+
+    function visibleMenu() {
+      return MENU.filter(function (item) {
+        var inCategory = activeCategory === '__all__' || (item.category || 'سایر') === activeCategory;
+        return inCategory && matchesSearch(item, searchQuery);
+      });
+    }
+
     function renderMenu() {
-      menuGrid.innerHTML = MENU.filter(function (item) {
-        return activeCategory === '__all__' || (item.category || 'سایر') === activeCategory;
-      }).map(function (item) {
+      var items = visibleMenu();
+      if (items.length === 0) {
+        menuGrid.innerHTML = '<div class="col-span-full text-center py-8 text-[11.5px] text-cream/40">' +
+          'محصولی با این جستجو پیدا نشد.</div>';
+        return;
+      }
+      menuGrid.innerHTML = items.map(function (item) {
         var qty = selected[item.name] || 0;
         return '<button type="button" data-item="' + escapeHtml(item.name) + '" class="relative text-right rounded-2xl border p-3 transition ' +
           (qty > 0 ? 'border-gold/50 bg-gold/10' : 'border-white/10 bg-white/[0.03] hover:border-white/20 hover:bg-white/[0.06]') + '">' +
@@ -368,6 +541,133 @@ export function staffPage(
           '<button type="button" data-rm="' + escapeHtml(name) + '" class="w-7 h-7 rounded-lg text-cream/30 hover:text-rose-300 hover:bg-rose-500/10 flex items-center justify-center">×</button>' +
         '</div>';
       }).join('');
+    }
+
+    /** افزودن یک آیتم (مشترک بین کلیک و میان‌بر صفحه‌کلید) */
+    function addItem(name) {
+      if (!name) return;
+      selected[name] = (selected[name] || 0) + 1;
+      resetCoupon();
+      renderMenu();
+      renderSelected();
+      refreshTotals();
+    }
+
+    function currentTotal() {
+      return refreshTotals().total;
+    }
+
+    function parseMoneyInput(el) {
+      return parseAmount(el.value);
+    }
+
+    function setMoneyInput(el, value) {
+      el.value = value > 0 ? money(value) : '';
+    }
+
+    /** محاسبهٔ پرداخت از روی وضعیت فعلی و مبلغ کل */
+    function computePayment(total) {
+      if (payMode === 'mixed') {
+        var cash = mixCash;
+        var card = mixCard;
+        var online = mixOnline;
+        var tendered = cash + card + online;
+        var change = Math.max(0, tendered - total);
+        var short = Math.max(0, total - tendered);
+        return {
+          cash: cash, card: card, online: online,
+          tendered: tendered, change: change, short: short,
+          valid: short === 0 && change <= cash,
+          error: short > 0
+            ? 'مبلغ پرداختی ' + moneyFa(short) + ' تومان کمتر از فاکتور است.'
+            : (change > cash ? 'باقیمانده نمی‌تواند بیشتر از پول نقد دریافتی باشد.' : '')
+        };
+      }
+
+      var tender = payTender > 0 ? payTender : total;
+      var ch = Math.max(0, tender - total);
+      if (tender < total) {
+        return {
+          cash: payMode === 'cash' ? tender : 0,
+          card: payMode === 'card' ? tender : 0,
+          online: payMode === 'online' ? tender : 0,
+          tendered: tender, change: 0, short: total - tender, valid: false,
+          error: 'مبلغ دریافتی ' + moneyFa(total - tender) + ' تومان کمتر از فاکتور است.'
+        };
+      }
+      if (payMode !== 'cash' && ch > 0) {
+        return {
+          cash: 0,
+          card: payMode === 'card' ? tender : 0,
+          online: payMode === 'online' ? tender : 0,
+          tendered: tender, change: ch, short: 0, valid: false,
+          error: 'برای کارت/آنلاین باید مبلغ دقیقاً برابر فاکتور باشد.'
+        };
+      }
+      return {
+        cash: payMode === 'cash' ? tender - ch : 0,
+        card: payMode === 'card' ? tender : 0,
+        online: payMode === 'online' ? tender : 0,
+        tendered: tender, change: ch, short: 0, valid: true, error: ''
+      };
+    }
+
+    function renderPayment(total) {
+      var simple = $('#pay-simple');
+      var mixed = $('#pay-mixed');
+      var changeRow = $('#pay-change-row');
+      var changeEl = $('#pay-change');
+      var errorEl = $('#pay-error');
+      var label = $('#pay-simple-label');
+      var hint = $('#payment-hint');
+
+      document.querySelectorAll('.pay-tab').forEach(function (tab) {
+        var active = tab.dataset.pay === payMode;
+        tab.className = 'pay-tab btn btn-sm ' + (active ? 'btn-primary' : 'btn-ghost');
+      });
+
+      if (payMode === 'mixed') {
+        simple.classList.add('hidden');
+        mixed.classList.remove('hidden');
+        hint.textContent = 'مبلغ کل: ' + moneyFa(total);
+      } else {
+        simple.classList.remove('hidden');
+        mixed.classList.add('hidden');
+        hint.textContent = payMode === 'cash' ? 'باقیمانده خودکار حساب می‌شود' : 'مبلغ دقیق فاکتور';
+        label.textContent = payMode === 'cash'
+          ? 'پول دریافتی از مشتری (تومان)'
+          : (payMode === 'card' ? 'مبلغ کارت‌خوان (تومان)' : 'مبلغ پرداخت آنلاین (تومان)');
+
+        // در حالت کارت/آنلاین مبلغ همیشه دقیقاً برابر فاکتور است
+        if (payMode !== 'cash') {
+          payTender = total;
+          setMoneyInput($('#pay-cash-input'), total);
+          $('#pay-cash-input').readOnly = true;
+          $('#pay-tender-chips') && $('#pay-tender-chips').classList.add('hidden');
+        } else {
+          $('#pay-cash-input').readOnly = false;
+          if (!payTender) payTender = total;
+        }
+      }
+
+      var result = computePayment(total);
+
+      if (result.change > 0) {
+        changeRow.classList.remove('hidden');
+        changeEl.textContent = moneyFa(result.change) + ' تومان';
+      } else {
+        changeRow.classList.add('hidden');
+      }
+
+      if (!result.valid && result.error && total > 0) {
+        errorEl.textContent = result.error;
+        errorEl.classList.remove('hidden');
+      } else {
+        errorEl.textContent = '';
+        errorEl.classList.add('hidden');
+      }
+
+      return result;
     }
 
     function refreshTotals() {
@@ -409,6 +709,18 @@ export function staffPage(
       $('#sum-points').textContent = '+' + fa(points);
       manualInput.disabled = sub > 0;
       if (sub > 0) manualInput.value = '';
+
+      // در حالت‌های تک‌روشی، مبلغ پرداخت با تغییر فاکتور هم‌تراز می‌شود
+      if (payMode !== 'mixed') {
+        if (payMode !== 'cash' || payTender < total) {
+          payTender = total;
+        }
+        var tenderInput = $('#pay-cash-input');
+        if (tenderInput && document.activeElement !== tenderInput) {
+          setMoneyInput(tenderInput, payTender);
+        }
+      }
+      renderPayment(total);
 
       return { base: base, discount: discount, total: total, points: points };
     }
@@ -510,6 +822,14 @@ export function staffPage(
       selected = {};
       appliedCoupon = null;
       appliedDiscount = 0;
+      searchQuery = '';
+      payMode = 'cash';
+      payTender = 0;
+      mixCash = 0;
+      mixCard = 0;
+      mixOnline = 0;
+      if ($('#menu-search')) $('#menu-search').value = '';
+      if ($('#mix-cash')) { $('#mix-cash').value = ''; $('#mix-card').value = ''; $('#mix-online').value = ''; }
       $('#coupon-input').value = '';
       $('#coupon-result').classList.add('hidden');
       manualInput.value = '';
@@ -542,6 +862,99 @@ export function staffPage(
       });
       renderMenu();
     });
+
+    var menuSearch = $('#menu-search');
+    if (menuSearch) {
+      menuSearch.addEventListener('input', function () {
+        searchQuery = menuSearch.value;
+        renderMenu();
+      });
+      menuSearch.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          var first = visibleMenu()[0];
+          if (first) {
+            addItem(first.name);
+            menuSearch.value = '';
+            searchQuery = '';
+            renderMenu();
+          }
+        } else if (event.key === 'Escape') {
+          menuSearch.value = '';
+          searchQuery = '';
+          renderMenu();
+        }
+      });
+    }
+
+    var popularWrap = $('#popular-wrap');
+    if (popularWrap) {
+      popularWrap.addEventListener('click', function (event) {
+        var chip = event.target.closest('[data-quick]');
+        if (chip) addItem(chip.dataset.quick);
+      });
+    }
+
+    // --- پرداخت ---
+    $('#payment-modes').addEventListener('click', function (event) {
+      var tab = event.target.closest('[data-pay]');
+      if (!tab) return;
+      payMode = tab.dataset.pay;
+      if (payMode === 'mixed') {
+        var total = currentTotal();
+        var paid = mixCash + mixCard + mixOnline;
+        if (paid === 0) { mixCash = total; setMoneyInput($('#mix-cash'), mixCash); }
+      } else {
+        payTender = currentTotal();
+        setMoneyInput($('#pay-cash-input'), payTender);
+      }
+      refreshTotals();
+    });
+
+    var tenderInput = $('#pay-cash-input');
+    tenderInput.addEventListener('input', function () {
+      var digits = tenderInput.value.replace(/[^0-9]/g, '');
+      tenderInput.value = digits ? money(digits) : '';
+      payTender = Number(digits) || 0;
+      renderPayment(currentTotal());
+    });
+    tenderInput.addEventListener('focus', function () { tenderInput.select(); });
+
+    document.querySelectorAll('[data-tender]').forEach(function (chip) {
+      chip.addEventListener('click', function () {
+        var total = currentTotal();
+        var kind = chip.dataset.tender;
+        if (kind === 'exact') payTender = total;
+        else if (kind === 'round') payTender = Math.ceil(total / 10000) * 10000;
+        else payTender = total + Number(kind);
+        setMoneyInput($('#pay-cash-input'), payTender);
+        renderPayment(total);
+      });
+    });
+
+    ['#mix-cash', '#mix-card', '#mix-online'].forEach(function (selector) {
+      var el = $(selector);
+      if (!el) return;
+      el.addEventListener('input', function () {
+        var digits = el.value.replace(/[^0-9]/g, '');
+        el.value = digits ? money(digits) : '';
+        var value = Number(digits) || 0;
+        if (selector === '#mix-cash') mixCash = value;
+        else if (selector === '#mix-card') mixCard = value;
+        else mixOnline = value;
+        renderPayment(currentTotal());
+      });
+    });
+
+    var fillCash = $('#mix-fill-cash');
+    if (fillCash) {
+      fillCash.addEventListener('click', function () {
+        var total = currentTotal();
+        mixCash = Math.max(0, total - mixCard - mixOnline);
+        setMoneyInput($('#mix-cash'), mixCash);
+        renderPayment(total);
+      });
+    }
 
     menuGrid.addEventListener('click', function (event) {
       var btn = event.target.closest('[data-item]');
@@ -627,16 +1040,30 @@ export function staffPage(
       $('#apply-coupon').click();
     });
 
-    $('#submit-invoice').addEventListener('click', async function () {
+    async function submitInvoice() {
+      if (submitting) return;
       if (!customer) { toast('ابتدا مشتری را جستجو و انتخاب کنید.', 'error'); phoneInput.focus(); return; }
       var totals = refreshTotals();
       if (totals.base <= 0) { toast('مبلغ فاکتور باید بیشتر از صفر باشد.', 'error'); return; }
+
+      var payment = computePayment(totals.total);
+      if (!payment.valid) {
+        toast(payment.error || 'اطلاعات پرداخت کامل نیست.', 'error');
+        return;
+      }
+
+      // با «الزام صندوق»، پرداخت نقدی بدون شیفت باز ثبت نمی‌شود
+      if (REQUIRE_SHIFT && !HAS_OPEN_SHIFT && payment.cash > 0) {
+        toast('صندوق بسته است؛ برای پرداخت نقدی اول صندوق را باز کنید.', 'error');
+        return;
+      }
 
       var items = Object.keys(selected).map(function (name) {
         var item = MENU.find(function (m) { return m.name === name; });
         return { name: name, qty: selected[name], price: item ? item.price : 0 };
       });
       var btn = $('#submit-invoice');
+      submitting = true;
       setLoading(btn, true, 'در حال ثبت…');
       if (!requestId) {
         requestId = (window.crypto && window.crypto.randomUUID)
@@ -651,10 +1078,19 @@ export function staffPage(
             items: items,
             amount: items.length ? null : totals.base,
             couponCode: appliedCoupon ? appliedCoupon.code : null,
-            clientRequestId: requestId
+            clientRequestId: requestId,
+            payment: { cash: payment.cash, card: payment.card, online: payment.online }
           }
         });
         requestId = null;
+        $('#r-payment').textContent = paymentLabel(result.paymentMethod) +
+          (result.change > 0 ? ' (' + moneyFa(result.change) + ' باقیمانده)' : '');
+        if (result.change > 0) {
+          $('#r-change-row').classList.remove('hidden');
+          $('#r-change').textContent = moneyFa(result.change) + ' تومان';
+        } else {
+          $('#r-change-row').classList.add('hidden');
+        }
         $('#r-customer').textContent = result.customerName;
         $('#r-amount').textContent = moneyFa(result.amount) + ' تومان';
         $('#r-points').textContent = '+' + fa(result.pointsEarned) + ' امتیاز';
@@ -687,15 +1123,49 @@ export function staffPage(
         list.prepend(row);
       } catch (error) {
         toast(error.message, 'error');
+        // اگر درخواست نیمه‌کاره ماند، شناسه یکتا آزاد می‌شود تا تلاش بعدی فاکتور تازه بسازد
+        requestId = null;
       } finally {
+        submitting = false;
         setLoading(btn, false);
       }
-    });
+    }
+
+    $('#submit-invoice').addEventListener('click', submitInvoice);
 
     $('#new-invoice').addEventListener('click', function () {
       $('#receipt-modal').classList.add('hidden');
       resetForm();
       clearCustomer();
+    });
+
+    // --- میان‌برهای صفحه‌کلید (برای سرعت صندوق) ---
+    document.addEventListener('keydown', function (event) {
+      var tag = (event.target && event.target.tagName) || '';
+      var typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+
+      // Ctrl/Cmd + Enter : ثبت فاکتور
+      if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+        event.preventDefault();
+        $('#submit-invoice').click();
+        return;
+      }
+      // "/" : پرش به جستجوی محصول
+      if (!typing && event.key === '/') {
+        event.preventDefault();
+        if (menuSearch) menuSearch.focus();
+        return;
+      }
+      // "?"/F1 : راهنمای میان‌برها
+      if (!typing && (event.key === '?' || event.key === 'F1')) {
+        event.preventDefault();
+        toast('میان‌برها: / جستجوی محصول · Ctrl+Enter ثبت فاکتور · Esc بستن پنجره', 'info');
+        return;
+      }
+      // Esc : بستن پنجرهٔ رسید
+      if (event.key === 'Escape' && !$('#receipt-modal').classList.contains('hidden')) {
+        $('#new-invoice').click();
+      }
     });
 
     // init
@@ -726,8 +1196,10 @@ export function staffHistoryPage(
   invoices: Array<
     InvoiceRow & { customer_name: string; customer_phone: string; registered_name: string | null }
   >,
-  summary: { count: number; total: number }
+  summary: { count: number; total: number },
+  options: { q?: string; onlyVoided?: boolean } = {}
 ): string {
+  const q = (options.q ?? '').trim();
   const body = `
   <div class="p-4 sm:p-6 lg:p-8 max-w-6xl mx-auto">
     ${pageHeader({
@@ -737,7 +1209,7 @@ export function staffHistoryPage(
       actions: `<a href="/staff" class="btn btn-primary btn-sm">${icon('plus', 'w-4 h-4')} فاکتور جدید</a>`,
     })}
 
-    <div class="grid grid-cols-2 gap-4 mb-6">
+    <div class="grid grid-cols-2 gap-4 mb-4">
       <div class="glass rounded-2xl p-5">
         <div class="flex items-center gap-2 text-[11px] text-cream/45 mb-2">${icon('receipt', 'w-4 h-4 text-gold')} تعداد فاکتورها</div>
         <div class="text-2xl font-extrabold">${toPersianDigits(summary.count)}</div>
@@ -747,6 +1219,17 @@ export function staffHistoryPage(
         <div class="text-2xl font-extrabold gold-text">${formatNumberFa(summary.total)} <span class="text-xs text-cream/40 font-normal">تومان</span></div>
       </div>
     </div>
+
+    <form method="get" action="/staff/history" class="glass rounded-2xl p-3 mb-4 flex flex-wrap items-center gap-2">
+      <input type="search" name="q" value="${escapeHtml(q)}" class="field !py-2 text-[12px] flex-1 min-w-[180px]"
+        placeholder="جستجوی نام مشتری، شماره موبایل یا شماره فاکتور…" />
+      <label class="flex items-center gap-1.5 text-[11px] text-cream/55 select-none cursor-pointer">
+        <input type="checkbox" name="voided" value="1" class="accent-amber-500 w-3.5 h-3.5" ${options.onlyVoided ? 'checked' : ''} />
+        فقط باطل‌شده‌ها
+      </label>
+      <button type="submit" class="btn btn-primary btn-sm">${icon('search', 'w-4 h-4')} جستجو</button>
+      ${q || options.onlyVoided ? `<a href="/staff/history" class="btn btn-ghost btn-sm">پاک کردن</a>` : ''}
+    </form>
 
     <div class="glass rounded-3xl overflow-hidden">
       <div class="px-5 py-4 border-b border-white/10 flex items-center gap-2">
@@ -770,8 +1253,10 @@ export function staffHistoryPage(
                     <th>مشتری</th>
                     <th>آیتم‌ها</th>
                     <th>مبلغ</th>
+                    <th>پرداخت</th>
                     <th>امتیاز</th>
                     <th>تاریخ</th>
+                    <th>وضعیت</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -783,10 +1268,18 @@ export function staffHistoryPage(
                           <div class="font-medium text-[12.5px]">${escapeHtml(invoice.customer_name)}</div>
                           <div class="text-[10.5px] text-cream/35 font-mono" dir="ltr">${escapeHtml(invoice.customer_phone)}</div>
                         </td>
-                        <td class="text-[11.5px] text-cream/50 max-w-[220px]">${escapeHtml(describeItems(invoice.items))}</td>
+                        <td class="text-[11.5px] text-cream/50 max-w-[200px]">${escapeHtml(describeItems(invoice.items))}</td>
                         <td class="font-bold text-amber-200 whitespace-nowrap text-[12.5px]">${formatNumberFa(invoice.amount)}</td>
+                        <td class="text-[11px] whitespace-nowrap">${escapeHtml(
+                          PAYMENT_LABELS[invoice.payment_method ?? ''] ?? '—'
+                        )}</td>
                         <td class="text-emerald-300/80 text-[12px]">+${toPersianDigits(invoice.points_earned)}</td>
                         <td class="text-[11px] text-cream/45 whitespace-nowrap">${formatJalaliDateTime(invoice.created_at)}</td>
+                        <td>${
+                          invoice.voided_at
+                            ? `<span class="badge tone-danger" title="${escapeHtml(invoice.void_reason ?? '')}">باطل</span>`
+                            : '<span class="badge tone-success">معتبر</span>'
+                        }</td>
                       </tr>`
                     )
                     .join('')}

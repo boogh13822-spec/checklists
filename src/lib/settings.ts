@@ -83,6 +83,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   redeem_value: 20000,
   redeem_expiry_days: 30,
   otp_login_enabled: 1,
+  require_shift: 0,
   tiers: { silver: 500, gold: 2000, vip: 5000 },
   cafe_name: 'کافه ملت',
   cafe_city: 'تهران',
@@ -108,6 +109,7 @@ export const EDITABLE_SETTING_KEYS: Array<keyof AppSettings> = [
   'redeem_value',
   'redeem_expiry_days',
   'otp_login_enabled',
+  'require_shift',
   'currency_unit',
   'tiers',
   'cafe_name',
@@ -160,6 +162,7 @@ function coerceSettings(raw: Record<string, unknown>): AppSettings {
     redeem_value: toIntInRange(raw.redeem_value, 1000, 100_000_000, 20_000),
     redeem_expiry_days: toIntInRange(raw.redeem_expiry_days, 1, 365, 30),
     otp_login_enabled: toIntInRange(raw.otp_login_enabled, 0, 1, 1),
+    require_shift: toIntInRange(raw.require_shift, 0, 1, 0),
     currency_unit: toIntInRange(raw.currency_unit, 1, 10_000_000, 1000),
     tiers: {
       silver: toIntInRange(tiers.silver, 1, 100_000_000, 500),

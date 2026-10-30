@@ -137,6 +137,92 @@ export function adminReportsPage(input: {
     )
     .join('');
 
+  // نمودار ۳۰ روزه
+  const maxDay = Math.max(1, ...data.daily.map((day) => day.amount));
+  const dayBars = data.daily
+    .map((day) => {
+      const height = Math.max(2, Math.round((day.amount / maxDay) * 100));
+      return `<div class="flex-1 flex flex-col items-center justify-end gap-1 min-w-0 group" title="${escapeHtml(day.label)} — ${formatNumberFa(day.amount)} تومان (${formatNumberFa(day.invoices)} فاکتور)">
+        <div class="w-full rounded-t bg-gradient-to-t from-amber-700/40 to-gold/80 group-hover:to-gold transition" style="height:${height}%"></div>
+      </div>`;
+    })
+    .join('');
+
+  // مقایسه‌های دوره‌ای از همان سری روزانه (بدون کوئری اضافه)
+  const days = data.daily;
+  const sumRange = (from: number, to: number) =>
+    days.slice(from, to).reduce((sum, day) => sum + day.amount, 0);
+  const countRange = (from: number, to: number) =>
+    days.slice(from, to).reduce((sum, day) => sum + day.invoices, 0);
+
+  const todayAmount = sumRange(days.length - 1, days.length);
+  const yesterdayAmount = sumRange(days.length - 2, days.length - 1);
+  const last7 = sumRange(days.length - 7, days.length);
+  const prev7 = sumRange(days.length - 14, days.length - 7);
+  const last7Count = countRange(days.length - 7, days.length);
+  const prev7Count = countRange(days.length - 14, days.length - 7);
+
+  const pctChange = (current: number, previous: number): number | null => {
+    if (!previous) return current > 0 ? 100 : null;
+    return Math.round(((current - previous) / previous) * 1000) / 10;
+  };
+  const deltaBadge = (current: number, previous: number, label: string): string => {
+    const pct = pctChange(current, previous);
+    if (pct === null) {
+      return `<span class="badge tone-muted">${label}: دادهٔ کافی نیست</span>`;
+    }
+    const tone = pct > 0 ? 'tone-success' : pct < 0 ? 'tone-danger' : 'tone-muted';
+    const arrow = pct > 0 ? '▲' : pct < 0 ? '▼' : '■';
+    return `<span class="badge ${tone}">${arrow} ${label} ${toPersianDigits(Math.abs(pct))}٪</span>`;
+  };
+
+  // پرفروش بر اساس مبلغ (از همان دادهٔ آیتم‌ها)
+  const topByRevenue = data.topItems.slice().sort((a, b) => b.amount - a.amount).slice(0, 5);
+  const revenueRows = topByRevenue
+    .map(
+      (item, index) => `<tr>
+        <td class="text-[11px] text-cream/30">${toPersianDigits(index + 1)}</td>
+        <td class="text-[12px]">${escapeHtml(item.name)}</td>
+        <td class="text-[11.5px] text-cream/60">${formatNumberFa(item.qty)}</td>
+        <td class="font-bold text-amber-200 text-[12px] whitespace-nowrap">${formatNumberFa(item.amount)}</td>
+      </tr>`
+    )
+    .join('');
+
+  // تفکیک پرداخت
+  const paymentTotal = Math.max(1, data.paymentSplit.total);
+  const paymentRows = [
+    { key: 'cash', label: 'نقدی', value: data.paymentSplit.cash, tone: 'bg-emerald-400', text: 'text-emerald-300' },
+    { key: 'card', label: 'کارت‌خوان', value: data.paymentSplit.card, tone: 'bg-sky-400', text: 'text-sky-300' },
+    { key: 'online', label: 'آنلاین', value: data.paymentSplit.online, tone: 'bg-amber-400', text: 'text-amber-200' },
+    { key: 'unknown', label: 'ثبت‌نشده (قدیمی)', value: data.paymentSplit.unknown, tone: 'bg-cream/25', text: 'text-cream/50' },
+  ]
+    .filter((row) => row.value > 0)
+    .map((row) => {
+      const share = Math.round((row.value / paymentTotal) * 1000) / 10;
+      return `<div class="mb-3">
+        <div class="flex items-center justify-between mb-1">
+          <span class="text-[11.5px] text-cream/55">${row.label}</span>
+          <span class="text-[11.5px] font-bold ${row.text}">${formatNumberFa(row.value)} <span class="text-[9.5px] font-normal text-cream/35">(${toPersianDigits(share)}٪)</span></span>
+        </div>
+        <div class="h-2 rounded-full bg-white/5 overflow-hidden">
+          <div class="h-full rounded-full ${row.tone}" style="width:${Math.min(100, share)}%"></div>
+        </div>
+      </div>`;
+    })
+    .join('');
+
+  const weeklyRows = data.weekly
+    .map(
+      (week) => `<tr>
+        <td class="text-[11px] text-cream/55 whitespace-nowrap">${escapeHtml(week.label)}</td>
+        <td class="text-[11.5px] text-cream/60">${formatNumberFa(week.invoices)}</td>
+        <td class="font-bold text-amber-200 text-[12px] whitespace-nowrap">${formatNumberFa(week.amount)}</td>
+        <td class="text-[11px] text-cream/45 whitespace-nowrap">${formatNumberFa(week.invoices > 0 ? Math.round(week.amount / week.invoices) : 0)}</td>
+      </tr>`
+    )
+    .join('');
+
   const body = `
   <div class="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto">
     ${pageHeader({
@@ -145,6 +231,42 @@ export function adminReportsPage(input: {
       iconName: 'chart',
       actions: `<a href="/admin/reports/export.csv" class="btn btn-ghost btn-sm">${icon('download', 'w-4 h-4')} خروجی CSV</a>`,
     })}
+
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
+      ${statCard({
+        label: 'فروش امروز',
+        value: formatNumberFa(data.todayTotals.sales),
+        unit: 'تومان',
+        hint: `دیروز: ${formatNumberFa(yesterdayAmount)} تومان`,
+        iconName: 'bolt',
+        accent: 'emerald',
+      })}
+      ${statCard({
+        label: 'میانگین فاکتور امروز',
+        value: formatNumberFa(
+          data.todayTotals.invoices > 0 ? Math.round(data.todayTotals.sales / data.todayTotals.invoices) : 0
+        ),
+        unit: 'تومان',
+        iconName: 'chart',
+        accent: 'sky',
+      })}
+      ${statCard({
+        label: 'ابطال‌شده این ماه',
+        value: formatNumberFa(data.voids.count),
+        unit: 'فاکتور',
+        hint: `${formatNumberFa(data.voids.amount)} تومان`,
+        iconName: 'close',
+        accent: 'rose',
+      })}
+      ${statCard({
+        label: 'نقد این ماه',
+        value: formatNumberFa(data.paymentSplit.cash),
+        unit: 'تومان',
+        hint: 'برای تطبیق با صندوق',
+        iconName: 'banknote',
+        accent: 'gold',
+      })}
+    </div>
 
     <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
       ${statCard({
@@ -173,6 +295,12 @@ export function adminReportsPage(input: {
         iconName: 'users',
         accent: 'rose',
       })}
+    </div>
+
+    <div class="flex flex-wrap items-center gap-2 mb-4">
+      ${deltaBadge(todayAmount, yesterdayAmount, 'امروز نسبت به دیروز')}
+      ${deltaBadge(last7, prev7, '۷ روز اخیر نسبت به ۷ روز قبل')}
+      ${deltaBadge(last7Count, prev7Count, 'تعداد فاکتور هفته')}
     </div>
 
     <div class="flex flex-wrap items-center gap-2 mb-5">
@@ -227,7 +355,51 @@ export function adminReportsPage(input: {
       })}
     </div>
 
-    <div class="grid lg:grid-cols-2 gap-4">
+    ${panel({
+      title: 'فروش ۳۰ روز اخیر',
+      iconName: 'chart',
+      actions: `<span class="text-[10px] text-cream/35">بیشترین روز: ${formatNumberFa(maxDay)} تومان</span>`,
+      body: `<div class="p-5">
+        <div class="h-36 flex items-end gap-[3px]">${dayBars}</div>
+        <div class="flex items-center justify-between mt-2 text-[9.5px] text-cream/30">
+          <span>${escapeHtml(data.daily[0]?.label ?? '')}</span>
+          <span>${escapeHtml(data.daily[data.daily.length - 1]?.label ?? '')}</span>
+        </div>
+      </div>`,
+    })}
+
+    <div class="grid lg:grid-cols-2 gap-4 mt-4">
+      ${panel({
+        title: 'تفکیک فروش بر اساس روش پرداخت (ماه جاری)',
+        iconName: 'wallet',
+        body:
+          data.paymentSplit.total === 0
+            ? emptyState({ title: 'پرداختی ثبت نشده', message: 'با ثبت فاکتورهای دارای روش پرداخت، این بخش پر می‌شود.', iconName: 'wallet' })
+            : `<div class="p-5">
+                ${paymentRows}
+                <div class="border-t border-white/10 pt-3 flex items-center justify-between">
+                  <span class="text-[11.5px] text-cream/55">جمع فروش</span>
+                  <span class="font-extrabold text-[13px] text-amber-200">${formatNumberFa(data.paymentSplit.total)} تومان</span>
+                </div>
+                <p class="text-[10px] text-cream/30 mt-2 leading-5">فقط فاکتورهای معتبر؛ مبالغ ابطال‌شده در هیچ‌کدام از ستون‌ها حساب نمی‌شوند.</p>
+              </div>`,
+      })}
+      ${panel({
+        title: 'فروش هفتگی (۸ هفته اخیر)',
+        iconName: 'calendar',
+        body:
+          data.weekly.length === 0
+            ? emptyState({ title: 'داده‌ای موجود نیست', message: 'پس از ثبت فاکتورها این جدول پر می‌شود.', iconName: 'calendar' })
+            : `<div class="table-wrap">
+                <table class="data">
+                  <thead><tr><th>بازه</th><th>فاکتور</th><th>فروش</th><th>میانگین</th></tr></thead>
+                  <tbody>${weeklyRows}</tbody>
+                </table>
+              </div>`,
+      })}
+    </div>
+
+    <div class="grid lg:grid-cols-2 gap-4 mt-4">
       ${panel({
         title: 'عملکرد کارمندان (ماه جاری)',
         iconName: 'shield',
@@ -242,6 +414,23 @@ export function adminReportsPage(input: {
                 <table class="data">
                   <thead><tr><th>کارمند</th><th>فاکتور</th><th>فروش</th><th>امتیاز</th><th>میانگین</th></tr></thead>
                   <tbody>${staffRows}</tbody>
+                </table>
+              </div>`,
+      })}
+      ${panel({
+        title: 'پرفروش‌ترین بر اساس مبلغ (۹۰ روز)',
+        iconName: 'trending',
+        body:
+          topByRevenue.length === 0
+            ? emptyState({
+                title: 'آیتمی ثبت نشده',
+                message: 'برای دیدن این گزارش، فاکتورها را با انتخاب آیتم‌های منو ثبت کنید.',
+                iconName: 'trending',
+              })
+            : `<div class="table-wrap">
+                <table class="data">
+                  <thead><tr><th>#</th><th>آیتم</th><th>تعداد</th><th>درآمد</th></tr></thead>
+                  <tbody>${revenueRows}</tbody>
                 </table>
               </div>`,
       })}

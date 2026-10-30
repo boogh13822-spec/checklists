@@ -426,9 +426,52 @@ export function registerPage(
  *  صفحه‌ی ورود
  * ========================================================================== */
 
-export function loginPage(settings: AppSettings, next: string, expired = false): string {
+export function loginPage(
+  settings: AppSettings,
+  next: string,
+  expired = false,
+  notice = ''
+): string {
   const cafe = escapeHtml(settings.cafe_name);
   const safeNext = next.startsWith('/') && !next.startsWith('//') ? next : '';
+
+  /**
+   * پیام‌های تشخیصی صفحهٔ ورود:
+   *  - expired : نشست قبلی منقضی شده (یا کلید سرور عوض شده)
+   *  - cookie  : ورود موفق بود ولی مرورگر کوکی را ذخیره نکرد
+   *  - loggedout: کاربر خودش خارج شده
+   */
+  const noticeBox = (() => {
+    if (notice === 'cookie') {
+      return `<div class="mb-5 rounded-xl border border-rose-500/30 bg-rose-500/[0.08] p-3.5 flex items-start gap-2.5">
+        <span class="text-rose-300 mt-0.5">${icon('warning', 'w-3.5 h-3.5')}</span>
+        <div class="text-[11px] text-rose-100/80 leading-6">
+          <div class="font-semibold text-rose-200 mb-1">مرورگر کوکی ورود را ذخیره نکرد</div>
+          نام کاربری و رمز درست بود، ولی برای ادامه باید کوکی ذخیره شود. این موارد را بررسی کنید:
+          <ul class="mt-1.5 space-y-1 list-disc list-inside">
+            <li>حالت ناشناس (Incognito) یا مسدودکنندهٔ کوکی را خاموش کنید.</li>
+            <li>اگر از دامنهٔ بدون HTTPS استفاده می‌کنید، سایت را با <span class="font-mono" dir="ltr">https://</span> باز کنید.</li>
+            <li>مطمئن شوید آدرس سایت همیشه یک شکل است (با/بدون www یا پیش‌نمایش).</li>
+          </ul>
+        </div>
+      </div>`;
+    }
+    if (notice === 'loggedout') {
+      return `<div class="mb-5 rounded-xl border border-white/10 bg-white/[0.04] p-3.5 text-[11px] text-cream/60 leading-6">
+        از حساب خارج شدید. برای ادامه دوباره وارد شوید.
+      </div>`;
+    }
+    if (expired) {
+      return `<div class="mb-5 rounded-xl border border-amber-500/25 bg-amber-500/[0.07] p-3.5 flex items-start gap-2.5">
+        <span class="text-amber-300 mt-0.5">${icon('clock', 'w-3.5 h-3.5')}</span>
+        <p class="text-[11px] text-amber-100/70 leading-6">
+          نشست قبلی شما منقضی شده است (یا رمز امنیتی سرور تغییر کرده).
+          لطفاً یک‌بار دیگر وارد شوید.
+        </p>
+      </div>`;
+    }
+    return '';
+  })();
 
   const body = `
   <div class="min-h-[calc(100vh-4rem)] flex items-center justify-center px-4 py-10">
@@ -477,17 +520,7 @@ export function loginPage(settings: AppSettings, next: string, expired = false):
           <p class="text-[12px] text-cream/45">شماره موبایل و رمز عبور خود را وارد کنید.</p>
         </div>
 
-        ${
-          expired
-            ? `<div class="mb-5 rounded-xl border border-amber-500/25 bg-amber-500/[0.07] p-3.5 flex items-start gap-2.5">
-                <span class="text-amber-300 mt-0.5">${icon('clock', 'w-3.5 h-3.5')}</span>
-                <p class="text-[11px] text-amber-100/70 leading-6">
-                  نشست قبلی شما منقضی شده است (یا رمز امنیتی سرور تغییر کرده).
-                  لطفاً یک‌بار دیگر وارد شوید.
-                </p>
-              </div>`
-            : ''
-        }
+        ${noticeBox}
 
         <form id="login-form" class="space-y-4" novalidate>
           <div>
@@ -518,6 +551,7 @@ export function loginPage(settings: AppSettings, next: string, expired = false):
           <span class="text-amber-300/80 mt-0.5">${icon('shield', 'w-3.5 h-3.5')}</span>
           <p class="text-[10.5px] text-cream/45 leading-6">
             این بخش مخصوص کارمندان و مدیران باشگاه است. در صورت فراموشی رمز، با مدیر اصلی تماس بگیرید.
+            <a href="/logout" class="text-gold/80 hover:underline">پاک کردن نشست قبلی</a>
           </p>
         </div>
 
@@ -550,11 +584,34 @@ export function loginPage(settings: AppSettings, next: string, expired = false):
       setLoading(btn, true, 'در حال ورود…');
       try {
         var data = await api('/api/auth/login', { method: 'POST', body: { phone: phone, password: password } });
+
+        // تأیید نشست: اگر مرورگر کوکی را ذخیره نکرده باشد، کاربر بی‌نهایت بین
+        // صفحهٔ ورود و پنل می‌چرخد و پیام گمراه‌کنندهٔ «نشست منقضی» می‌بیند.
+        var sessionOk = false;
+        try {
+          var session = await fetch('/api/auth/session', {
+            credentials: 'same-origin',
+            headers: { 'Accept': 'application/json' }
+          }).then(function (r) { return r.json(); });
+          sessionOk = !!(session && session.ok && session.data && session.data.authenticated);
+        } catch (error) {
+          sessionOk = true; // خطای شبکه را به حساب مشکل کوکی نگذاریم
+        }
+
+        if (!sessionOk) {
+          setLoading(btn, false);
+          window.location.href = '/login?e=cookie' + (next ? '&next=' + encodeURIComponent(next) : '');
+          return;
+        }
+
         toast('خوش آمدید ' + data.name, 'success');
         var target = next && next.indexOf('/admin') === 0 && data.role === 'admin' ? next
                    : next && next.indexOf('/staff') === 0 && data.role === 'staff' ? next
+                   : next && next.indexOf('/me') === 0 && data.role === 'customer' ? next
                    : data.redirect;
-        window.location.href = target;
+
+        // replace تا دکمهٔ «بازگشت» مرورگر کاربر را به صفحهٔ ورود برنگرداند
+        window.location.replace(target);
       } catch (error) {
         // خطای «نیاز به ورود» خودش هندل شده و صفحه در حال تغییر است
         if (error && error.message !== 'UNAUTHORIZED') {

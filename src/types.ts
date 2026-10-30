@@ -72,8 +72,65 @@ export type InvoiceRow = {
   /** زمان ابطال — NULL یعنی فاکتور معتبر است */
   voided_at: string | null;
   voided_by: number | null;
+  /** دلیل ابطال (برای حسابرسی) */
+  void_reason: string | null;
+  /** روش پرداخت — NULL یعنی فاکتور قدیمی (پیش از افزودن پرداخت) */
+  payment_method: PaymentMethod | null;
+  /** مبلغ نقد مؤثر در صندوق (بعد از کسر باقیمانده) */
+  paid_cash: number;
+  paid_card: number;
+  paid_online: number;
+  /** باقیمانده‌ای که به مشتری برگشت */
+  change_amount: number;
+  /** شیفت صندوقی که فاکتور در آن ثبت شده */
+  shift_id: number | null;
+  /** اگر این فاکتور، اصلاح فاکتور قبلی باشد */
+  replaces_invoice_id: number | null;
   created_at: string;
   registered_by: number | null;
+};
+
+/** روش‌های پرداخت پشتیبانی‌شده */
+export type PaymentMethod = 'cash' | 'card' | 'online' | 'mixed';
+
+/** ورودی پرداخت برای ثبت فاکتور (همه مبالغ تومان) */
+export type PaymentInput = {
+  cash?: number;
+  card?: number;
+  online?: number;
+};
+
+/** شیفت صندوق */
+export type ShiftRow = {
+  id: number;
+  staff_id: number | null;
+  staff_name: string;
+  opened_at: string;
+  closed_at: string | null;
+  opening_cash: number;
+  counted_cash: number | null;
+  expected_cash: number | null;
+  difference: number | null;
+  status: 'open' | 'closed';
+  closed_by: number | null;
+  closed_by_name: string | null;
+  notes: string | null;
+  invoice_count: number;
+  cash_sales: number;
+  card_sales: number;
+  online_sales: number;
+  total_sales: number;
+  void_count: number;
+};
+
+export type CashMovementRow = {
+  id: number;
+  shift_id: number;
+  kind: 'in' | 'out';
+  amount: number;
+  reason: string | null;
+  created_at: string;
+  created_by: number | null;
 };
 
 export type InvoiceItem = {
@@ -147,6 +204,8 @@ export type AppSettings = {
   redeem_expiry_days: number;
   /** ورود مشتری با رمز یک‌بارمصرف پیامکی */
   otp_login_enabled: number;
+  /** الزام باز بودن صندوق برای ثبت پرداخت نقدی */
+  require_shift: number;
   tiers: TierThresholds;
   cafe_name: string;
   cafe_city: string;
@@ -180,6 +239,8 @@ export type AppEnv = {
   Variables: {
     user: JwtPayload | null;
     settings: AppSettings;
+    /** کوکی نشست وجود داشت ولی معتبر نبود (برای پیام دقیق «نشست منقضی») */
+    sessionInvalid?: boolean;
   };
 };
 

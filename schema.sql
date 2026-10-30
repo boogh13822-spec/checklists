@@ -57,6 +57,14 @@ CREATE TABLE IF NOT EXISTS invoices (
   client_request_id TEXT,                                    -- جلوگیری از ثبت تکراری فاکتور
   voided_at     TEXT,                                        -- زمان ابطال (NULL = معتبر)
   voided_by     INTEGER,
+  void_reason   TEXT,                                        -- دلیل ابطال (برای حسابرسی)
+  payment_method TEXT,                                       -- cash | card | online | mixed (NULL = فاکتور قدیمی)
+  paid_cash     INTEGER NOT NULL DEFAULT 0,                  -- نقد مؤثر در صندوق (بدون باقیمانده)
+  paid_card     INTEGER NOT NULL DEFAULT 0,                  -- کارت‌خوان
+  paid_online   INTEGER NOT NULL DEFAULT 0,                  -- پرداخت آنلاین/لینک
+  change_amount INTEGER NOT NULL DEFAULT 0,                  -- باقیمانده‌ای که به مشتری برگشت
+  shift_id      INTEGER,                                     -- شیفت صندوق مرتبط
+  replaces_invoice_id INTEGER,                               -- اگر اصلاح فاکتور قبلی است
   created_at    TEXT    NOT NULL DEFAULT (datetime('now')),
   registered_by INTEGER,
   FOREIGN KEY (user_id)       REFERENCES users (id) ON DELETE CASCADE,
@@ -66,6 +74,9 @@ CREATE TABLE IF NOT EXISTS invoices (
 CREATE INDEX IF NOT EXISTS idx_invoices_user_id    ON invoices (user_id);
 CREATE INDEX IF NOT EXISTS idx_invoices_created_at ON invoices (created_at);
 CREATE INDEX IF NOT EXISTS idx_invoices_voided     ON invoices (voided_at);
+CREATE INDEX IF NOT EXISTS idx_invoices_payment    ON invoices (payment_method, created_at);
+CREATE INDEX IF NOT EXISTS idx_invoices_shift      ON invoices (shift_id);
+CREATE INDEX IF NOT EXISTS idx_invoices_staff_day  ON invoices (registered_by, created_at);
 
 -- امتیاز «یک‌بار در روز» فقط برای یک فاکتور در هر روز معتبر است
 CREATE UNIQUE INDEX IF NOT EXISTS ux_invoices_visit_day
@@ -145,6 +156,53 @@ CREATE TABLE IF NOT EXISTS rate_limits (
   count     INTEGER NOT NULL DEFAULT 0,
   reset_at  TEXT    NOT NULL
 );
+
+-- ============================================================================
+--  شیفت صندوق (باز/بسته کردن صندوق و کنترل نقدینگی)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS shifts (
+  id                INTEGER PRIMARY KEY AUTOINCREMENT,
+  staff_id          INTEGER,
+  staff_name        TEXT    NOT NULL,
+  opened_at         TEXT    NOT NULL DEFAULT (datetime('now')),
+  closed_at         TEXT,
+  opening_cash      INTEGER NOT NULL DEFAULT 0,   -- مبلغ اولیهٔ صندوق
+  counted_cash      INTEGER,                      -- مبلغ شمارش‌شده در پایان
+  expected_cash     INTEGER,                      -- مبلغ مورد انتظار (محاسبه‌شده)
+  difference        INTEGER,                      -- اختلاف (شمارش − انتظار)
+  status            TEXT    NOT NULL DEFAULT 'open', -- open | closed
+  closed_by         INTEGER,
+  closed_by_name    TEXT,
+  notes             TEXT,
+  invoice_count     INTEGER NOT NULL DEFAULT 0,   -- عکس لحظهٔ بستن (برای حسابرسی)
+  cash_sales        INTEGER NOT NULL DEFAULT 0,
+  card_sales        INTEGER NOT NULL DEFAULT 0,
+  online_sales      INTEGER NOT NULL DEFAULT 0,
+  total_sales       INTEGER NOT NULL DEFAULT 0,
+  void_count        INTEGER NOT NULL DEFAULT 0,
+  FOREIGN KEY (staff_id)  REFERENCES users (id) ON DELETE SET NULL,
+  FOREIGN KEY (closed_by) REFERENCES users (id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_shifts_status ON shifts (status, opened_at);
+CREATE INDEX IF NOT EXISTS idx_shifts_staff  ON shifts (staff_id, opened_at);
+
+-- هر کارمند فقط یک صندوق باز می‌تواند داشته باشد
+CREATE UNIQUE INDEX IF NOT EXISTS ux_shifts_open_staff
+  ON shifts (staff_id) WHERE status = 'open' AND staff_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS cash_movements (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  shift_id   INTEGER NOT NULL,
+  kind       TEXT    NOT NULL,                    -- in (دریافت نقد) | out (پرداخت نقد)
+  amount     INTEGER NOT NULL,
+  reason     TEXT,
+  created_at TEXT    NOT NULL DEFAULT (datetime('now')),
+  created_by INTEGER,
+  FOREIGN KEY (shift_id) REFERENCES shifts (id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_cash_movements_shift ON cash_movements (shift_id, created_at);
 
 -- ============================================================================
 --  گزارش اقدامات مدیران (ردپای تغییرات حساس)

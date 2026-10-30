@@ -42,6 +42,13 @@ const ICONS: Record<string, string> = {
     '<path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2z"/>',
   wallet:
     '<path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/>',
+  card: '<rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/><path d="M6 15h4"/>',
+  eye: '<path d="M2.1 12.3a1 1 0 0 1 0-.6C4.6 6.9 8.1 4.5 12 4.5s7.4 2.4 9.9 7.2a1 1 0 0 1 0 .6C19.4 17.1 15.9 19.5 12 19.5s-7.4-2.4-9.9-7.2Z"/><circle cx="12" cy="12" r="3"/>',
+  drawer: '<path d="M4 3h16a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z"/><path d="M9 3v18"/>',
+  banknote:
+    '<rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01"/><path d="M18 12h.01"/>',
+  lock: '<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+  bolt: '<path d="M13 2 3 14h7l-1 8 10-12h-7l1-8Z"/>',
   clock: '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>',
   refresh:
     '<path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/>',
@@ -317,11 +324,16 @@ export const CORE_JS = `
     // فقط وقتی سرور می‌گوید «نیاز به ورود» (کد UNAUTHORIZED) نشست منقضی تلقی می‌شود.
     // ۴۰۱ صفحهٔ ورود (رمز اشتباه) باید پیام واقعی خودش را نشان دهد، نه «نشست منقضی».
     if (response.status === 401 && payload && payload.code === 'UNAUTHORIZED') {
-      toast('نشست شما منقضی شده است. در حال انتقال به صفحه ورود…', 'error');
-      setTimeout(function () {
-        window.location.href = '/login?expired=1&next=' + encodeURIComponent(window.location.pathname + window.location.search);
-      }, 900);
-      throw new Error('UNAUTHORIZED');
+      // در خود صفحهٔ ورود هرگز پیام «نشست منقضی» نشان نده؛ آنجا خطای واقعی مهم است.
+      var onLoginPage = window.location.pathname === '/login' || window.location.pathname === '/me/login';
+      if (!onLoginPage) {
+        toast('نشست شما منقضی شده است. در حال انتقال به صفحه ورود…', 'error');
+        setTimeout(function () {
+          var returnTo = window.location.pathname + window.location.search;
+          window.location.href = '/login?expired=1&next=' + encodeURIComponent(returnTo);
+        }, 900);
+      }
+      throw new Error(onLoginPage ? (payload.error || 'لطفاً دوباره وارد شوید.') : 'UNAUTHORIZED');
     }
     if (!response.ok || !payload || payload.ok === false) {
       var message = payload && payload.error ? payload.error : 'خطای غیرمنتظره (کد ' + response.status + ')';
@@ -631,6 +643,7 @@ const NAV_ITEMS = {
     { href: '/admin', label: 'داشبورد', icon: 'home', key: 'dashboard' },
     { href: '/admin/customers', label: 'مشتریان', icon: 'users', key: 'customers' },
     { href: '/admin/invoices', label: 'فاکتورها', icon: 'receipt', key: 'invoices' },
+    { href: '/admin/shifts', label: 'صندوق‌ها', icon: 'wallet', key: 'shifts' },
     { href: '/admin/settings', label: 'تنظیمات', icon: 'settings', key: 'settings' },
     { href: '/admin/staff', label: 'کارمندان', icon: 'shield', key: 'staff' },
     { href: '/admin/coupons', label: 'کدهای تخفیف', icon: 'gift', key: 'coupons' },
@@ -641,6 +654,7 @@ const NAV_ITEMS = {
   staff: [
     { href: '/staff', label: 'ثبت فاکتور', icon: 'receipt', key: 'invoice' },
     { href: '/staff/history', label: 'فاکتورهای من', icon: 'clock', key: 'history' },
+    { href: '/staff/shift', label: 'صندوق من', icon: 'wallet', key: 'shift' },
   ],
   customer: [
     { href: '/me', label: 'باشگاه من', icon: 'home', key: 'home' },
