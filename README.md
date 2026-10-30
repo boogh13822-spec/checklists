@@ -434,6 +434,22 @@ npm run build:single     # → single-file/worker.js  (یک فایل، بدون 
 
 ---
 
+## 🔄 اعمال تغییرات روی نسخهٔ منتشرشده
+
+بعد از دریافت کد تازه، فقط یک دستور کافی است (کد + دیتابیس با هم):
+
+```bash
+npm run update
+```
+
+پیش از آن یک بکاپ بگیرید:
+
+```bash
+npx wrangler d1 export cafe-club-db --remote --output backup-$(date +%F).sql
+```
+
+راهنمای کامل (شامل حالت بدون خط فرمان، عیب‌یابی و کارهایی که نباید کرد): **[DEPLOY-FA.md](./DEPLOY-FA.md)**
+
 ## 🧪 دستورهای مفید
 
 ```bash
