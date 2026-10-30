@@ -1784,7 +1784,29 @@ export async function voidInvoice(
     );
   }
 
-  await env.DB.batch(statements);
+  // اگر برگرداندن امتیاز/کد تخفیف شکست بخورد، فاکتور نباید «باطل ولی امتیاز
+  // دست‌نخورده» بماند؛ وضعیت قبلی برمی‌گردد تا داده مالی ناسازگار نشود.
+  try {
+    await env.DB.batch(statements);
+  } catch (error) {
+    console.error('voidInvoice: reversal batch failed, rolling back:', error);
+    try {
+      await env.DB.prepare(
+        `UPDATE invoices
+         SET voided_at = NULL, voided_by = NULL, void_reason = NULL, visit_day = ?
+         WHERE id = ? AND voided_at = ?`
+      )
+        .bind(invoice.visit_day, invoiceId, nowISO)
+        .run();
+    } catch (rollbackError) {
+      console.error('voidInvoice: rollback failed:', rollbackError);
+    }
+    return {
+      ok: false,
+      error: 'ابطال کامل نشد و هیچ تغییری اعمال نشد. لطفاً دوباره تلاش کنید.',
+      code: 'DB_ERROR',
+    };
+  }
 
   // سطح و آخرین خرید از روی فاکتورهای معتبر بازمحاسبه می‌شوند
   const lifeRow = await env.DB.prepare('SELECT lifetime_points FROM users WHERE id = ?')
