@@ -1,3 +1,4 @@
+import { fallbackPanel, fallbackScripts } from './fallback';
 /**
  * ----------------------------------------------------------------------------
  *  پنل ادمین: تنظیمات، مدیریت کارمندان، لاگ پیامک و کدهای تخفیف
@@ -173,6 +174,7 @@ export function adminSettingsPage(input: {
         { href: '#templates', label: 'قالب پیامک', iconName: 'chat' },
         { href: '#automation', label: 'جاب‌های خودکار', iconName: 'refresh' },
         { href: '#integrations', label: 'اتصال سرویس‌ها', iconName: 'key' },
+        { href: '#fallback', label: 'ارسال جایگزین', iconName: 'chat' },
         { href: '#menu', label: 'منوی کافه', iconName: 'receipt' },
       ]
         .map(
@@ -398,6 +400,7 @@ export function adminSettingsPage(input: {
           <h2 class="font-bold text-sm">اتصال سرویس‌ها</h2>
         </div>
         <div class="p-5 grid sm:grid-cols-2 gap-4">
+          <label class="sm:col-span-2 flex gap-2 items-center"><input id="sms_enabled" type="checkbox" role="switch" ${settings.sms_enabled ? 'checked' : ''} /> پنل پیامکی سایت فعال باشد</label>
           <div>
             <label class="label" for="sms_provider">سرویس‌دهنده پیامک</label>
             <select id="sms_provider" class="field">
@@ -467,6 +470,8 @@ export function adminSettingsPage(input: {
           </div>
         </div>
       </section>
+
+      ${fallbackPanel}
 
       <!-- Menu -->
       <section id="menu" class="glass rounded-3xl overflow-hidden scroll-mt-24">
@@ -669,6 +674,7 @@ export function adminSettingsPage(input: {
         churn_grace_days: Number($('#churn_grace_days').value),
         churn_min_visits: Number($('#churn_min_visits').value),
         birthday_coupon_percent: Number($('#birthday_coupon_percent').value),
+        sms_enabled: document.getElementById('sms_enabled').checked ? 1 : 0,
         sms_provider: $('#sms_provider').value,
         sms_api_key: $('#sms_api_key').value.trim(),
         sms_sender: $('#sms_sender').value.trim(),
@@ -698,6 +704,7 @@ export function adminSettingsPage(input: {
             input.placeholder = 'کلید ذخیره شده است — برای تغییر، مقدار جدید را وارد کنید';
           }
         });
+        document.dispatchEvent(new Event('sms-settings-saved'));
         toast('تنظیمات با موفقیت ذخیره شد.', 'success');
       } catch (error) {
         toast(error.message, 'error');
@@ -714,7 +721,7 @@ export function adminSettingsPage(input: {
       setLoading(btn, true, 'در حال ارسال…');
       try {
         var result = await api('/api/admin/test-sms', { method: 'POST' });
-        toast(result.message, result.status === 'sent' ? 'success' : 'error');
+        toast(result.message, result.status === 'sent' || result.status === 'pending' ? 'success' : 'error');
       } catch (error) {
         toast(error.message, 'error');
       } finally {
@@ -758,7 +765,7 @@ export function adminSettingsPage(input: {
     userName,
     active: 'settings',
     body,
-    scripts,
+    scripts: scripts + fallbackScripts,
     cafeName: settings.cafe_name,
   });
 }
@@ -1112,7 +1119,7 @@ export function adminSmsPage(input: {
                   ${logs
                     .map((log) => {
                       const statusLabel =
-                        log.status === 'sent' ? 'ارسال شد' : log.status === 'failed' ? 'ناموفق' : 'رد شد';
+                        log.status === 'sent' ? 'ارسال شد' : log.status === 'failed' ? 'ناموفق' : log.status === 'pending' ? 'صف جایگزین (نه تحویل به مشترک)' : 'رد شد';
                       const tone =
                         log.status === 'sent' ? 'success' : log.status === 'failed' ? 'danger' : 'muted';
                       return `<tr>

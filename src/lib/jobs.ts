@@ -33,11 +33,11 @@ import { pruneRateLimits } from './otp';
  * سقف پیامک هر اجرا.
  * پلن رایگان Workers سقف ۵۰ کوئری D1 و ۵۰ subrequest در هر اجرا دارد.
  * هر پیامک دست‌کم ۱ fetch + ۲ کوئری D1 مصرف می‌کند (ثبت لاگ + به‌روزرسانی کاربر)
- * و جاب تولد یک کوئری هم برای کد تخفیف اضافه می‌کند؛ پس ۱۰ پیامک با حاشیه‌ی امن،
+ * و جاب تولد یک کوئری هم برای کد تخفیف اضافه می‌کند؛ پس ۶ پیامک (با احتساب کوئری‌های صف Fallback) با حاشیه‌ی امن،
  * هم زیر سقف D1 می‌ماند هم زیر سقف fetch.
  * اگر پلن پولی (Workers Paid) دارید، می‌توانید این عدد را تا ۵۰ بالا ببرید.
  */
-const MAX_SMS_PER_RUN = 10;
+const MAX_SMS_PER_RUN = 6;
 const CHURN_COOLDOWN_DAYS = 30;
 /*
  * CHURN_DEFAULT_INTERVAL از settings.ts می‌آید تا داشبورد، فیلتر مشتریان و
@@ -48,6 +48,8 @@ export type JobResult = {
   job: string;
   ok: boolean;
   sent: number;
+  /** Accepted by fallback queue, NOT delivered SMS. */
+  queued?: number;
   skipped: number;
   failed: number;
   message: string;
@@ -162,11 +164,11 @@ export async function runChurnJob(
   });
 
   let sent = 0;
+  let queued = 0;
   let failed = 0;
   let skipped = 0;
 
-  for (const row of candidates) {
-    if (sent >= MAX_SMS_PER_RUN) break;
+  for (const row of candidates.slice(0, MAX_SMS_PER_RUN)) {
     const days = daysSince(row.last_visit_date);
     const message = renderSms(settings, 'churn', {
       name: row.name,
@@ -190,8 +192,8 @@ export async function runChurnJob(
       message,
     });
 
-    if (result.status === 'sent') {
-      sent += 1;
+    if (result.status === 'sent' || result.status === 'pending') {
+      if (result.status === 'sent') sent += 1; else queued += 1;
       await env.DB.prepare('UPDATE users SET last_churn_sms_at = ? WHERE id = ?')
         .bind(new Date().toISOString().slice(0, 19).replace('T', ' '), row.id)
         .run();
@@ -209,9 +211,10 @@ export async function runChurnJob(
     job: 'churn',
     ok: true,
     sent,
+    queued,
     skipped,
     failed,
-    message: `${toPersianDigits(candidates.length)} مشتری در معرض ریزش شناسایی شد؛ ${toPersianDigits(sent)} پیامک ارسال شد.`,
+    message: `${toPersianDigits(candidates.length)} مشتری در معرض ریزش شناسایی شد؛ ${toPersianDigits(sent)} پیامک ارسال شد. مسیر جایگزین: ${toPersianDigits(queued)} در صف (نه تحویل به مشترک).`,
     details: { candidates: candidates.length },
   };
 }
@@ -253,6 +256,7 @@ export async function runBirthdayJob(
   });
 
   let sent = 0;
+  let queued = 0;
   let failed = 0;
   let skipped = 0;
 
@@ -260,20 +264,17 @@ export async function runBirthdayJob(
   const yearStartG = toGregorian(today.jy, 1, 1);
   const yearStart = utcStamp(Date.UTC(yearStartG.gy, yearStartG.gm - 1, yearStartG.gd) - 3.5 * 3_600_000);
 
+  // یک خواندن دسته‌ای به‌جای lookup برای هر مشتری؛ کوپن‌های موجود بودجهٔ ارسال را مصرف نمی‌کنند.
+  const { results: knownCoupons } = await env.DB.prepare(
+    "SELECT DISTINCT user_id FROM coupons WHERE reason = 'birthday' AND created_at >= ?"
+  ).bind(yearStart).all<{ user_id: number }>();
+  const alreadyIssued = new Set((knownCoupons ?? []).map(row => row.user_id));
+  let attempts = 0;
   for (const user of birthdays) {
-    if (sent >= MAX_SMS_PER_RUN) break;
-
-    const existing = await env.DB.prepare(
-      `SELECT id FROM coupons WHERE user_id = ? AND reason = 'birthday' AND created_at >= ? LIMIT 1`
-    )
-      .bind(user.id, yearStart)
-      .first<{ id: number }>();
-
+    if (alreadyIssued.has(user.id)) { skipped += 1; continue; }
+    if (attempts >= MAX_SMS_PER_RUN) break;
+    attempts += 1;
     let coupon: CouponRow | null = null;
-    if (existing) {
-      skipped += 1;
-      continue;
-    }
 
     coupon = await createCoupon(env.DB, {
       userId: user.id,
@@ -301,6 +302,7 @@ export async function runBirthdayJob(
     });
 
     if (result.status === 'sent') sent += 1;
+    else if (result.status === 'pending') queued += 1;
     else if (result.status === 'failed') failed += 1;
     else skipped += 1;
   }
@@ -312,9 +314,10 @@ export async function runBirthdayJob(
     job: 'birthday',
     ok: true,
     sent,
+    queued,
     skipped,
     failed,
-    message: `${toPersianDigits(birthdays.length)} تولد امروز؛ ${toPersianDigits(sent)} پیامک و کد تخفیف ارسال شد.`,
+    message: `${toPersianDigits(birthdays.length)} تولد امروز؛ ${toPersianDigits(sent)} پیامک و کد تخفیف ارسال شد. مسیر جایگزین: ${toPersianDigits(queued)} در صف (نه تحویل به مشترک).`,
     details: { birthdays: birthdays.length },
   };
 }
@@ -365,6 +368,7 @@ export async function runWeatherJob(
     .all<{ id: number; name: string; phone: string; tier: string }>();
 
   let sent = 0;
+  let queued = 0;
   let failed = 0;
 
   for (const user of results ?? []) {
@@ -382,6 +386,7 @@ export async function runWeatherJob(
       }),
     });
     if (result.status === 'sent') sent += 1;
+    else if (result.status === 'pending') queued += 1;
     else if (result.status === 'failed') failed += 1;
   }
 
@@ -392,9 +397,10 @@ export async function runWeatherJob(
     job: 'weather',
     ok: true,
     sent,
+    queued,
     skipped: 0,
     failed,
-    message: `هوا: ${weather.label} ${toPersianDigits(weather.temp)}°C — ${toPersianDigits(sent)} پیامک ارسال شد.`,
+    message: `هوا: ${weather.label} ${toPersianDigits(weather.temp)}°C — ${toPersianDigits(sent)} پیامک ارسال شد. مسیر جایگزین: ${toPersianDigits(queued)} در صف (نه تحویل به مشترک).`,
     details: { weather: weather.label, temp: weather.temp },
   };
 }
@@ -404,14 +410,13 @@ export async function runWeatherJob(
  * ========================================================================== */
 
 export async function runMaintenanceJob(env: Bindings): Promise<JobResult> {
-  // هر کاربر ۲ کوئری D1 می‌خواهد؛ با سقف ۵۰ کوئریِ پلن رایگان، ۲۰ کاربر در هر اجرا
-  // امن است. چون این جاب هر ساعت اجرا می‌شود، در عمل همه‌ی مشتریان هر روز بازمحاسبه می‌شوند
-  // (میانگین هر مشتری بعد از هر فاکتور هم به‌صورت جداگانه به‌روز می‌شود).
+  // هر کاربر ۲ کوئری؛ ۱۴ کاربر برای رزرو بودجهٔ dispatcher در همان invocation.
+  // میانگین هر مشتری بعد از هر فاکتور نیز به‌صورت جداگانه به‌روز می‌شود.
   const { results: users } = await env.DB.prepare(
     `SELECT id FROM users
      WHERE last_visit_date IS NOT NULL
      ORDER BY last_visit_date DESC
-     LIMIT 20`
+     LIMIT 14`
   ).all<{ id: number }>();
 
   for (const user of users ?? []) {
@@ -485,7 +490,7 @@ export async function runMonthlyReport(
   );
 
   const { results: admins } = await env.DB.prepare(
-    `SELECT id, name, phone FROM users WHERE role = 'admin' AND is_active = 1 LIMIT 10`
+    `SELECT id, name, phone FROM users WHERE role = 'admin' AND is_active = 1 LIMIT 6`
   ).all<{ id: number; name: string; phone: string }>();
 
   const message =
@@ -497,6 +502,9 @@ export async function runMonthlyReport(
     `${settings.cafe_name}`;
 
   let sent = 0;
+  let queued = 0;
+  let failed = 0;
+  let skipped = 0;
   for (const admin of admins ?? []) {
     const result = await sendSms(env, settings, {
       userId: admin.id,
@@ -505,6 +513,9 @@ export async function runMonthlyReport(
       message,
     });
     if (result.status === 'sent') sent += 1;
+    else if (result.status === 'pending') queued += 1;
+    else if (result.status === 'failed') failed += 1;
+    else skipped += 1;
   }
 
   await markRan(env, 'monthly', dateKey);
@@ -513,9 +524,10 @@ export async function runMonthlyReport(
     job: 'monthly',
     ok: true,
     sent,
-    skipped: 0,
-    failed: 0,
-    message: `گزارش ماهانه برای ${toPersianDigits(sent)} ادمین ارسال شد.`,
+    queued,
+    skipped,
+    failed,
+    message: `گزارش ماهانه برای ${toPersianDigits(sent)} ادمین ارسال شد. مسیر جایگزین: ${toPersianDigits(queued)} در صف (نه تحویل به مشترک).`,
   };
 }
 

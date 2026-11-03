@@ -6,6 +6,8 @@
  *  همه‌ی مسیرها، API ها، صفحات و جاب‌های Cron در همین پروژه قرار دارند.
  * ============================================================================
  */
+import { enqueueFallback, fallbackHistory, loadFallbackConfig, processFallbackQueue, safeFallbackConfig, saveFallbackConfig, smsPanelActive } from './lib/fallback';
+import { adminFallbackPage } from './ui/fallback';
 import { Hono } from 'hono';
 
 import type { Context } from 'hono';
@@ -1142,7 +1144,7 @@ app.post('/api/auth/otp/request', async (c) => {
     return fail(c, result.error, result.code === 'RATE_LIMITED' ? 429 : 400, result.code);
   }
 
-  return ok(c, { sent: result.sent, ttl: result.ttl });
+  return ok(c, { sent: result.sent, queued: result.queued ?? false, ttl: result.ttl });
 });
 
 app.post('/api/auth/otp/verify', async (c) => {
@@ -1993,6 +1995,7 @@ app.post('/api/admin/sms/test', requireApiRole('admin'), async (c) => {
     message: `پیامک آزمایشی از باشگاه ${settings.cafe_name} ☕\nاگر این پیام را دریافت کردید، تنظیمات sms.ir درست است.`,
   });
 
+  if (result.status === 'pending') return ok(c, { status: 'pending', message: 'پیام آزمایشی در صف ارسال جایگزین برای ادمین قرار گرفت.' }, 202);
   if (result.status === 'sent') {
     return ok(c, { status: result.status, message: 'پیامک آزمایشی ارسال شد.' });
   }
@@ -2022,7 +2025,7 @@ app.get('/admin/export/backup.json', requirePageRole('admin'), async (c) => {
     ).all<Record<string, unknown>>(),
   ]);
 
-  const blocked = new Set(['sms_api_key', 'weather_api_key']);
+  const blocked = new Set(['sms_api_key', 'weather_api_key', 'sms_fallback_config']);
   const settings: Record<string, unknown> = {};
   for (const row of settingsRes.results ?? []) {
     if (blocked.has(row.key)) continue;
@@ -2055,6 +2058,43 @@ app.get('/admin/export/backup.json', requirePageRole('admin'), async (c) => {
       'Cache-Control': 'no-store',
     },
   });
+});
+
+app.get('/admin/fallback', requirePageRole('admin'), async (c) => {
+  return c.html(adminFallbackPage(c.get('settings'), c.get('user')!.name));
+});
+app.get('/api/admin/fallback', requireApiRole('admin'), async (c) => {
+  const config = await loadFallbackConfig(c.env);
+  return ok(c, { ...safeFallbackConfig(c.env, config), primaryActive: smsPanelActive(c.env, c.get('settings')) });
+});
+app.put('/api/admin/fallback', requireApiRole('admin'), async (c) => {
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return fail(c, 'JSON نامعتبر است.', 400, 'BAD_JSON'); }
+  try { await saveFallbackConfig(c.env, body); }
+  catch (e) { return fail(c, e instanceof Error ? e.message : 'ذخیره ناموفق بود.', 400, 'INVALID_FALLBACK_CONFIG'); }
+  await audit(c, 'fallback_settings_update', { targetType: 'settings', details: 'تنظیمات مسیر جایگزین پیامک تغییر کرد (بدون ثبت توکن).' });
+  return ok(c, { saved: true });
+});
+app.post('/api/admin/fallback/test', requireApiRole('admin'), async (c) => {
+  const { dbRateLimit } = await import('./lib/otp');
+  const limit = await dbRateLimit(c.env.DB, 'fallback:test:' + c.get('user')!.uid, 3, 60);
+  if (!limit || !limit.allowed) return fail(c, 'حداکثر ۳ تست در دقیقه.', 429, 'RATE_LIMITED');
+  let body: Record<string, unknown>;
+  try { body = await c.req.json(); } catch { return fail(c, 'JSON نامعتبر است.', 400, 'BAD_JSON'); }
+  if (!body || typeof body !== 'object' || (body.channel !== 'telegram' && body.channel !== 'bale')) return fail(c, 'کانال نامعتبر است.', 400, 'INVALID_CHANNEL');
+  const user = await findUserById(c.env.DB, c.get('user')!.uid);
+  if (!user) return fail(c, 'کاربر یافت نشد.', 404, 'NOT_FOUND');
+  try {
+    const ids = await enqueueFallback(c.env, { phone: user!.phone, userId: user!.id, type: 'admin',
+      message: 'تست اتصال ارسال جایگزین؛ این پیام به مشترک ارسال نشده است.' }, 'test', body.channel);
+    if (!ids.length) return fail(c, 'صف پر است؛ بعداً تلاش کنید.', 503, 'QUEUE_FULL');
+    await audit(c, 'fallback_test', { targetType: 'settings', details: 'تست مسیر جایگزین در صف قرار گرفت.' });
+    return ok(c, { ids, message: 'تست در صف قرار گرفت؛ نتیجه را در تاریخچه بررسی کنید.' }, 202);
+  } catch { return fail(c, 'مقصد، توکن و کلید رمزنگاری ذخیره‌شده را بررسی کنید.', 400, 'FALLBACK_CONFIG_ERROR'); }
+});
+app.get('/api/admin/fallback/history', requireApiRole('admin'), async (c) => {
+  const page = Math.min(10000, Math.max(1, toPositiveInt(c.req.query('page'), 1)));
+  return ok(c, await fallbackHistory(c.env, page));
 });
 
 app.get('/api/admin/settings', requireApiRole('admin'), async (c) => {
@@ -2144,6 +2184,10 @@ app.put('/api/admin/settings', requireApiRole('admin'), async (c) => {
       await saveSetting(c.env, 'tiers', { silver, gold, vip });
     }
 
+    if (body.sms_enabled !== undefined) {
+      if (![0, 1].includes(body.sms_enabled as number)) return fail(c, 'وضعیت پنل نامعتبر است.', 400, 'INVALID_SMS_ENABLED');
+      await saveSetting(c.env, 'sms_enabled', body.sms_enabled);
+    }
     if (body.sms_provider !== undefined) {
       await saveSetting(c.env, 'sms_provider', coerceSmsProvider(body.sms_provider));
     }
@@ -2242,7 +2286,7 @@ app.post('/api/admin/test-sms', requireApiRole('admin'), async (c) => {
   return ok(c, {
     status: result.status,
     message:
-      result.status === 'sent'
+      result.status === 'pending' ? 'پیام در صف ارسال جایگزین برای ادمین قرار گرفت؛ هنوز به مشترک ارسال نشده است.' : result.status === 'sent'
         ? `پیامک آزمایشی برای ${dbUser.phone} ارسال شد${
             settings.sms_provider === 'console' ? ' (حالت آزمایشی: فقط در لاگ ثبت شد)' : ''
           }.`
@@ -2619,13 +2663,17 @@ async function scheduled(
   env: Bindings,
   ctx: ExecutionContext
 ): Promise<void> {
+  if (controller.cron === '* * * * *') {
+    ctx.waitUntil(processFallbackQueue(env, true).catch(() => console.error('fallback cron failed')));
+    if (new Date(controller.scheduledTime).getUTCMinutes() !== 0) return;
+  }
   const settings = await loadSettings(env, true);
   console.log(`[cron] triggered: ${controller.cron}`);
 
   ctx.waitUntil(
     (async () => {
       try {
-        const results = await dispatchCron(env, settings, controller.cron);
+        const results = await dispatchCron(env, settings, controller.cron === '* * * * *' ? '0 * * * *' : controller.cron);
         for (const result of results) {
           console.log(`[cron] ${result.job} ok=${result.ok} sent=${result.sent} :: ${result.message}`);
         }
@@ -2641,6 +2689,12 @@ async function scheduled(
  * ========================================================================== */
 
 export default {
-  fetch: app.fetch,
+  async fetch(request, env, ctx) {
+    const response = await app.fetch(request, env, ctx);
+    if (['POST', 'PUT', 'PATCH'].includes(request.method)) {
+      ctx.waitUntil(processFallbackQueue(env).catch(() => console.error('fallback dispatcher failed')));
+    }
+    return response;
+  },
   scheduled,
 } satisfies ExportedHandler<Bindings>;

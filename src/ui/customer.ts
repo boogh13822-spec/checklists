@@ -176,7 +176,7 @@ export function customerLoginPage(
         codeInput.value = '';
         codeInput.focus();
         showMessage(
-          data && data.sent
+          data && data.queued ? 'درخواست کد برای ارسال دستی به پرسنل ارجاع شد؛ با پرسنل تماس بگیرید. اعتبار کد فقط ۲ دقیقه است.' : data && data.sent
             ? 'کد ورود پیامک شد. اگر پیامک را نمی‌بینید، پوشه پیامک‌های تبلیغاتی را هم ببینید.'
             : 'اگر این شماره در باشگاه ثبت شده باشد، کد ورود برایتان پیامک می‌شود.'
         );

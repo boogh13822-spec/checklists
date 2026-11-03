@@ -12,7 +12,8 @@
  *  برای sms.ir علاوه بر کلید API، «شماره خط» (LineNumber) هم لازم است.
  */
 import type { AppSettings, Bindings } from '../types';
-import { renderTemplate, toPersianDigits, sqliteToMs } from './utils';
+import { enqueueFallback, smsPanelActive } from './fallback';
+import { renderTemplate, toPersianDigits, sqliteToMs, normalizePhone } from './utils';
 
 export type SmsType =
   | 'welcome'
@@ -30,10 +31,12 @@ export type SendSmsParams = {
   phone: string;
   message: string;
   type: SmsType;
+  /** Absolute deadline for short-lived content (OTP). */
+  expiresAt?: number;
 };
 
 export type SendSmsResult = {
-  status: 'sent' | 'failed' | 'skipped';
+  status: 'sent' | 'failed' | 'skipped' | 'pending';
   messageId?: string;
   error?: string;
 };
@@ -41,19 +44,37 @@ export type SendSmsResult = {
 const SMS_MAX_LENGTH = 480;
 
 /** پاک‌سازی پیام: حذف کاراکترهای کنترلی و محدودسازی طول */
-function sanitizeMessage(message: string): string {
+function sanitizeMessage(message: string, maxLength = SMS_MAX_LENGTH): string {
   return String(message ?? '')
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
     .trim()
-    .slice(0, SMS_MAX_LENGTH);
+    .slice(0, maxLength);
 }
 
-/** ثبت لاگ پیامک در دیتابیس */
-async function logSms(
+/** Only an allowlisted internal code may be reflected; never echo raw errors/tokens. */
+function queueErrorMessage(error: unknown): string {
+  return error instanceof Error && error.message === 'MESSAGE_TOO_LONG'
+    ? 'متن بیش از ۲۰۰۰ کاراکتر است؛ برای جلوگیری از ارسال ناقص، پیام ارسال نشد.'
+    : 'ثبت در صف جایگزین ناموفق بود؛ تنظیمات، کلید و ظرفیت صف را بررسی کنید.';
+}
+
+/** ارجاع شکست مسیر اصلی به صف جایگزین و ثبت نتیجه (pending هرگز به معنی تحویل به مشترک نیست). */
+async function finalizeSmsResult(
   env: Bindings,
   params: SendSmsParams,
   result: SendSmsResult
 ): Promise<void> {
+  if (result.status === 'failed' && /^09\d{9}$/.test(normalizePhone(params.phone))) {
+    try {
+      const ids = await enqueueFallback(env, { ...params, message: sanitizeMessage(params.message, Infinity) }, 'primary_failed');
+      if (ids.length) {
+        result.status = 'pending';
+        result.error = 'ارسال اصلی ناموفق؛ در صف ارسال جایگزین برای ادمین قرار گرفت. ' + (result.error ?? '');
+      }
+    } catch (error) {
+      result.error = (result.error ?? '') + ' | FALLBACK_QUEUE_FAILED: ' + queueErrorMessage(error);
+    }
+  }
   try {
     await env.DB.prepare(
       `INSERT INTO sms_logs (user_id, type, status, message, provider_id, error)
@@ -63,7 +84,7 @@ async function logSms(
         params.userId,
         params.type,
         result.status,
-        sanitizeMessage(params.message),
+        params.type === 'otp' ? '[کد ورود محرمانه — ذخیره نمی‌شود]' : sanitizeMessage(params.message),
         result.messageId ?? null,
         result.error ?? null
       )
@@ -75,11 +96,7 @@ async function logSms(
 
 /** تبدیل شماره به شکل استاندارد 09xxxxxxxxx (ورودی سرویس‌ها) */
 export function normalizeSmsMobile(raw: string): string {
-  let digits = String(raw ?? '').replace(/\D/g, '');
-  if (digits.startsWith('0098')) digits = digits.slice(4);
-  else if (digits.startsWith('98') && digits.length === 12) digits = digits.slice(2);
-  if (digits.length === 10 && digits.startsWith('9')) digits = `0${digits}`;
-  return digits;
+  return normalizePhone(raw);
 }
 
 /** پیام خطای قابل‌فهم برای نبود تنظیمات هر ارائه‌دهنده */
@@ -235,7 +252,7 @@ export async function sendSms(
   const message = sanitizeMessage(params.message);
   if (!message) {
     const result: SendSmsResult = { status: 'skipped', error: 'متن پیامک خالی است' };
-    await logSms(env, params, result);
+    await finalizeSmsResult(env, params, result);
     return result;
   }
 
@@ -243,15 +260,35 @@ export async function sendSms(
   const mobile = normalizeSmsMobile(params.phone);
   if (!/^09\d{9}$/.test(mobile)) {
     const result: SendSmsResult = { status: 'failed', error: 'شماره موبایل گیرنده نامعتبر است.' };
-    await logSms(env, params, result);
+    await finalizeSmsResult(env, params, result);
     return result;
+  }
+
+  if (!smsPanelActive(env, settings)) {
+    try {
+      const ids = await enqueueFallback(env, { ...params, phone: mobile, message: sanitizeMessage(params.message, Infinity) }, 'inactive');
+      if (ids.length) {
+        const result: SendSmsResult = { status: 'pending', error: 'در صف ارسال جایگزین برای ادمین؛ هنوز به مشترک ارسال نشده است.' };
+        await finalizeSmsResult(env, params, result);
+        return result;
+      }
+    } catch (error) {
+      const result: SendSmsResult = { status: 'skipped', error: 'FALLBACK_QUEUE_FAILED: ' + queueErrorMessage(error) };
+      await finalizeSmsResult(env, params, result);
+      return result;
+    }
+    if (settings.sms_enabled === 0) {
+      const result: SendSmsResult = { status: 'skipped', error: 'پنل پیامکی و مسیر جایگزین غیرفعال هستند.' };
+      await finalizeSmsResult(env, params, result);
+      return result;
+    }
   }
 
   // حالت نمایشی/توسعه: پیام فقط در لاگ ثبت می‌شود
   if (provider === 'console') {
-    console.log(`[SMS:console] to=${mobile} type=${params.type} :: ${message}`);
+    console.log(`[SMS:console] to=${mobile} type=${params.type} :: ${params.type === 'otp' ? '[REDACTED OTP]' : message}`);
     const result: SendSmsResult = { status: 'sent' };
-    await logSms(env, params, result);
+    await finalizeSmsResult(env, params, result);
     return result;
   }
 
@@ -261,7 +298,7 @@ export async function sendSms(
 
   if (!apiKey) {
     const result: SendSmsResult = { status: 'failed', error: missingConfigMessage(provider) };
-    await logSms(env, params, result);
+    await finalizeSmsResult(env, params, result);
     return result;
   }
 
@@ -272,7 +309,7 @@ export async function sendSms(
         status: 'failed',
         error: 'شماره خط فرستنده (LineNumber) در sms.ir تنظیم نشده است.',
       };
-      await logSms(env, params, result);
+      await finalizeSmsResult(env, params, result);
       return result;
     }
     outcome = await sendViaSmsIr(apiKey, sender, mobile, message);
@@ -284,7 +321,7 @@ export async function sendSms(
     ? { status: 'sent', messageId: outcome.messageId }
     : { status: 'failed', error: outcome.error };
 
-  await logSms(env, params, result);
+  await finalizeSmsResult(env, params, result);
   return result;
 }
 
@@ -354,7 +391,7 @@ export async function wasSmsSentRecently(
 ): Promise<boolean> {
   const row = await env.DB.prepare(
     `SELECT id FROM sms_logs
-     WHERE user_id = ? AND type = ? AND status = 'sent'
+     WHERE user_id = ? AND type = ? AND status IN ('sent','pending')
        AND sent_at >= datetime('now', ?)
      LIMIT 1`
   )

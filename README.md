@@ -450,19 +450,33 @@ npx wrangler d1 export cafe-club-db --remote --output backup-$(date +%F).sql
 
 راهنمای کامل (شامل حالت بدون خط فرمان، عیب‌یابی و کارهایی که نباید کرد): **[DEPLOY-FA.md](./DEPLOY-FA.md)**
 
+## 📬 ارسال جایگزین پیامک (تلگرام و بله)
+
+در **تنظیمات ← ارسال جایگزین پیامک (Fallback)** می‌توانید یک یا هر دو پیام‌رسان را انتخاب کنید.
+در نبود پنل فعال یا شکست ارسال اصلی، پیام شامل شمارهٔ مشترک، متن کامل، زمان شمسی و شناسهٔ کاربر
+در صف پایدار D1 قرار می‌گیرد و در پس‌زمینه برای ادمین ارسال می‌شود؛ نه مستقیماً برای مشترک.
+توکن‌ها و محتوای صف رمز می‌شوند. OTP نیز طبق تنظیم این نسخه پوشش داده می‌شود؛ فقط مقصد خصوصی انتخاب کنید.
+تاریخچهٔ اختصاصی: `/admin/fallback`.
+
+**راه‌اندازی Secret رمزنگاری، مایگریشن، نمونه‌های تلگرام/بله، تست و محدودیت‌های نرخ/OTP:**
+[FALLBACK-FA.md](./FALLBACK-FA.md). انتشار کد به‌تنهایی برای فعال‌کردن این قابلیت کافی نیست.
+
 ## 🧪 دستورهای مفید
 
 ```bash
 npm run dev              # اجرای محلی روی 0.0.0.0:8787
 npm run typecheck        # بررسی تایپ‌ها
 npm run db:init:local    # ساخت/به‌روزرسانی D1 محلی
-npm run db:init:remote   # اجرای schema.sql روی D1 ابری
+npm run db:init:remote   # فقط دیتابیس تازه؛ برای دیتابیس موجود migrate --remote
 npm run deploy           # انتشار Worker
-npm run build:single     # ساخت تک‌فایل dist/worker.js
+npm run build:single     # ساخت تک‌فایل single-file/worker.js
 npm run hash-password -- 'MyPassword'   # ساخت هش برای seed
 
 npm run test:ui          # بررسی صفحات، اسکریپت‌ها و منطق پرداخت (نیاز به سرور در حال اجرا)
 npm run test:e2e         # تست کامل جریان مالی روی D1 محلی (فاکتور، شیفت، ابطال، اصلاح، دسترسی)
+npm run test:fallback    # تست SQLite + HTTP شبیه‌سازی‌شده، بدون توکن واقعی
+npm run test:fallback:api # تست Worker/D1 آزمایشی محلی؛ راهنمای FALLBACK-FA.md
+npm run fallback:setup   # ساخت یک‌باره Secret رمزنگاری Fallback (بدون چرخش کلید موجود)
 bash scripts/migrate.sh  # مایگریشن تکرارپذیر (بی‌خطر برای داده‌های موجود)
 ```
 

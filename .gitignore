@@ -5,3 +5,5 @@ dist/
 .DS_Store
 *.log
 single-file/
+
+backup-*.sql

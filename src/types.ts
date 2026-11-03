@@ -9,6 +9,10 @@ export type Bindings = {
   DB: D1Database;
   /** کلید امضای JWT — باید به صورت Secret تنظیم شود */
   JWT_SECRET: string;
+  /** AES-256-GCM key: 32 random bytes encoded as Base64 (Worker Secret). */
+  FALLBACK_ENCRYPTION_KEY?: string;
+  TELEGRAM_BOT_TOKEN?: string;
+  BALE_BOT_TOKEN?: string;
   /** منطقه زمانی (پیش‌فرض Asia/Tehran) */
   TZ_NAME?: string;
   /** طول عمر نشست ورود به ساعت (پیش‌فرض ۱۲، حداکثر ۱۶۸) */
@@ -210,6 +214,7 @@ export type AppSettings = {
   cafe_name: string;
   cafe_city: string;
   weather_api_key: string;
+  sms_enabled: number;
   sms_provider: 'console' | 'kavenegar' | 'smsir';
   sms_api_key: string;
   sms_sender: string;

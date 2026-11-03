@@ -221,6 +221,13 @@ apply "CREATE INDEX IF NOT EXISTS idx_invoices_shift ON invoices (shift_id)" \
 apply "CREATE INDEX IF NOT EXISTS idx_invoices_staff_day ON invoices (registered_by, created_at)" \
   "ایندکس صندوق‌دار و تاریخ"
 
+# Additive fallback outbox; same SQL also included in the fresh schema.
+if out="$("${WRANGLER[@]}" d1 execute "$DB_NAME" "$MODE" --file=migrations/0005_sms_fallback.sql 2>&1)"; then
+  APPLIED=$((APPLIED + 1)); ok "صف پایدار ارسال جایگزین پیامک"
+else
+  FAILED=$((FAILED + 1)); printf '%s\n' "$out"; warn "ساخت صف Fallback ناموفق بود"
+fi
+
 # --- ۵) پر کردن داده‌های قدیمی ------------------------------------------------
 apply "UPDATE users SET lifetime_points = points WHERE lifetime_points = 0 AND points > 0" \
   "هم‌تراز کردن lifetime_points با امتیاز فعلی مشتریان قدیمی"

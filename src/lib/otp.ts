@@ -83,7 +83,7 @@ function safeEqual(a: string, b: string): boolean {
 }
 
 export type OtpRequestResult =
-  | { ok: true; ttl: number; sent: boolean }
+  | { ok: true; ttl: number; sent: boolean; queued?: boolean }
   | { ok: false; error: string; code: string; retryAfter?: number };
 
 /** درخواست کد ورود برای یک شماره */
@@ -150,14 +150,20 @@ export async function requestOtpCode(
     .bind(phone, codeHash, expiresAt)
     .run();
 
-  await sendSms(env, settings, {
+  const delivery = await sendSms(env, settings, {
+    expiresAt: Date.parse(expiresAt.replace(" ", "T") + "Z"),
     userId: user.id,
     phone,
     type: 'otp',
     message: `کد ورود شما به باشگاه ${settings.cafe_name}: ${code}\nاین کد فقط ۲ دقیقه اعتبار دارد؛ آن را با کسی به اشتراک نگذارید.`,
   });
 
-  return { ok: true, ttl: OTP_TTL_SECONDS, sent: true };
+  if (delivery.status === 'failed' || delivery.status === 'skipped') {
+    await env.DB.prepare('UPDATE otp_codes SET used_at = ? WHERE phone = ? AND code_hash = ? AND used_at IS NULL')
+      .bind(utcStamp(Date.now()), phone, codeHash).run();
+    return { ok: false, code: 'OTP_SEND_FAILED', error: 'ارسال کد ورود ممکن نشد؛ با پرسنل کافه تماس بگیرید.' };
+  }
+  return { ok: true, ttl: OTP_TTL_SECONDS, sent: delivery.status === 'sent' && settings.sms_provider !== 'console', queued: delivery.status === 'pending' };
 }
 
 export type OtpVerifyResult =

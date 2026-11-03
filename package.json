@@ -17,7 +17,10 @@
     "build:single": "esbuild src/index.ts --bundle --format=esm --platform=neutral --conditions=workerd,worker,browser --target=es2022 --outfile=single-file/worker.js --log-level=warning",
     "preview": "wrangler dev --ip 0.0.0.0 --port 8787",
     "test:ui": "node scripts/test-ui.mjs",
-    "test:e2e": "node scripts/test-e2e.mjs"
+    "test:e2e": "node scripts/test-e2e.mjs",
+    "test:fallback": "node scripts/test-fallback.mjs",
+    "test:fallback:api": "node scripts/test-fallback-api.mjs",
+    "fallback:setup": "bash scripts/setup-fallback.sh"
   },
   "dependencies": {
     "hono": "^4.13.13"
