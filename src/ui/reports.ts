@@ -15,6 +15,17 @@ import { appShell, emptyState, icon, pageHeader } from './layout';
 
 /** برچسب فارسی نوع اقدام‌ها */
 const ACTION_LABELS: Record<string, { label: string; tone: string; iconName: string }> = {
+  admin_report_failed: { label: 'گزارش ادمین در صف ثبت نشد', tone: 'danger', iconName: 'warning' },
+  invoice_correct: { label: 'اصلاح فاکتور', tone: 'warning', iconName: 'receipt' },
+  fallback_settings_update: { label: 'تنظیم پیام‌های ادمین', tone: 'info', iconName: 'settings' },
+  fallback_test: { label: 'تست اتصال پیام‌رسان', tone: 'muted', iconName: 'chat' },
+  fallback_retry: { label: 'تلاش مجدد پیام ادمین', tone: 'warning', iconName: 'chat' },
+  shift_open: { label: 'باز شدن صندوق', tone: 'success', iconName: 'receipt' },
+  shift_close: { label: 'بستن صندوق', tone: 'info', iconName: 'receipt' },
+  cash_in: { label: 'ورود نقد به صندوق', tone: 'success', iconName: 'receipt' },
+  cash_out: { label: 'خروج نقد از صندوق', tone: 'warning', iconName: 'receipt' },
+  password_change: { label: 'تغییر رمز عبور', tone: 'warning', iconName: 'shield' },
+  staff_password_reset: { label: 'بازنشانی رمز کارمند', tone: 'warning', iconName: 'shield' },
   invoice_void: { label: 'ابطال فاکتور', tone: 'danger', iconName: 'close' },
   customer_delete: { label: 'حذف مشتری', tone: 'danger', iconName: 'trash' },
   customer_update: { label: 'ویرایش مشتری', tone: 'info', iconName: 'users' },

@@ -45,7 +45,7 @@ export function staffPage(
     requireShift?: boolean;
   } = {}
 ): string {
-  const categories = Array.from(new Set(menu.map((item) => item.category ?? 'سایر')));
+  const categories = Array.from(new Set(menu.map((item) => item.category?.trim() || 'سایر')));
   // «پرکاربرد» از سابقهٔ فروش می‌آید؛ روی نصب تازه که سابقه‌ای نیست،
   // آیتم‌های اول منو نمایش داده می‌شوند تا دسترسی سریع همیشه در دسترس باشد.
   const popularFromHistory = (options.popular ?? []).filter((name) =>
@@ -223,7 +223,7 @@ export function staffPage(
             }
 
             <div class="flex gap-1.5 overflow-x-auto no-scrollbar pb-1" id="category-tabs">
-              <button type="button" data-cat="__all__" class="cat-tab btn btn-sm btn-primary shrink-0">همه</button>
+              <button type="button" data-cat="__popular__" class="cat-tab btn btn-sm btn-primary shrink-0">شروع</button>
               ${categories
                 .map(
                   (cat) =>
@@ -232,7 +232,19 @@ export function staffPage(
                 .join('')}
             </div>
 
+            <p id="menu-results" class="hint" aria-live="polite">یک دسته را انتخاب کنید یا آیتم را دستی وارد کنید.</p>
             <div id="menu-grid" class="grid grid-cols-2 sm:grid-cols-3 gap-2.5"></div>
+            <button type="button" id="menu-more" class="btn btn-ghost btn-sm hidden">نمایش موارد بیشتر</button>
+            <div class="rounded-2xl border border-gold/20 p-3 space-y-2">
+              <h3 class="text-sm font-semibold">افزودن آیتم دستی</h3>
+              <div class="grid sm:grid-cols-[2fr_1fr_80px_auto] gap-2 items-end">
+                <label class="text-xs">نام آیتم<input id="custom-name" class="field mt-1" maxlength="60" placeholder="مثلاً قهوه ویژه" autocomplete="off" /></label>
+                <label class="text-xs">قیمت واحد (تومان)<input id="custom-price" type="text" inputmode="numeric" dir="ltr" class="field mt-1" placeholder="مثلاً ۷۵۰۰۰" /></label>
+                <label class="text-xs">تعداد<input id="custom-qty" type="text" inputmode="numeric" dir="ltr" class="field mt-1" value="1" /></label>
+                <button id="custom-add" type="button" class="btn btn-primary btn-sm">افزودن</button>
+              </div>
+              <p class="hint">آیتم دستی فقط در همین فاکتور ثبت می‌شود؛ منوی اصلی تغییر نمی‌کند. Enter برای افزودن.</p>
+            </div>
 
             <div>
               <div class="flex items-center justify-between mb-2">
@@ -432,14 +444,17 @@ export function staffPage(
     var POINTS_UNIT = ${Number(settings.currency_unit) || 1000};
     var POINTS_RATIO = ${Number(settings.points_per_currency) || 1};
     var POINTS_MODE = ${JSON.stringify(settings.points_mode)};
+    var INVOICE_POINTS = ${Number(settings.invoice_points) || 0};
     var VISIT_POINTS = ${Number(settings.visit_points) || 0};
     var VISIT_MIN_AMOUNT = ${Number(settings.visit_min_amount) || 0};
     var TIER_LABELS = { bronze: 'برنزی', silver: 'نقره‌ای', gold: 'طلایی', vip: 'الماسی' };
     var TIER_CLASSES = { bronze: 'tone-warning', silver: 'tone-muted', gold: 'tone-warning', vip: 'tone-info' };
 
     var customer = null;
-    var selected = {};
-    var activeCategory = '__all__';
+    var selected = Object.create(null);
+    var cartItems = Object.create(null);
+    var menuVisibleLimit = 40;
+    var activeCategory = '__popular__';
     var appliedCoupon = null;
     var requestId = null;
     var appliedDiscount = 0;
@@ -470,15 +485,20 @@ export function staffPage(
       return { cash: 'نقدی', card: 'کارت‌خوان', online: 'آنلاین', mixed: 'ترکیبی' }[method] || '—';
     }
 
+    function latinDigits(value) {
+      return String(value || '').replace(/[۰-۹]/g, function(d) { return String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)); })
+        .replace(/[٠-٩]/g, function(d) { return String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)); });
+    }
+    function cartKey(item) { return JSON.stringify([item.name, item.price]); }
     function parseAmount(value) {
-      var digits = String(value || '').replace(/[^0-9]/g, '');
+      var digits = latinDigits(value).replace(/[^0-9]/g, '');
       return Number(digits) || 0;
     }
 
     function subtotal() {
       var total = 0;
       Object.keys(selected).forEach(function (name) {
-        var item = MENU.find(function (m) { return m.name === name; });
+        var item = cartItems[name];
         if (item) total += item.price * selected[name];
       });
       return total;
@@ -499,21 +519,24 @@ export function staffPage(
 
     function visibleMenu() {
       return MENU.filter(function (item) {
-        var inCategory = activeCategory === '__all__' || (item.category || 'سایر') === activeCategory;
+        var inCategory = (activeCategory === '__popular__' ? !!searchQuery.trim() : (item.category || 'سایر') === activeCategory);
         return inCategory && matchesSearch(item, searchQuery);
       });
     }
 
     function renderMenu() {
-      var items = visibleMenu();
+      var allItems = visibleMenu();
+      var items = allItems.slice(0, menuVisibleLimit);
+      $('#menu-more').classList.toggle('hidden', allItems.length <= menuVisibleLimit);
+      $('#menu-results').textContent = allItems.length ? fa(allItems.length) + ' محصول؛ نمایش ' + fa(items.length) + ' مورد' : (searchQuery || activeCategory !== '__popular__' ? 'محصولی پیدا نشد؛ می‌توانید دستی اضافه کنید.' : 'برای دیدن محصولات دسته را انتخاب کنید؛ یا از پرفروش‌ها و ورود دستی استفاده کنید.');
       if (items.length === 0) {
         menuGrid.innerHTML = '<div class="col-span-full text-center py-8 text-[11.5px] text-cream/40">' +
-          'محصولی با این جستجو پیدا نشد.</div>';
+          (activeCategory === '__popular__' && !searchQuery ? '' : 'آیتم را از بخش ورود دستی اضافه کنید.') + '</div>';
         return;
       }
       menuGrid.innerHTML = items.map(function (item) {
-        var qty = selected[item.name] || 0;
-        return '<button type="button" data-item="' + escapeHtml(item.name) + '" class="relative text-right rounded-2xl border p-3 transition ' +
+        var qty = selected[cartKey(item)] || 0;
+        return '<button type="button" data-menu-index="' + MENU.indexOf(item) + '" class="relative text-right rounded-2xl border p-3 transition ' +
           (qty > 0 ? 'border-gold/50 bg-gold/10' : 'border-white/10 bg-white/[0.03] hover:border-white/20 hover:bg-white/[0.06]') + '">' +
           (qty > 0 ? '<span class="absolute -top-1.5 -left-1.5 w-5 h-5 rounded-full gold-bg text-coffee-950 text-[10px] font-extrabold flex items-center justify-center">' + fa(qty) + '</span>' : '') +
           '<div class="text-[12.5px] font-semibold mb-1.5">' + escapeHtml(item.name) + '</div>' +
@@ -528,10 +551,10 @@ export function staffPage(
       $('#selected-count').textContent = fa(itemCount()) + ' آیتم';
 
       selectedList.innerHTML = keys.map(function (name) {
-        var item = MENU.find(function (m) { return m.name === name; });
+        var item = cartItems[name];
         if (!item) return '';
         return '<div class="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2">' +
-          '<div class="flex-1 min-w-0"><div class="text-[12px] font-medium truncate">' + escapeHtml(name) + '</div>' +
+          '<div class="flex-1 min-w-0"><div class="text-[12px] font-medium truncate">' + escapeHtml(item.name) + '</div>' +
           '<div class="text-[10px] text-cream/40">' + moneyFa(item.price) + ' × ' + fa(selected[name]) + '</div></div>' +
           '<div class="flex items-center gap-1">' +
             '<button type="button" data-dec="' + escapeHtml(name) + '" class="w-7 h-7 rounded-lg bg-white/5 hover:bg-white/10 text-cream/70 flex items-center justify-center text-sm">−</button>' +
@@ -545,13 +568,35 @@ export function staffPage(
 
     /** افزودن یک آیتم (مشترک بین کلیک و میان‌بر صفحه‌کلید) */
     function addItem(name) {
-      if (!name) return;
-      selected[name] = (selected[name] || 0) + 1;
-      resetCoupon();
-      renderMenu();
-      renderSelected();
-      refreshTotals();
+      var item = MENU.find(function(m) { return m.name === name; });
+      if (item) addCartItem(item, 1);
     }
+    function addCartItem(item, qty) {
+      var key = cartKey(item);
+      if (!selected[key] && Object.keys(selected).length >= 50) { toast('حداکثر ۵۰ ردیف در هر فاکتور.', 'error'); return false; }
+      if ((selected[key] || 0) + qty > 99) { toast('حداکثر تعداد هر ردیف ۹۹ است.', 'error'); return false; }
+      cartItems[key] = {name:item.name,price:item.price};
+      selected[key] = (selected[key] || 0) + qty;
+      resetCoupon(); renderMenu(); renderSelected(); refreshTotals();
+      return true;
+    }
+    function addCustomItem() {
+      var name = $('#custom-name').value.replace(/[<>]/g, '').trim();
+      var priceText = latinDigits($('#custom-price').value).replace(/[,،٬\\s]/g, '');
+      var qtyText = latinDigits($('#custom-qty').value).trim();
+      var price = Number(priceText), qty = Number(qtyText);
+      if (!name || name.length > 60) { toast('نام آیتم را وارد کنید (حداکثر ۶۰ کاراکتر).','error'); return; }
+      if (!priceText || !Number.isSafeInteger(price) || price <= 0 || price > 1000000000) { toast('قیمت باید عدد صحیح مثبت به تومان باشد.','error'); return; }
+      if (!Number.isSafeInteger(qty) || qty < 1 || qty > 99) { toast('تعداد باید عدد صحیح بین ۱ تا ۹۹ باشد.','error'); return; }
+      if (addCartItem({name:name,price:price},qty)) {
+        $('#custom-name').value=''; $('#custom-price').value=''; $('#custom-qty').value='1'; $('#custom-name').focus();
+      }
+    }
+    $('#custom-add').addEventListener('click', addCustomItem);
+    ['custom-name','custom-price','custom-qty'].forEach(function(id) {
+      document.getElementById(id).addEventListener('keydown',function(e) { if(e.key==='Enter'){e.preventDefault();addCustomItem();} });
+    });
+    $('#menu-more').addEventListener('click',function(){menuVisibleLimit+=40;renderMenu();});
 
     function currentTotal() {
       return refreshTotals().total;
@@ -673,7 +718,7 @@ export function staffPage(
     function refreshTotals() {
       var sub = subtotal();
       var manual = parseAmount(manualInput.value);
-      var base = sub > 0 ? sub : manual;
+      var base = itemCount() > 0 ? sub : manual;
       var discount = 0;
 
       if (appliedCoupon && appliedCoupon.code) {
@@ -685,7 +730,9 @@ export function staffPage(
       var total = Math.max(0, base - discount);
       var points = 0;
       var note = '';
-      if (POINTS_MODE === 'visit') {
+      if (POINTS_MODE === 'invoice') {
+        points = total > 0 ? INVOICE_POINTS : 0; note = 'امتیاز ثابت هر فاکتور؛ مستقل از مبلغ';
+      } else if (POINTS_MODE === 'visit') {
         if (total < VISIT_MIN_AMOUNT) {
           points = 0;
           note = 'کمتر از حداقل مبلغ برای امتیاز روزانه';
@@ -707,8 +754,8 @@ export function staffPage(
       $('#sum-discount').textContent = moneyFa(discount) + ' تومان';
       $('#sum-total').textContent = moneyFa(total) + ' تومان';
       $('#sum-points').textContent = '+' + fa(points);
-      manualInput.disabled = sub > 0;
-      if (sub > 0) manualInput.value = '';
+      manualInput.disabled = itemCount() > 0;
+      if (itemCount() > 0) manualInput.value = '';
 
       // در حالت‌های تک‌روشی، مبلغ پرداخت با تغییر فاکتور هم‌تراز می‌شود
       if (payMode !== 'mixed') {
@@ -819,7 +866,7 @@ export function staffPage(
     }
 
     function resetForm() {
-      selected = {};
+      selected = Object.create(null); cartItems = Object.create(null);
       appliedCoupon = null;
       appliedDiscount = 0;
       searchQuery = '';
@@ -857,6 +904,7 @@ export function staffPage(
       var btn = event.target.closest('[data-cat]');
       if (!btn) return;
       activeCategory = btn.dataset.cat;
+      menuVisibleLimit = 40; searchQuery = ''; $('#menu-search').value = '';
       $$('.cat-tab').forEach(function (tab) {
         tab.className = 'cat-tab btn btn-sm shrink-0 ' + (tab.dataset.cat === activeCategory ? 'btn-primary' : 'btn-ghost');
       });
@@ -866,7 +914,7 @@ export function staffPage(
     var menuSearch = $('#menu-search');
     if (menuSearch) {
       menuSearch.addEventListener('input', function () {
-        searchQuery = menuSearch.value;
+        searchQuery = menuSearch.value; menuVisibleLimit = 40;
         renderMenu();
       });
       menuSearch.addEventListener('keydown', function (event) {
@@ -874,7 +922,7 @@ export function staffPage(
           event.preventDefault();
           var first = visibleMenu()[0];
           if (first) {
-            addItem(first.name);
+            addCartItem(first, 1);
             menuSearch.value = '';
             searchQuery = '';
             renderMenu();
@@ -957,21 +1005,17 @@ export function staffPage(
     }
 
     menuGrid.addEventListener('click', function (event) {
-      var btn = event.target.closest('[data-item]');
+      var btn = event.target.closest('[data-menu-index]');
       if (!btn) return;
-      var name = btn.dataset.item;
-      selected[name] = (selected[name] || 0) + 1;
-      resetCoupon();
-      renderMenu();
-      renderSelected();
-      refreshTotals();
+      var item = MENU[Number(btn.dataset.menuIndex)];
+      if (item) addCartItem(item, 1);
     });
 
     selectedList.addEventListener('click', function (event) {
       var inc = event.target.closest('[data-inc]');
       var dec = event.target.closest('[data-dec]');
       var rm = event.target.closest('[data-rm]');
-      if (inc) { selected[inc.dataset.inc] += 1; }
+      if (inc) { if (selected[inc.dataset.inc] >= 99) { toast('حداکثر تعداد ۹۹ است.', 'error'); return; } selected[inc.dataset.inc] += 1; }
       else if (dec) {
         var name = dec.dataset.dec;
         selected[name] -= 1;
@@ -986,7 +1030,7 @@ export function staffPage(
     });
 
     $('#clear-items').addEventListener('click', function () {
-      selected = {};
+      selected = Object.create(null); cartItems = Object.create(null);
       resetCoupon();
       renderMenu();
       renderSelected();
@@ -994,7 +1038,7 @@ export function staffPage(
     });
 
     manualInput.addEventListener('input', function () {
-      var digits = manualInput.value.replace(/[^0-9]/g, '');
+      var digits = latinDigits(manualInput.value).replace(/[^0-9]/g, '');
       manualInput.value = digits ? money(digits) : '';
       resetCoupon();
       refreshTotals();
@@ -1059,8 +1103,8 @@ export function staffPage(
       }
 
       var items = Object.keys(selected).map(function (name) {
-        var item = MENU.find(function (m) { return m.name === name; });
-        return { name: name, qty: selected[name], price: item ? item.price : 0 };
+        var item = cartItems[name];
+        return { name: item.name, qty: selected[name], price: item.price };
       });
       var btn = $('#submit-invoice');
       submitting = true;

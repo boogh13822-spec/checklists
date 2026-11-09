@@ -6,9 +6,10 @@
  *  همه‌ی مسیرها، API ها، صفحات و جاب‌های Cron در همین پروژه قرار دارند.
  * ============================================================================
  */
-import { enqueueFallback, fallbackHistory, loadFallbackConfig, processFallbackQueue, safeFallbackConfig, saveFallbackConfig, smsPanelActive } from './lib/fallback';
+import { drainFallbackQueue, retryFallbackJob, enqueueFallback, fallbackHistory, loadFallbackConfig, processFallbackQueue, safeFallbackConfig, saveFallbackConfig, smsPanelActive } from './lib/fallback';
 import { adminFallbackPage } from './ui/fallback';
 import { Hono } from 'hono';
+import { notifyAdminAction, notifyAdminInvoice } from './lib/admin-notifications';
 
 import type { Context } from 'hono';
 import type { AppEnv, Bindings, InvoiceItem, InvoiceRow, Role } from './types';
@@ -54,11 +55,12 @@ import {
   listSmsLogs,
   listStaff,
   recordInvoice,
+  sendInvoiceReceipt,
   redeemPointsForCoupon,
   registerCustomer,
   voidInvoice,
 } from './lib/db';
-import { coerceSmsProvider, loadMenuItems, loadSettings, saveSetting } from './lib/settings';
+import { coerceSmsProvider, loadMenuItems, loadSettings, saveSetting, saveSettings } from './lib/settings';
 import { fetchSmsCredit, fetchWeather, renderSms, sendSms, weatherSummary } from './lib/sms';
 import {
   dispatchCron,
@@ -153,7 +155,7 @@ async function audit(
     c.req.header('X-Forwarded-For')?.split(',')[0]?.trim() ||
     null;
 
-  await logAdminAction(c.env.DB, {
+  const logId = await logAdminAction(c.env.DB, {
     adminId: actor?.uid ?? null,
     adminName: actor?.name ?? 'سیستم',
     action,
@@ -162,6 +164,7 @@ async function audit(
     details: opts.details ?? null,
     ip,
   });
+  if (logId) await notifyAdminAction(c.env, { id: logId, action, actor: actor?.name ?? 'سیستم', targetId: opts.targetId, details: opts.details });
 }
 
 
@@ -1334,6 +1337,8 @@ app.post('/api/staff/invoices', requireApiRole('staff', 'admin'), async (c) => {
     return fail(c, 'داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
   }
 
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return fail(c, 'فاکتور نامعتبر است.', 400, 'BAD_JSON');
+
   const userId = toPositiveInt(body.userId, 0);
   if (!userId) return fail(c, 'مشتری را انتخاب کنید.', 400, 'INVALID_USER');
 
@@ -1344,10 +1349,10 @@ app.post('/api/staff/invoices', requireApiRole('staff', 'admin'), async (c) => {
   for (const item of items) {
     const price = Number(item?.price);
     const qty = Number(item?.qty);
-    if (!Number.isFinite(price) || price < 0 || price > 1_000_000_000) {
+    if (!Number.isSafeInteger(price) || price < 0 || price > 1_000_000_000) {
       return fail(c, 'قیمت یکی از آیتم‌ها نامعتبر است.', 400, 'INVALID_ITEM');
     }
-    if (!Number.isFinite(qty) || qty <= 0 || qty > 999) {
+    if (!Number.isSafeInteger(qty) || qty <= 0 || qty > 99) {
       return fail(c, 'تعداد یکی از آیتم‌ها نامعتبر است.', 400, 'INVALID_ITEM');
     }
   }
@@ -1414,6 +1419,7 @@ app.post('/api/staff/invoices', requireApiRole('staff', 'admin'), async (c) => {
     return fail(c, result.error, status, result.code);
   }
 
+  await notifyAdminInvoice(c.env, result.invoiceId);
   return ok(c, result, 201);
 });
 
@@ -1779,6 +1785,7 @@ app.post('/api/admin/invoices/:id/correct', requireApiRole('admin'), async (c) =
     return fail(c, 'داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
   }
 
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return fail(c, 'داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
   const reason = String(body.reason ?? '').trim().slice(0, 160);
   if (reason.length < 3) {
     return fail(c, 'دلیل اصلاح را بنویسید (حداقل ۳ نویسه).', 400, 'REASON_REQUIRED');
@@ -1800,13 +1807,13 @@ app.post('/api/admin/invoices/:id/correct', requireApiRole('admin'), async (c) =
   const items: InvoiceItem[] = [];
   for (const raw of rawItems) {
     const name = String(raw?.name ?? '').trim().slice(0, 60);
-    const qty = Math.floor(Number(raw?.qty));
-    const price = Math.floor(Number(raw?.price));
+    const qty = Number(raw?.qty);
+    const price = Number(raw?.price);
     if (!name) return fail(c, 'نام آیتم خالی است.', 400, 'INVALID_ITEMS');
-    if (!Number.isFinite(qty) || qty <= 0 || qty > 999) {
+    if (!Number.isSafeInteger(qty) || qty <= 0 || qty > 99) {
       return fail(c, 'تعداد یکی از آیتم‌ها نامعتبر است.', 400, 'INVALID_ITEMS');
     }
-    if (!Number.isFinite(price) || price < 0 || price > 1_000_000_000) {
+    if (!Number.isSafeInteger(price) || price < 0 || price > 1_000_000_000) {
       return fail(c, 'قیمت یکی از آیتم‌ها نامعتبر است.', 400, 'INVALID_ITEMS');
     }
     items.push({ name, qty, price });
@@ -1866,6 +1873,7 @@ app.post('/api/admin/invoices/:id/correct', requireApiRole('admin'), async (c) =
     payment,
     shiftId: openShift?.id ?? null,
     replacesInvoiceId: original.id,
+    deferReceipt: true,
     manualDiscount: discount,
   });
 
@@ -1873,10 +1881,13 @@ app.post('/api/admin/invoices/:id/correct', requireApiRole('admin'), async (c) =
     return fail(c, created.error, 400, created.code);
   }
 
+  if (created.duplicate) return fail(c, 'این شناسه درخواست قبلاً استفاده شده است؛ نتیجه اصلاح را در تاریخچه بررسی کنید.', 409, 'REQUEST_ID_CONFLICT');
+
   // ۲) باطل کردن فاکتور اصلی
   const voided = await voidInvoice(c.env, settings, id, user.uid, {
     reason: `اصلاح: جایگزین با فاکتور #${created.invoiceId} — ${reason}`,
     allowClosedShift,
+    replacementInvoiceId: created.invoiceId,
   });
 
   if (voided.ok === false) {
@@ -1893,12 +1904,15 @@ app.post('/api/admin/invoices/:id/correct', requireApiRole('admin'), async (c) =
     );
   }
 
+  const receipt = await sendInvoiceReceipt(c.env, settings, created.invoiceId);
+  if (receipt) { created.pointsEarned = receipt.pointsEarned; created.totalPoints = receipt.totalPoints; }
+
   await audit(c, 'invoice_correct', {
     targetType: 'invoice',
     targetId: id,
     details: `فاکتور #${id} (${formatNumberFa(original.amount)} تومان) با فاکتور #${created.invoiceId} (${formatNumberFa(
       created.amount
-    )} تومان) اصلاح شد. دلیل: ${reason}`,
+    )} تومان) اصلاح شد. امتیاز قبلی: ${original.points_earned}؛ امتیاز جدید: ${created.pointsEarned}. پرداخت اصلاح‌شده: نقد ${created.paidCash ?? 0}، کارت ${created.paidCard ?? 0}، آنلاین ${created.paidOnline ?? 0} تومان؛ باقیمانده ${created.change ?? 0} تومان. دلیل: ${reason}`,
   });
 
   return ok(c, {
@@ -1907,6 +1921,8 @@ app.post('/api/admin/invoices/:id/correct', requireApiRole('admin'), async (c) =
     amount: created.amount,
     discount: created.discount,
     replaces: id,
+    pointsEarned: created.pointsEarned,
+    totalPoints: created.totalPoints,
   });
 });
 
@@ -1922,6 +1938,7 @@ app.post('/api/admin/invoices/:id/void', requireApiRole('admin'), async (c) => {
   } catch {
     // بدنهٔ خالی مجاز نیست چون دلیل الزامی است
   }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return fail(c, 'داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
   const reason = body.reason === undefined || body.reason === null ? '' : String(body.reason).trim().slice(0, 200);
   if (reason.length < 3) {
     return fail(c, 'دلیل ابطال الزامی است (حداقل ۳ نویسه).', 400, 'REASON_REQUIRED');
@@ -1939,7 +1956,7 @@ app.post('/api/admin/invoices/:id/void', requireApiRole('admin'), async (c) => {
   await audit(c, 'invoice_void', {
     targetType: 'invoice',
     targetId: id,
-    details: `فاکتور ${result.customerName} باطل شد؛ ${result.pointsReversed} امتیاز برگشت خورد. دلیل: ${reason}`,
+    details: `فاکتور ${result.customerName} با مبلغ ${formatNumberFa(result.amount)} تومان باطل شد؛ ${result.pointsReversed} امتیاز برگشت خورد. دلیل: ${reason}`,
   });
 
   return ok(c, {
@@ -2092,9 +2109,29 @@ app.post('/api/admin/fallback/test', requireApiRole('admin'), async (c) => {
     return ok(c, { ids, message: 'تست در صف قرار گرفت؛ نتیجه را در تاریخچه بررسی کنید.' }, 202);
   } catch { return fail(c, 'مقصد، توکن و کلید رمزنگاری ذخیره‌شده را بررسی کنید.', 400, 'FALLBACK_CONFIG_ERROR'); }
 });
+app.post('/api/admin/fallback/:id/retry', requireApiRole('admin'), async (c) => {
+  const { dbRateLimit } = await import('./lib/otp');
+  const limit = await dbRateLimit(c.env.DB, 'fallback:retry:' + c.get('user')!.uid, 10, 60);
+  if (!limit?.allowed) return fail(c, 'حداکثر ۱۰ تلاش مجدد در دقیقه.', 429, 'RATE_LIMITED');
+  let body: Record<string, unknown>;
+  try { body = await c.req.json(); } catch { return fail(c, 'JSON نامعتبر است.', 400, 'BAD_JSON'); }
+  const id = c.req.param('id');
+  if (!/^[a-zA-Z0-9-]{1,100}$/.test(id)) return fail(c, 'شناسه نامعتبر است.', 400, 'INVALID_ID');
+  let previous: Awaited<ReturnType<typeof retryFallbackJob>>;
+  try { previous = await retryFallbackJob(c.env, id, body?.confirmDuplicateRisk === true); }
+  catch (e) {
+    const code = e instanceof Error ? e.message : '';
+    const messages: Record<string,string> = { NOT_FOUND:'پیام پیدا نشد.', OTP_NO_REPLAY:'کد ورود قابل ارسال مجدد نیست؛ مشتری باید کد تازه درخواست کند.',
+      NOT_RETRYABLE:'پیام در صف، ارسال‌شده یا منقضی است؛ دوباره ارسال نشد.', CONFIRM_DUPLICATE_RISK:'ممکن است پیام قبلاً رسیده باشد؛ تأیید خطر تکرار لازم است.',
+      CONFIG_CHANGED:'مسیر یا مقصد خاموش/تغییر کرده است؛ تنظیمات را بررسی کنید.', INVALID_TOKEN:'توکن معتبر نیست.' };
+    return fail(c, messages[code] ?? 'کلید و تنظیمات مقصد را بررسی کنید.', code === 'NOT_FOUND' ? 404 : 409, messages[code] ? code : 'CONFIG_ERROR');
+  }
+  await audit(c, 'fallback_retry', { targetType:'message', targetId:id, details:`تلاش مجدد آگاهانه مدیر (بدون تغییر مالی). نوبت قبلی: ${previous.previousAttempts} تلاش؛ نتیجه: ${(previous.previousError ?? 'نامشخص').slice(0,200)}؛ پذیرش خطر تکرار: ${body?.confirmDuplicateRisk === true ? 'بله' : 'خیر'}.` });
+  return ok(c, { message:'دوباره در صف قرار گرفت؛ نتیجه در تاریخچه مشخص می‌شود.' }, 202);
+});
 app.get('/api/admin/fallback/history', requireApiRole('admin'), async (c) => {
   const page = Math.min(10000, Math.max(1, toPositiveInt(c.req.query('page'), 1)));
-  return ok(c, await fallbackHistory(c.env, page));
+  return ok(c, await fallbackHistory(c.env, page, c.req.query('status') ?? '', c.req.query('channel') ?? ''));
 });
 
 app.get('/api/admin/settings', requireApiRole('admin'), async (c) => {
@@ -2120,57 +2157,70 @@ app.put('/api/admin/settings', requireApiRole('admin'), async (c) => {
     return fail(c, 'داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
   }
 
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return fail(c, 'تنظیمات نامعتبر است.', 400, 'BAD_JSON');
+  if (body.points_mode !== undefined && !['amount', 'visit', 'invoice'].includes(String(body.points_mode)))
+    return fail(c, 'روش امتیازدهی نامعتبر است.', 400, 'INVALID_POINTS_POLICY');
+  for (const [key, min, max] of [['invoice_points',0,100000], ['visit_points',1,100000], ['visit_min_amount',0,100000000], ['currency_unit',1,10000000], ['points_per_currency',1,1000]] as const) {
+    if (body[key] !== undefined && (typeof body[key] !== 'number' || !Number.isSafeInteger(body[key]) || Number(body[key]) < min || Number(body[key]) > max))
+      return fail(c, 'مقادیر سیاست امتیازدهی باید عدد صحیح در محدوده مجاز باشند.', 400, 'INVALID_POINTS_POLICY');
+  }
+  if (body.menu_items !== undefined && !Array.isArray(body.menu_items)) return fail(c, 'فهرست منو نامعتبر است.', 400, 'INVALID_MENU');
+  if (Array.isArray(body.menu_items) && body.menu_items.some(item => !item || typeof item !== 'object' || typeof item.name !== 'string' || !item.name.replace(/[<>]/g, '').trim() || item.name.length > 60 || !Number.isSafeInteger(item.price) || item.price < 0 || item.price > 1_000_000_000 || (item.category !== undefined && (typeof item.category !== 'string' || item.category.length > 30)))) return fail(c, 'نام، قیمت یا دسته یکی از آیتم‌های منو نامعتبر است؛ هیچ تغییری ذخیره نشد.', 400, 'INVALID_MENU');
+  if (Array.isArray(body.menu_items) && body.menu_items.length > 1000) return fail(c, 'حداکثر ۱۰۰۰ آیتم منو مجاز است؛ هیچ آیتمی حذف نشد.', 400, 'INVALID_MENU');
+  const updates: Record<string, unknown> = {};
+  const stage = (key: string, value: unknown) => { updates[key] = value; };
   try {
     if (body.cafe_name !== undefined) {
-      await saveSetting(c.env, 'cafe_name', String(body.cafe_name).trim().slice(0, 60) || 'کافه');
+      stage('cafe_name', String(body.cafe_name).trim().slice(0, 60) || 'کافه');
     }
     if (body.cafe_city !== undefined) {
-      await saveSetting(c.env, 'cafe_city', String(body.cafe_city).trim().slice(0, 60) || 'تهران');
+      stage('cafe_city', String(body.cafe_city).trim().slice(0, 60) || 'تهران');
     }
     if (body.currency_unit !== undefined) {
-      await saveSetting(c.env, 'currency_unit', toIntInRange(body.currency_unit, 1, 10_000_000, 1000));
+      stage('currency_unit', toIntInRange(body.currency_unit, 1, 10_000_000, 1000));
     }
     if (body.points_mode !== undefined) {
-      await saveSetting(c.env, 'points_mode', body.points_mode === 'visit' ? 'visit' : 'amount');
+      stage('points_mode', body.points_mode);
     }
     if (body.points_per_currency !== undefined) {
-      await saveSetting(c.env, 'points_per_currency', toIntInRange(body.points_per_currency, 1, 1000, 1));
+      stage('points_per_currency', toIntInRange(body.points_per_currency, 1, 1000, 1));
     }
+    if (body.invoice_points !== undefined) stage('invoice_points', body.invoice_points);
     if (body.visit_points !== undefined) {
-      await saveSetting(c.env, 'visit_points', toIntInRange(body.visit_points, 1, 100_000, 15));
+      stage('visit_points', toIntInRange(body.visit_points, 1, 100_000, 15));
     }
     if (body.visit_min_amount !== undefined) {
-      await saveSetting(c.env, 'visit_min_amount', toIntInRange(body.visit_min_amount, 0, 100_000_000, 30_000));
+      stage('visit_min_amount', toIntInRange(body.visit_min_amount, 0, 100_000_000, 30_000));
     }
     if (body.redeem_enabled !== undefined) {
-      await saveSetting(c.env, 'redeem_enabled', body.redeem_enabled ? 1 : 0);
+      stage('redeem_enabled', body.redeem_enabled ? 1 : 0);
     }
     if (body.redeem_points !== undefined) {
-      await saveSetting(c.env, 'redeem_points', toIntInRange(body.redeem_points, 1, 10_000_000, 200));
+      stage('redeem_points', toIntInRange(body.redeem_points, 1, 10_000_000, 200));
     }
     if (body.redeem_value !== undefined) {
-      await saveSetting(c.env, 'redeem_value', toIntInRange(body.redeem_value, 1000, 100_000_000, 20_000));
+      stage('redeem_value', toIntInRange(body.redeem_value, 1000, 100_000_000, 20_000));
     }
     if (body.redeem_expiry_days !== undefined) {
-      await saveSetting(c.env, 'redeem_expiry_days', toIntInRange(body.redeem_expiry_days, 1, 365, 30));
+      stage('redeem_expiry_days', toIntInRange(body.redeem_expiry_days, 1, 365, 30));
     }
     if (body.otp_login_enabled !== undefined) {
-      await saveSetting(c.env, 'otp_login_enabled', body.otp_login_enabled ? 1 : 0);
+      stage('otp_login_enabled', body.otp_login_enabled ? 1 : 0);
     }
     if (body.require_shift !== undefined) {
-      await saveSetting(c.env, 'require_shift', body.require_shift ? 1 : 0);
+      stage('require_shift', body.require_shift ? 1 : 0);
     }
     if (body.referral_reward_points !== undefined) {
-      await saveSetting(c.env, 'referral_reward_points', toIntInRange(body.referral_reward_points, 0, 1_000_000, 50));
+      stage('referral_reward_points', toIntInRange(body.referral_reward_points, 0, 1_000_000, 50));
     }
     if (body.churn_grace_days !== undefined) {
-      await saveSetting(c.env, 'churn_grace_days', toIntInRange(body.churn_grace_days, 0, 60, 2));
+      stage('churn_grace_days', toIntInRange(body.churn_grace_days, 0, 60, 2));
     }
     if (body.churn_min_visits !== undefined) {
-      await saveSetting(c.env, 'churn_min_visits', toIntInRange(body.churn_min_visits, 1, 100, 3));
+      stage('churn_min_visits', toIntInRange(body.churn_min_visits, 1, 100, 3));
     }
     if (body.birthday_coupon_percent !== undefined) {
-      await saveSetting(c.env, 'birthday_coupon_percent', toIntInRange(body.birthday_coupon_percent, 1, 100, 15));
+      stage('birthday_coupon_percent', toIntInRange(body.birthday_coupon_percent, 1, 100, 15));
     }
 
     if (body.tiers && typeof body.tiers === 'object') {
@@ -2181,32 +2231,32 @@ app.put('/api/admin/settings', requireApiRole('admin'), async (c) => {
       if (!(silver < gold && gold < vip)) {
         return fail(c, 'آستانه‌های سطح باید صعودی باشند (نقره‌ای < طلایی < الماسی).', 400, 'INVALID_TIERS');
       }
-      await saveSetting(c.env, 'tiers', { silver, gold, vip });
+      stage('tiers', { silver, gold, vip });
     }
 
     if (body.sms_enabled !== undefined) {
       if (![0, 1].includes(body.sms_enabled as number)) return fail(c, 'وضعیت پنل نامعتبر است.', 400, 'INVALID_SMS_ENABLED');
-      await saveSetting(c.env, 'sms_enabled', body.sms_enabled);
+      stage('sms_enabled', body.sms_enabled);
     }
     if (body.sms_provider !== undefined) {
-      await saveSetting(c.env, 'sms_provider', coerceSmsProvider(body.sms_provider));
+      stage('sms_provider', coerceSmsProvider(body.sms_provider));
     }
     // کلیدها فقط وقتی مقدار جدید دارند بازنویسی می‌شوند؛ رشته‌ی خالی یعنی «تغییری نده».
     // برای حذف آگاهانه، پرچم clear_* را بفرستید.
     if (body.clear_sms_api_key === true) {
-      await saveSetting(c.env, 'sms_api_key', '');
+      stage('sms_api_key', '');
     } else if (body.sms_api_key !== undefined) {
       const nextKey = String(body.sms_api_key).trim().slice(0, 300);
-      if (nextKey) await saveSetting(c.env, 'sms_api_key', nextKey);
+      if (nextKey) stage('sms_api_key', nextKey);
     }
     if (body.sms_sender !== undefined) {
-      await saveSetting(c.env, 'sms_sender', String(body.sms_sender).trim().slice(0, 30));
+      stage('sms_sender', String(body.sms_sender).trim().slice(0, 30));
     }
     if (body.clear_weather_api_key === true) {
-      await saveSetting(c.env, 'weather_api_key', '');
+      stage('weather_api_key', '');
     } else if (body.weather_api_key !== undefined) {
       const nextWeatherKey = String(body.weather_api_key).trim().slice(0, 200);
-      if (nextWeatherKey) await saveSetting(c.env, 'weather_api_key', nextWeatherKey);
+      if (nextWeatherKey) stage('weather_api_key', nextWeatherKey);
     }
 
     if (body.sms_templates && typeof body.sms_templates === 'object') {
@@ -2219,12 +2269,12 @@ app.put('/api/admin/settings', requireApiRole('admin'), async (c) => {
           next[key] = String(templates[key]).slice(0, 1000);
         }
       }
-      await saveSetting(c.env, 'sms_templates', next);
+      stage('sms_templates', next);
     }
 
     if (Array.isArray(body.menu_items)) {
       const menu = (body.menu_items as Array<Record<string, unknown>>)
-        .slice(0, 100)
+        .slice(0, 1000)
         .map((item) => ({
           name: String(item.name ?? '').replace(/[<>]/g, '').trim().slice(0, 60),
           price: toIntInRange(item.price, 0, 1_000_000_000, 0),
@@ -2234,12 +2284,13 @@ app.put('/api/admin/settings', requireApiRole('admin'), async (c) => {
       if (menu.length === 0) {
         return fail(c, 'حداقل یک آیتم در منو لازم است.', 400, 'INVALID_MENU');
       }
-      await saveSetting(c.env, 'menu_items', menu);
+      stage('menu_items', menu);
     }
 
+    await saveSettings(c.env, updates);
     await audit(c, 'settings_update', {
       targetType: 'settings',
-      details: 'تنظیمات باشگاه از پنل مدیریت به‌روزرسانی شد.',
+      details: 'تنظیمات باشگاه به‌روزرسانی شد.' + (body.points_mode !== undefined || body.invoice_points !== undefined || body.visit_points !== undefined || body.currency_unit !== undefined || body.points_per_currency !== undefined ? ` سیاست امتیاز: ${body.points_mode ?? c.get('settings').points_mode}؛ ثابت فاکتور: ${body.invoice_points ?? c.get('settings').invoice_points}؛ روزانه: ${body.visit_points ?? c.get('settings').visit_points}؛ هر ${body.currency_unit ?? c.get('settings').currency_unit} تومان: ${body.points_per_currency ?? c.get('settings').points_per_currency} امتیاز.` : ''),
     });
 
     return ok(c, { saved: true });
@@ -2664,8 +2715,9 @@ async function scheduled(
   ctx: ExecutionContext
 ): Promise<void> {
   if (controller.cron === '* * * * *') {
-    ctx.waitUntil(processFallbackQueue(env, true).catch(() => console.error('fallback cron failed')));
-    if (new Date(controller.scheduledTime).getUTCMinutes() !== 0) return;
+    const hourBoundary = new Date(controller.scheduledTime).getUTCMinutes() === 0;
+    ctx.waitUntil((hourBoundary ? processFallbackQueue(env, true) : drainFallbackQueue(env)).catch(() => console.error('fallback cron failed')));
+    if (!hourBoundary) return;
   }
   const settings = await loadSettings(env, true);
   console.log(`[cron] triggered: ${controller.cron}`);
@@ -2691,7 +2743,7 @@ async function scheduled(
 export default {
   async fetch(request, env, ctx) {
     const response = await app.fetch(request, env, ctx);
-    if (['POST', 'PUT', 'PATCH'].includes(request.method)) {
+    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method) || (request.method === 'GET' && new URL(request.url).pathname === '/api/admin/fallback/history' && response.status === 200)) {
       ctx.waitUntil(processFallbackQueue(env).catch(() => console.error('fallback dispatcher failed')));
     }
     return response;

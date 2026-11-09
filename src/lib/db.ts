@@ -266,6 +266,8 @@ export type InvoiceInput = {
   registeredBy: number;
   /** شناسه یکتای درخواست (برای جلوگیری از ثبت تکراری با دوبار کلیک/تلاش مجدد) */
   clientRequestId?: string | null;
+  /** Corrections send the receipt only after the original is successfully voided. */
+  deferReceipt?: boolean;
   /** مبالغ پرداختی (نقد/کارت/آنلاین). اگر ارسال نشود، رفتار قبلی حفظ می‌شود. */
   payment?: PaymentInput | null;
   /** شیفت صندوقی که فاکتور به آن تعلق دارد */
@@ -492,6 +494,10 @@ export function calculateInvoicePoints(input: {
   | { points: 0; note: string; visitDay: false } {
   const { amount, settings } = input;
 
+  if (settings.points_mode === 'invoice') {
+    return { points: amount > 0 ? settings.invoice_points : 0,
+      note: `امتیاز ثابت هر فاکتور (${toPersianDigits(settings.invoice_points)} امتیاز؛ مستقل از مبلغ)`, visitDay: false };
+  }
   if (settings.points_mode === 'visit') {
     if (amount < settings.visit_min_amount) {
       return {
@@ -587,9 +593,18 @@ export async function recordInvoice(
     )
       .bind(requestId)
       .first<InvoiceRow>();
-    if (existing) return invoiceResultFromRow(env.DB, existing, customer, settings);
+    if (existing) {
+      if (existing.user_id !== customer.id) return { ok: false, error: 'شناسه درخواست برای مشتری دیگری استفاده شده است.', code: 'REQUEST_ID_CONFLICT' };
+      return invoiceResultFromRow(env.DB, existing, customer, settings);
+    }
   }
 
+  if (input.items.length > 50 || input.items.some(item =>
+    !item || typeof item.name !== 'string' || !String(item.name ?? '').replace(/[<>]/g, '').trim() || String(item.name).length > 60 ||
+    !Number.isSafeInteger(Number(item.qty)) || Number(item.qty) < 1 || Number(item.qty) > 99 ||
+    !Number.isSafeInteger(Number(item.price)) || Number(item.price) < 0 || Number(item.price) > 1_000_000_000)) {
+    return { ok: false, error: 'نام، قیمت یا تعداد آیتم نامعتبر است (تعداد ۱ تا ۹۹).', code: 'INVALID_ITEM' };
+  }
   const items = normalizeItems(input.items);
   const subtotal = items.length > 0 ? itemsSubtotal(items) : Math.floor(Number(input.amount) || 0);
 
@@ -752,7 +767,10 @@ export async function recordInvoice(
       )
         .bind(requestId)
         .first<InvoiceRow>();
-      if (existing) return invoiceResultFromRow(env.DB, existing, customer, settings);
+      if (existing) {
+        if (existing.user_id !== customer.id) return { ok: false, error: 'شناسه درخواست برای مشتری دیگری استفاده شده است.', code: 'REQUEST_ID_CONFLICT' };
+        return invoiceResultFromRow(env.DB, existing, customer, settings);
+      }
     }
 
     // در همین لحظه فاکتور دیگری امتیاز حضور امروز را گرفته است
@@ -791,21 +809,7 @@ export async function recordInvoice(
     await rewardReferrer(env, settings, customer);
   }
 
-  // پیامک تأیید فاکتور (پیامک تراکنشی است و به رضایت تبلیغاتی نیاز ندارد)
-  await sendSms(env, settings, {
-    userId: customer.id,
-    phone: customer.phone,
-    type: 'invoice',
-    message: renderSms(settings, 'invoice', {
-      name: customer.name,
-      amount: formatNumberFa(amount),
-      points: toPersianDigits(pointsEarned),
-      total_points: toPersianDigits(newPoints),
-      tier: tierLabel(newTier),
-      discount: formatNumberFa(discount),
-      code: couponCode ?? '',
-    }),
-  });
+  if (!input.deferReceipt) await sendInvoiceReceipt(env, settings, invoiceId);
 
   return {
     ok: true,
@@ -826,6 +830,24 @@ export async function recordInvoice(
     paidOnline: payment?.online ?? 0,
     change: payment?.change ?? 0,
   };
+}
+
+/** Read final persisted values so correction receipts never show pre-reversal balances. */
+export async function sendInvoiceReceipt(env: Bindings, settings: AppSettings, invoiceId: number): Promise<{ pointsEarned: number; totalPoints: number } | null> {
+  try {
+    const row = await env.DB.prepare(`SELECT i.amount,i.discount,i.coupon_code,i.points_earned,
+      u.id AS user_id,u.name,u.phone,u.points,u.tier FROM invoices i JOIN users u ON u.id=i.user_id
+      WHERE i.id=? AND i.voided_at IS NULL`).bind(invoiceId).first<{
+        amount: number; discount: number; coupon_code: string | null; points_earned: number;
+        user_id: number; name: string; phone: string; points: number; tier: string;
+      }>();
+    if (!row) return null;
+    await sendSms(env, settings, { userId: row.user_id, phone: row.phone, type: 'invoice',
+      message: renderSms(settings, 'invoice', { name: row.name, amount: formatNumberFa(row.amount),
+        points: toPersianDigits(row.points_earned), total_points: toPersianDigits(row.points),
+        tier: tierLabel(row.tier), discount: formatNumberFa(row.discount), code: row.coupon_code ?? '' }) });
+    return { pointsEarned: row.points_earned, totalPoints: row.points };
+  } catch { console.error('INVOICE_RECEIPT_FAILED', invoiceId); return null; }
 }
 
 /** پاداش دادن به معرف پس از اولین خرید مشتری */
@@ -1705,7 +1727,7 @@ export async function voidInvoice(
   settings: AppSettings,
   invoiceId: number,
   adminId: number,
-  options: { reason?: string | null; allowClosedShift?: boolean } = {}
+  options: { reason?: string | null; allowClosedShift?: boolean; replacementInvoiceId?: number } = {}
 ): Promise<
   | {
       ok: true;
@@ -1781,6 +1803,23 @@ export async function voidInvoice(
         `UPDATE coupons SET used_count = MAX(0, used_count - 1)
          WHERE UPPER(code) = UPPER(?)`
       ).bind(invoice.coupon_code)
+    );
+  }
+
+  // The replacement was created before voiding the old sale, so the old daily
+  // claim may have suppressed its award. Transfer only today's eligible claim.
+  // Both the stored award and user balance change inside the SAME atomic batch.
+  if (options.replacementInvoiceId && settings.points_mode === 'visit' && invoice.visit_day === todayISO(resolveTimeZone(env.TZ_NAME))) {
+    statements.push(
+      env.DB.prepare(`UPDATE invoices SET points_earned=?,visit_day=?
+        WHERE id=? AND user_id=? AND replaces_invoice_id=? AND voided_at IS NULL
+          AND points_earned=0 AND visit_day IS NULL AND amount>=?
+          AND NOT EXISTS (SELECT 1 FROM invoices WHERE user_id=? AND visit_day=? AND voided_at IS NULL)`)
+        .bind(settings.visit_points, invoice.visit_day, options.replacementInvoiceId, invoice.user_id, invoiceId,
+          settings.visit_min_amount, invoice.user_id, invoice.visit_day),
+      // changes() is from the immediately preceding UPDATE, within this batch transaction.
+      env.DB.prepare(`UPDATE users SET points=points+?,lifetime_points=lifetime_points+?
+        WHERE id=? AND changes()=1`).bind(settings.visit_points, settings.visit_points, invoice.user_id),
     );
   }
 
@@ -2069,9 +2108,9 @@ export type AdminLogInput = {
  * ثبت یک اقدام حساس مدیر. خطا هرگز جلوی عملیات اصلی را نمی‌گیرد؛
  * فقط در کنسول لاگ می‌شود تا نبودِ جدول باعث شکست عملیات نشود.
  */
-export async function logAdminAction(db: D1Database, input: AdminLogInput): Promise<void> {
+export async function logAdminAction(db: D1Database, input: AdminLogInput): Promise<number | null> {
   try {
-    await db
+    const result = await db
       .prepare(
         `INSERT INTO admin_logs (admin_id, admin_name, action, target_type, target_id, details, ip)
          VALUES (?, ?, ?, ?, ?, ?, ?)`
@@ -2088,8 +2127,10 @@ export async function logAdminAction(db: D1Database, input: AdminLogInput): Prom
         input.ip ? String(input.ip).slice(0, 60) : null
       )
       .run();
+    return Number(result.meta?.last_row_id) || null;
   } catch (error) {
     console.error('logAdminAction failed:', error);
+    return null;
   }
 }
 

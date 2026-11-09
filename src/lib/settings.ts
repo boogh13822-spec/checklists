@@ -77,6 +77,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   points_per_currency: 1,
   currency_unit: 1000,
   visit_points: 15,
+  invoice_points: 15,
   visit_min_amount: 30000,
   redeem_enabled: 1,
   redeem_points: 200,
@@ -104,6 +105,7 @@ export const EDITABLE_SETTING_KEYS: Array<keyof AppSettings> = [
   'points_mode',
   'points_per_currency',
   'visit_points',
+  'invoice_points',
   'visit_min_amount',
   'redeem_enabled',
   'redeem_points',
@@ -155,8 +157,9 @@ function coerceSettings(raw: Record<string, unknown>): AppSettings {
 
   return {
     sms_templates: templatesMerged,
-    points_mode: raw.points_mode === 'visit' ? 'visit' : 'amount',
+    points_mode: raw.points_mode === 'visit' || raw.points_mode === 'invoice' ? raw.points_mode : 'amount',
     points_per_currency: toIntInRange(raw.points_per_currency, 1, 1000, 1),
+    invoice_points: toIntInRange(raw.invoice_points, 0, 100_000, 15),
     visit_points: toIntInRange(raw.visit_points, 1, 100_000, 15),
     visit_min_amount: toIntInRange(raw.visit_min_amount, 0, 100_000_000, 30_000),
     redeem_enabled: toIntInRange(raw.redeem_enabled, 0, 1, 1),
@@ -231,6 +234,17 @@ export async function saveSetting(env: Bindings, key: string, value: unknown): P
   invalidateSettingsCache();
 }
 
+/** Save one admin form atomically, within D1's 100-bound-parameter limit. */
+export async function saveSettings(env: Bindings, values: Record<string, unknown>): Promise<void> {
+  const entries = Object.entries(values);
+  if (!entries.length) return;
+  if (entries.length > 50) throw new Error('TOO_MANY_SETTINGS');
+  await env.DB.prepare(`INSERT INTO settings(key,value) VALUES ${entries.map(() => '(?,?)').join(',')}
+    ON CONFLICT(key) DO UPDATE SET value=excluded.value`)
+    .bind(...entries.flatMap(([key, value]) => [key, JSON.stringify(value ?? null)])).run();
+  invalidateSettingsCache();
+}
+
 /** حذف یک تنظیم */
 export async function deleteSetting(env: Bindings, key: string): Promise<void> {
   await env.DB.prepare('DELETE FROM settings WHERE key = ?').bind(key).run();
@@ -261,5 +275,5 @@ export async function loadMenuItems(env: Bindings): Promise<MenuItem[]> {
       price: Math.max(0, Math.floor(Number(item.price) || 0)),
       category: typeof item.category === 'string' ? item.category.slice(0, 30) : undefined,
     }))
-    .slice(0, 100);
+    .slice(0, 1000);
 }

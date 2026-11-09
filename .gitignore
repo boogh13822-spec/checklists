@@ -7,3 +7,5 @@ dist/
 single-file/
 
 backup-*.sql
+
+.cache/

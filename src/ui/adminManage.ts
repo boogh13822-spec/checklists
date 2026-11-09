@@ -216,13 +216,18 @@ export function adminSettingsPage(input: {
         <div class="p-5 space-y-4">
           <div>
             <div class="label">روش امتیازدهی</div>
-            <div class="grid sm:grid-cols-2 gap-2">
+            <div class="grid sm:grid-cols-3 gap-2">
               <label class="mode-card" data-mode-card="amount">
                 <input type="radio" name="points_mode" value="amount" class="accent-amber-500 mt-0.5" ${settings.points_mode === 'amount' ? 'checked' : ''} />
                 <span>
                   <span class="block text-[12.5px] font-semibold">بر اساس مبلغ خرید</span>
                   <span class="block text-[10.5px] text-cream/40 leading-5 mt-1">هر مبلغی که خرید کند، به نسبت مبلغ امتیاز می‌گیرد.</span>
                 </span>
+              </label>
+              <label class="mode-card" data-mode-card="invoice">
+                <input type="radio" name="points_mode" value="invoice" class="accent-amber-500 mt-0.5" ${settings.points_mode === 'invoice' ? 'checked' : ''} />
+                <span><span class="block text-[12.5px] font-semibold">امتیاز ثابت هر فاکتور</span>
+                <span class="block text-[10.5px] text-cream/40 leading-5 mt-1">با هر مبلغ مثبت، حتی چند خرید در یک روز؛ مقدار امتیاز را خودتان تعیین کنید.</span></span>
               </label>
               <label class="mode-card" data-mode-card="visit">
                 <input type="radio" name="points_mode" value="visit" class="accent-amber-500 mt-0.5" ${settings.points_mode === 'visit' ? 'checked' : ''} />
@@ -247,6 +252,11 @@ export function adminSettingsPage(input: {
             </div>
           </div>
 
+          <div id="mode-invoice" class="space-y-2">
+            <label class="label" for="invoice_points">امتیاز هر فاکتور</label>
+            <input id="invoice_points" type="number" min="0" max="100000" step="1" class="field" value="${settings.invoice_points}" />
+            <p class="hint">مثلاً ۱۰: فاکتور ۱ تومان یا ۱ میلیون تومان هر دو ۱۰ امتیاز می‌گیرند. صفر یعنی بدون امتیاز خرید. تغییر سیاست فقط بر فاکتورهای بعدی اثر دارد؛ کارمند نمی‌تواند امتیاز دلخواه وارد کند.</p>
+          </div>
           <div id="mode-visit" class="grid sm:grid-cols-2 gap-4">
             <div>
               <label class="label" for="visit_points">امتیاز هر روز خرید</label>
@@ -481,7 +491,10 @@ export function adminSettingsPage(input: {
           <button type="button" id="add-menu-row" class="btn btn-ghost btn-sm me-auto">${icon('plus', 'w-4 h-4')} افزودن آیتم</button>
         </div>
         <div class="p-5">
+          <label class="label" for="menu-admin-search">جستجوی نام یا دسته</label><input id="menu-admin-search" type="search" class="field mb-3" placeholder="نام آیتم یا دسته…" />
+          <p id="menu-admin-count" class="hint mb-2"></p>
           <div id="menu-rows" class="space-y-2"></div>
+          <button id="menu-admin-more" type="button" class="btn btn-ghost btn-sm mt-2 hidden">نمایش موارد بیشتر</button>
           <p class="hint">این آیتم‌ها در صفحه ثبت فاکتور کارمند نمایش داده می‌شوند.</p>
         </div>
       </section>
@@ -559,14 +572,20 @@ export function adminSettingsPage(input: {
       });
     });
 
-    // Menu editor
+    // Menu editor: filtering never removes hidden rows from the saved payload.
+    var menuRowLimit = 50;
     function renderMenuRows() {
       var host = $('#menu-rows');
       if (menuItems.length === 0) {
         host.innerHTML = '<p class="text-[11px] text-cream/35 text-center py-4">آیتمی وجود ندارد. یکی اضافه کنید.</p>';
         return;
       }
-      host.innerHTML = menuItems.map(function (item, index) {
+      var q = $('#menu-admin-search').value.trim().toLowerCase();
+      var rows = menuItems.map(function(item,index){return {item:item,index:index};}).filter(function(row){return !q || (row.item.name+' '+(row.item.category||'')).toLowerCase().indexOf(q)!==-1;});
+      $('#menu-admin-count').textContent = fa(menuItems.length) + ' آیتم در منو؛ ' + fa(rows.length) + ' نتیجه';
+      $('#menu-admin-more').classList.toggle('hidden',rows.length<=menuRowLimit);
+      host.innerHTML = rows.slice(0,menuRowLimit).map(function (row) {
+        var item=row.item,index=row.index;
         return '<div class="grid grid-cols-[1fr_110px_90px_34px] gap-2 items-center">' +
           '<input data-menu-name="' + index + '" class="field !py-2 !text-[12px]" value="' + escapeHtml(item.name) + '" placeholder="نام آیتم" />' +
           '<input data-menu-price="' + index + '" type="number" dir="ltr" class="field !py-2 !text-[12px] text-left" value="' + Number(item.price || 0) + '" placeholder="قیمت" />' +
@@ -580,10 +599,14 @@ export function adminSettingsPage(input: {
     renderMenuRows();
 
     $('#add-menu-row').addEventListener('click', function () {
-      menuItems.push({ name: '', price: 0, category: '' });
+      if(menuItems.length>=1000){toast('حداکثر ۱۰۰۰ آیتم مجاز است.','error');return;}
+      menuItems.unshift({ name: '', price: 0, category: '' });
+      $('#menu-admin-search').value='';menuRowLimit=50;
       renderMenuRows();
     });
 
+    $('#menu-admin-search').addEventListener('input',function(){menuRowLimit=50;renderMenuRows();});
+    $('#menu-admin-more').addEventListener('click',function(){menuRowLimit+=50;renderMenuRows();});
     $('#menu-rows').addEventListener('input', function (event) {
       var target = event.target;
       if (target.dataset.menuName !== undefined) menuItems[Number(target.dataset.menuName)].name = target.value;
@@ -613,13 +636,14 @@ export function adminSettingsPage(input: {
       var amountBox = document.getElementById('mode-amount');
       var visitBox = document.getElementById('mode-visit');
       if (amountBox) amountBox.style.display = mode === 'amount' ? '' : 'none';
+      document.getElementById('mode-invoice').style.display = mode === 'invoice' ? '' : 'none';
       if (visitBox) visitBox.style.display = mode === 'visit' ? '' : 'none';
 
       var unit = Number($('#currency_unit').value) || 1000;
       var ratio = Number($('#points_per_currency').value) || 1;
       var visitPoints = Number($('#visit_points').value) || 0;
       var visitMin = Number($('#visit_min_amount').value) || 0;
-      var preview = mode === 'visit'
+      var preview = mode === 'invoice' ? 'هر فاکتور با هر مبلغ مثبت = ' + fa(Number($('#invoice_points').value) || 0) + ' امتیاز' : mode === 'visit'
         ? 'اولین خرید هر روز بالای ' + moneyFa(visitMin) + ' تومان = ' + fa(visitPoints) + ' امتیاز'
         : 'هر ' + moneyFa(unit) + ' تومان = ' + fa(ratio) + ' امتیاز';
       $('#points-preview').textContent = preview;
@@ -640,7 +664,7 @@ export function adminSettingsPage(input: {
     document.querySelectorAll('input[name="points_mode"]').forEach(function (input) {
       input.addEventListener('change', updatePointsPreview);
     });
-    ['currency_unit', 'points_per_currency', 'visit_points', 'visit_min_amount', 'redeem_points', 'redeem_value', 'redeem_expiry_days'].forEach(function (id) {
+    ['currency_unit', 'points_per_currency', 'invoice_points', 'visit_points', 'visit_min_amount', 'redeem_points', 'redeem_value', 'redeem_expiry_days'].forEach(function (id) {
       var el = document.getElementById(id);
       if (el) el.addEventListener('input', updatePointsPreview);
     });
@@ -657,6 +681,7 @@ export function adminSettingsPage(input: {
         points_mode: currentMode(),
         currency_unit: Number($('#currency_unit').value),
         points_per_currency: Number($('#points_per_currency').value),
+        invoice_points: Number($('#invoice_points').value),
         visit_points: Number($('#visit_points').value),
         visit_min_amount: Number($('#visit_min_amount').value),
         redeem_enabled: document.getElementById('redeem_enabled').checked ? 1 : 0,

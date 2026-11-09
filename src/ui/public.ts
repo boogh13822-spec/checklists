@@ -29,6 +29,8 @@ export function landingPage(settings: AppSettings): string {
       desc:
         settings.points_mode === 'visit'
           ? `هر روزی که در ${settings.cafe_name} خرید کنی ${toPersianDigits(settings.visit_points)} امتیاز می‌گیری؛ سطحت با مجموع امتیازها بالا می‌رود.`
+          : settings.points_mode === 'invoice'
+            ? `هر فاکتور با مبلغ مثبت = ${toPersianDigits(settings.invoice_points)} امتیاز؛ مستقل از مبلغ خرید، حتی چند فاکتور در یک روز.`
           : `هر ${unit} تومان خرید = ${ratio} امتیاز؛ امتیازها جمع می‌شوند و سطحت را بالا می‌برند.`,
     },
     {
@@ -94,8 +96,8 @@ export function landingPage(settings: AppSettings): string {
                 ${icon(item.icon, 'w-5 h-5')}
               </div>
               <div class="min-w-0">
-                <div class="text-[13px] font-semibold">${item.title}</div>
-                <div class="text-[11.5px] text-cream/45 leading-6 mt-0.5">${item.desc}</div>
+                <div class="text-[13px] font-semibold">${escapeHtml(item.title)}</div>
+                <div class="text-[11.5px] text-cream/45 leading-6 mt-0.5">${escapeHtml(item.desc)}</div>
               </div>
             </div>`
           )
@@ -234,6 +236,8 @@ export function registerPage(
             ${[
               settings.points_mode === 'visit'
                 ? `هر روز خرید = ${toPersianDigits(settings.visit_points)} امتیاز (حداقل ${formatNumberFa(settings.visit_min_amount)} تومان)`
+                : settings.points_mode === 'invoice'
+                  ? `هر فاکتور با مبلغ مثبت، ${toPersianDigits(settings.invoice_points)} امتیاز؛ مستقل از مبلغ`
                 : `به ازای هر ${formatNumberFa(settings.currency_unit)} تومان خرید، ${toPersianDigits(settings.points_per_currency)} امتیاز`,
               `کد تخفیف ${toPersianDigits(settings.birthday_coupon_percent)} درصدی در روز تولد`,
               `${toPersianDigits(settings.referral_reward_points)} امتیاز پاداش برای هر معرفی موفق`,

@@ -189,7 +189,7 @@ export type TierThresholds = {
 };
 
 /** تنظیمات کامل برنامه (از جدول settings واکشی می‌شود) */
-export type PointsMode = 'amount' | 'visit';
+export type PointsMode = 'amount' | 'visit' | 'invoice';
 
 export type AppSettings = {
   sms_templates: SmsTemplates;
@@ -199,6 +199,8 @@ export type AppSettings = {
   currency_unit: number;
   /** امتیاز ثابت برای هر روز خرید (حالت visit) */
   visit_points: number;
+  /** امتیاز ثابت هر فاکتور مستقل از مبلغ و تعداد خرید روز */
+  invoice_points: number;
   /** حداقل مبلغ فاکتور برای احتساب امتیاز روزانه (حالت visit) */
   visit_min_amount: number;
   /** تبدیل امتیاز به کد تخفیف */

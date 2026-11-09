@@ -128,7 +128,7 @@ if (!logicBlock) {
     const node = {
       value: '', textContent: '', innerHTML: '', disabled: false, readOnly: false,
       dataset: {}, style: {},
-      classList: { _s: new Set(), add(c) { this._s.add(c); }, remove(c) { this._s.delete(c); }, contains(c) { return this._s.has(c); } },
+      classList: { _s: new Set(), add(c) { this._s.add(c); }, remove(c) { this._s.delete(c); }, contains(c) { return this._s.has(c); }, toggle(c,on) { if(on===undefined)on=!this._s.has(c);if(on)this._s.add(c);else this._s.delete(c);return on; } },
       addEventListener() {}, removeEventListener() {}, focus() {}, select() {}, click() {},
       querySelector() { return element(); }, querySelectorAll() { return []; },
       closest() { return null; }, setAttribute() {}, getAttribute() { return null; }, remove() {},
