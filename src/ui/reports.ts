@@ -18,6 +18,7 @@ const ACTION_LABELS: Record<string, { label: string; tone: string; iconName: str
   admin_report_failed: { label: 'گزارش ادمین در صف ثبت نشد', tone: 'danger', iconName: 'warning' },
   invoice_correct: { label: 'اصلاح فاکتور', tone: 'warning', iconName: 'receipt' },
   fallback_settings_update: { label: 'تنظیم پیام‌های ادمین', tone: 'info', iconName: 'settings' },
+  fallback_diagnose: { label: 'بررسی ارتباط بدون ارسال', tone: 'info', iconName: 'shield' },
   fallback_test: { label: 'تست اتصال پیام‌رسان', tone: 'muted', iconName: 'chat' },
   fallback_retry: { label: 'تلاش مجدد پیام ادمین', tone: 'warning', iconName: 'chat' },
   shift_open: { label: 'باز شدن صندوق', tone: 'success', iconName: 'receipt' },

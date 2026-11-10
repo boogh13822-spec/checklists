@@ -1,4 +1,4 @@
-> **این گزارش مربوط به مرحلهٔ auth-native-v3 است.** نسخهٔ فعلی `site-recovery-v4`، رفتار صفحات با نشست قبلی، ارتقای کامل‌تر و تست‌های تازه در [RECOVERY-FA.md](RECOVERY-FA.md) توضیح داده شده‌اند و بر توضیحات قدیمی مقدم‌اند.
+> **این گزارش مربوط به مرحلهٔ auth-native-v3 است.** فایل جاری `messenger-diagnostics-v5` تمام اصلاحات ورود/بازیابی v4 را حفظ می‌کند. راهنمای فعلی: [تشخیص پیام‌رسان](MESSENGER-DIAGNOSTICS-FA.md)؛ جزئیات بازیابی ورود و DB: [RECOVERY-FA.md](RECOVERY-FA.md).
 
 # اصلاح ورود — نسخهٔ auth-native-v3
 

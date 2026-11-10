@@ -6,11 +6,11 @@
  *  همه‌ی مسیرها، API ها، صفحات و جاب‌های Cron در همین پروژه قرار دارند.
  * ============================================================================
  */
-import { drainFallbackQueue, retryFallbackJob, enqueueFallback, fallbackHistory, loadFallbackConfig, processFallbackQueue, safeFallbackConfig, saveFallbackConfig, smsPanelActive } from './lib/fallback';
+import { diagnoseFallback, drainFallbackQueue, retryFallbackJob, enqueueFallback, fallbackHistory, loadFallbackConfig, processFallbackQueue, safeFallbackConfig, saveFallbackConfig, smsPanelActive } from './lib/fallback';
 import { adminFallbackPage } from './ui/fallback';
 import { Hono } from 'hono';
 import { maintenancePage } from './ui/maintenance';
-import { schemaStatus, applySchemaSteps, upgradeBackup, backupReceipt, verifyBackupReceipt, invalidateSchemaCache, isSchemaError, SCHEMA_VERSION } from './lib/schema';
+import { schemaStatus, applySchemaSteps, upgradeBackup, backupReceipt, verifyBackupReceipt, invalidateSchemaCache, isSchemaError } from './lib/schema';
 import { bodyLimit } from 'hono/body-limit';
 import { notifyAdminAction, notifyAdminInvoice } from './lib/admin-notifications';
 
@@ -135,7 +135,7 @@ import { adminLogsCsv, adminLogsPage, adminReportsPage, reportsCsv } from './ui/
  * ========================================================================== */
 
 const app = new Hono<AppEnv>();
-const APP_BUILD = SCHEMA_VERSION;
+const APP_BUILD = 'messenger-diagnostics-v5';
 
 /**
  * منطقه‌ی زمانی از متغیر محیطی TZ_NAME (پیش‌فرض Asia/Tehran).
@@ -314,10 +314,11 @@ const sameOriginWrite: MiddlewareHandler<AppEnv> = async (c, next) => {
 };
 app.use('/api/*', sameOriginWrite);
 app.use('/login', sameOriginWrite);
-const loginBodyLimit = bodyLimit({ maxSize: 16 * 1024, onError: (c) => fail(c, 'حجم فرم ورود بیش از حد مجاز است.', 413, 'BODY_TOO_LARGE') });
+const loginBodyLimit = bodyLimit({ maxSize: 16 * 1024, onError: (c) => fail(c, 'حجم درخواست بیش از حد مجاز است.', 413, 'BODY_TOO_LARGE') });
 app.use('/login', loginBodyLimit);
 app.use('/api/auth/login', loginBodyLimit);
 app.use('/api/admin/system/schema', loginBodyLimit);
+app.use('/api/admin/fallback/diagnose', loginBodyLimit);
 
 /* --------------------------------------------------------------------------
  *  محدودسازی نرخ عمومی API
@@ -2201,6 +2202,25 @@ app.put('/api/admin/fallback', requireApiRole('admin'), async (c) => {
   await audit(c, 'fallback_settings_update', { targetType: 'settings', details: 'تنظیمات مسیر جایگزین پیامک تغییر کرد (بدون ثبت توکن).' });
   return ok(c, { saved: true });
 });
+/** No outgoing message, queue write or webhook change. Uses SAVED configuration only. */
+app.post('/api/admin/fallback/diagnose', requireApiRole('admin'), async (c) => {
+  const { dbRateLimit } = await import('./lib/otp');
+  const rate = await dbRateLimit(c.env.DB, 'fallback:diagnose:' + c.get('user')!.uid, 3, 60);
+  if (!rate) return fail(c, 'بررسی ارتباط فعلاً به‌علت خطای دیتابیس ممکن نیست.', 503, 'DIAGNOSIS_UNAVAILABLE');
+  if (!rate.allowed) { c.header('Retry-After', String(rate.retryAfter)); return fail(c, 'حداکثر ۳ بررسی ارتباط در دقیقه؛ کمی بعد دوباره تلاش کنید.', 429, 'RATE_LIMITED'); }
+  let body: Record<string, unknown>;
+  try { body = await c.req.json(); } catch { return fail(c, 'JSON نامعتبر است.', 400, 'BAD_JSON'); }
+  if (!body || (body.channel !== 'telegram' && body.channel !== 'bale')) return fail(c, 'پیام‌رسان نامعتبر است.', 400, 'INVALID_CHANNEL');
+  let report: Awaited<ReturnType<typeof diagnoseFallback>>;
+  try { report = await diagnoseFallback(c.env, body.channel); }
+  catch { return fail(c, 'مقصد ذخیره‌شده، توکن یا کلید رمزنگاری در دسترس نیست. تنظیمات را ذخیره و Secret موجود را بدون برنامه عوض نکنید.', 400, 'FALLBACK_CONFIG_ERROR'); }
+  // Intentionally NOT audit(): that helper can enqueue a messenger notification.
+  await logAdminAction(c.env.DB, { adminId: c.get('user')!.uid, adminName: c.get('user')!.name,
+    action: 'fallback_diagnose', targetType: 'messenger', targetId: body.channel,
+    details: report.checks.map(check => check.stage + ':' + check.code + ':' + check.diagnostic.referenceId).join(' | ') });
+  return ok(c, report);
+});
+
 app.post('/api/admin/fallback/test', requireApiRole('admin'), async (c) => {
   const { dbRateLimit } = await import('./lib/otp');
   const limit = await dbRateLimit(c.env.DB, 'fallback:test:' + c.get('user')!.uid, 3, 60);
@@ -2837,7 +2857,7 @@ async function scheduled(
 export default {
   async fetch(request, env, ctx) {
     const response = await app.fetch(request, env, ctx);
-    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method) || (request.method === 'GET' && new URL(request.url).pathname === '/api/admin/fallback/history' && response.status === 200)) {
+    if ((['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method) && new URL(request.url).pathname !== '/api/admin/fallback/diagnose') || (request.method === 'GET' && new URL(request.url).pathname === '/api/admin/fallback/history' && response.status === 200)) {
       ctx.waitUntil((async () => { if ((await schemaStatus(env.DB)).ready) await processFallbackQueue(env); })().catch(() => console.error('fallback dispatcher failed')));
     }
     return response;

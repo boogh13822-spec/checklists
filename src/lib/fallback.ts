@@ -105,6 +105,16 @@ export async function saveFallbackConfig(env: Bindings, body: unknown): Promise<
   ]);
 }
 
+/** Probe existing encrypted/env credentials without creating any message job. */
+export async function diagnoseFallback(env: Bindings, channel: FallbackChannel) {
+  const config = await loadFallbackConfig(env);
+  const destination = config.channels.find(c => c.channel === channel);
+  if (!destination) throw new Error('CHANNEL_NOT_CONFIGURED');
+  const token = await channelToken(env, destination);
+  if (!validBotToken(token) || !validChatId(destination.chatId)) throw new Error('INVALID_CONFIG');
+  return adapters[channel].diagnose(token, destination.chatId);
+}
+
 export function smsPanelActive(env: Bindings, settings: AppSettings): boolean {
   if (settings.sms_enabled === 0 || settings.sms_provider === 'console') return false;
   const key = settings.sms_provider === 'smsir' ? env.SMSIR_API_KEY : env.KAVENEGAR_API_KEY;

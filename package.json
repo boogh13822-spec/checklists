@@ -26,7 +26,8 @@
     "test:login": "node scripts/test-login.mjs",
     "test:schema": "node scripts/test-schema.mjs",
     "schema:check": "node scripts/generate-schema.mjs --check",
-    "test:recovery:browser": "node scripts/test-recovery-browser.mjs"
+    "test:recovery:browser": "node scripts/test-recovery-browser.mjs",
+    "test:messenger": "node scripts/test-messenger.mjs"
   },
   "dependencies": {
     "hono": "^4.13.13"

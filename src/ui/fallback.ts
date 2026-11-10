@@ -37,7 +37,12 @@ export const fallbackPanel = `
         <p id="fb-${ch}-source" class="hint"></p>
         <details class="text-xs"><summary class="cursor-pointer text-cream/50">حذف توکن ذخیره‌شده</summary>
           <label class="flex gap-2 mt-2"><input id="fb-${ch}-clear" type="checkbox" /> حذف توکن برنامه؛ Secret محیطی حذف نمی‌شود.</label></details>
-        <button type="button" id="fb-${ch}-test" class="btn btn-ghost btn-sm">ذخیره و تست اتصال</button>
+        <div class="flex flex-wrap gap-2">
+          <button type="button" id="fb-${ch}-diagnose" class="btn btn-ghost btn-sm">بررسی ارتباط بدون ارسال</button>
+          <button type="button" id="fb-${ch}-test" class="btn btn-ghost btn-sm">ذخیره و ارسال پیام آزمایشی</button>
+        </div>
+        <p class="hint">بررسی ارتباط فقط توکن ذخیره‌شده و مقصد را با API بررسی می‌کند؛ Webhook لازم نیست و پیام جدیدی نمی‌سازد؛ کارهای قبلی صف ممکن است طبق روال ادامه یابند.</p>
+        <p id="fb-${ch}-diagnostic" class="hint whitespace-pre-line break-words" role="status" aria-live="polite"></p>
         <p id="fb-${ch}-result" class="hint" role="status"></p>
       </div>
     </fieldset>`).join('')}
@@ -95,6 +100,7 @@ export const fallbackScripts = String.raw`
       var input=el('fb-'+ch+'-token');input.value='';input.type='password';input.disabled=!!(row&&row.tokenSource==='env');
       input.placeholder=row&&row.hasToken?'توکن محفوظ است؛ خالی یعنی بدون تغییر':'توکن بات را وارد کنید';
       el('fb-'+ch+'-reveal').textContent='نمایش';el('fb-'+ch+'-clear').checked=false;
+      el('fb-'+ch+'-diagnostic').textContent='';
       el('fb-'+ch+'-source').textContent=row&&row.tokenSource==='env'?'توکن از Secret ورکر خوانده می‌شود؛ برای تغییر، همان Secret را ویرایش کنید.':row&&row.hasToken?'توکن ذخیره شده و از سرور بازگردانده نمی‌شود.':'توکن واقعی را فقط اینجا یا در Secret ورکر وارد کنید.';
     });
     selectedFields();state(c);ready=true;setDirty(false);el('fallback-save').disabled=false;
@@ -127,7 +133,7 @@ export const fallbackScripts = String.raw`
           '<div class="text-cream/40">'+esc(faDate(j.created_at))+'</div>'+
           (phone?'<button type="button" data-copy-phone="'+esc(phone)+'" class="font-mono select-all" dir="ltr" title="کپی شماره">'+esc(phone)+' ⧉</button>':'')+
           (j.type==='otp'?'<p class="text-amber-200">متن و شماره کد ورود در تاریخچه نمایش داده نمی‌شود.</p>':text?'<p class="whitespace-pre-wrap break-words">'+esc(text.slice(0,150))+(text.length>150?'…':'')+'</p>':'<p class="hint">محتوا در دسترس نیست؛ کلید رمزنگاری را بررسی کنید.</p>')+
-          (j.error?'<p class="text-amber-200 whitespace-pre-wrap break-words">'+esc(j.error.replace(/^[A-Z_]+:\s*/,''))+'</p>':'')+
+          (j.error?'<p class="text-amber-200 whitespace-pre-wrap break-words">'+esc(j.error)+'</p>':'')+
           '<details><summary class="cursor-pointer text-cream/50">جزئیات'+(text.length>150?' و متن کامل':'')+'</summary><div class="mt-2 space-y-2">'+
           (text.length>150?'<pre class="whitespace-pre-wrap break-words font-sans">'+esc(text)+'</pre>':'')+
           '<p>تعداد تلاش در این نوبت: '+fa(j.attempts)+' | مقصد: <bdi>'+esc(j.chat_id)+'</bdi></p><p>شناسه: <bdi>'+esc(j.id)+'</bdi></p></div></details>'+
@@ -144,6 +150,18 @@ export const fallbackScripts = String.raw`
   channels.forEach(function(ch){
     ['selected','chat','token','clear'].forEach(function(key){el('fb-'+ch+'-'+key).addEventListener(key==='chat'||key==='token'?'input':'change',function(){setDirty(true);selectedFields();});});
     el('fb-'+ch+'-reveal').addEventListener('click',function(){var input=el('fb-'+ch+'-token');input.type=input.type==='password'?'text':'password';this.textContent=input.type==='password'?'نمایش':'مخفی';});
+    el('fb-'+ch+'-diagnose').addEventListener('click',async function(){
+      if(busy||!ready)return;
+      var output=el('fb-'+ch+'-diagnostic');
+      if(dirty){output.textContent='ابتدا تغییرات را با دکمهٔ ذخیره پیام‌های ادمین ذخیره کنید؛ سپس بررسی ارتباط را بزنید.';return;}
+      busy=true;lockConfig(true);var button=this;setLoading(button,true,'در حال بررسی…');output.textContent='بررسی از سرور Cloudflare انجام می‌شود؛ پیام جدید ارسال نمی‌شود…';
+      try {
+        var result=await api('/api/admin/fallback/diagnose',{method:'POST',body:{channel:ch}});
+        output.textContent=result.checks.map(function(check){var d=check.diagnostic;return(check.stage==='bot'?'اعتبار توکن و ارتباط: ':'دسترسی به مقصد: ')+(check.ok?'موفق — ':'ناموفق — ')+check.message+' ['+check.code+']'+(d?' (مرحله '+d.phase+(d.httpStatus?'؛ HTTP '+d.httpStatus:'')+'؛ مدت '+fa(d.elapsedMs)+' میلی‌ثانیه؛ پیگیری '+d.referenceId+')':'');}).join('\n')+
+          (result.ready?'\nAPI بات و مقصد پاسخ دادند؛ برای تأیید ارسال واقعی، جداگانه پیام آزمایشی بفرستید.':'\nبررسی متوقف شد؛ کد خطا و شناسهٔ پیگیری را بدون توکن برای پشتیبانی بفرستید.');
+      }catch(e){output.textContent=e.message||'بررسی کامل نشد؛ ارتباط مرورگر با سایت را هم بررسی کنید.';}
+      finally{busy=false;lockConfig(false);setLoading(button,false);}
+    });
     el('fb-'+ch+'-test').addEventListener('click',async function(){if(busy||!ready)return;busy=true;lockConfig(true);var btn=this;setLoading(btn,true,'در حال ثبت تست…');try{
       if(dirty)await save();var result=await api('/api/admin/fallback/test',{method:'POST',body:{channel:ch}});tests[ch]=result.ids;
       el('fb-'+ch+'-result').textContent='تست در صف است؛ نتیجه خودکار به‌روز می‌شود. دریافت واقعی پیام را هم بررسی کنید.';

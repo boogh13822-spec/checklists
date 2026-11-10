@@ -82,13 +82,14 @@ try{
   // Messenger panel uses explicit fixtures: no real bot credential is saved or provider called.
   let cfg={enabled:false,notifyEnabled:false,notifyInvoices:true,notifyActions:true,encryptionKeyConfigured:true,primaryActive:true,channels:[]};
   const job={id:'fixture-report',channel:'telegram',chat_id:'123',user_id:null,type:'report_action',reason:'event',status:'failed',error:'NETWORK_UNKNOWN: نتیجه نامشخص',attempts:1,expires_at:Date.now()+1000000,created_at:'2026-10-21 12:00:00',content:{phone:'09123334444',message:'<script>window.INJECTED=true</script> & متن امن',requestedAt:new Date().toISOString()}};
-  let retryBody=null,puts=0,slowHistory=null;
+  let retryBody=null,puts=0,slowHistory=null,diagnoseCalls=0,testCalls=0,diagnoseReady=false;
   const panel=await pageFor(admin);
   await panel.route('**/api/admin/fallback**',async route=>{
     const req=route.request(),url=new URL(req.url());let value;
     if(url.pathname.endsWith('/history')){const snapshot={items:[{...job}],total:1,page:1,stats:{failed:job.status==='failed'?1:0,sent:job.status==='sent'?1:0}};if(slowHistory){const wait=slowHistory;slowHistory=null;await wait;}value=snapshot;}
     else if(url.pathname.endsWith('/retry')){retryBody=req.postDataJSON();job.status='sent';value={message:'در صف قرار گرفت'};}
-    else if(url.pathname.endsWith('/test'))value={ids:['fixture-report']};
+    else if(url.pathname.endsWith('/diagnose')){diagnoseCalls++;value={channel:'telegram',ready:diagnoseReady,messageSent:false,checks:diagnoseReady?['bot','chat'].map(stage=>({stage,ok:true,code:stage==='bot'?'BOT_REACHABLE':'CHAT_REACHABLE',message:'پاسخ معتبر API',diagnostic:{phase:'response',httpStatus:200,elapsedMs:45,referenceId:'diag-safe-fixture'}})):[{stage:'bot',ok:false,code:'FETCH_FAILED',message:'<script>window.DIAG_INJECTED=true</script>',diagnostic:{phase:'request',elapsedMs:12,referenceId:'diag-safe-fixture'}}]};}
+    else if(url.pathname.endsWith('/test')){testCalls++;value={ids:['fixture-report']};}
     else if(req.method()==='PUT'){const body=req.postDataJSON();puts++;cfg={...cfg,...body,channels:body.channels.map(c=>({channel:c.channel,chatId:c.chatId,hasToken:!!c.token,tokenSource:'database'}))};value={saved:true};}
     else value=cfg;
     await route.fulfill({json:{ok:true,data:value}});
@@ -98,6 +99,18 @@ try{
   });
   await test('report-only save retains independence, clears secret input, and tracks unsaved edits',async()=>{
     await panel.locator('#fallback-notify').check();await panel.locator('#fb-telegram-selected').check();await panel.locator('#fb-telegram-chat').fill('123');await panel.locator('#fb-telegram-token').fill('123456:'+ 'x'.repeat(32));assert((await panel.locator('#fallback-dirty').innerText()).length>0);await panel.locator('#fallback-save').click();await panel.waitForFunction(()=>document.getElementById('fallback-dirty').textContent==='');assert.equal(puts,1);assert.equal(cfg.enabled,false);assert.equal(cfg.notifyEnabled,true);assert.equal(await panel.locator('#fb-telegram-token').inputValue(),'');
+  });
+  await test('diagnostic requires saved config; dirty edits never call API or auto-send',async()=>{
+    await panel.locator('#fb-telegram-chat').fill('456');await panel.locator('#fb-telegram-diagnose').click();assert((await panel.locator('#fb-telegram-diagnostic').innerText()).includes('ابتدا تغییرات'));assert.equal(diagnoseCalls,0);assert.equal(testCalls,0);
+    panel.once('dialog',d=>d.accept());await panel.locator('#fallback-reload').click();await panel.waitForFunction(()=>document.getElementById('fb-telegram-chat').value==='123');
+  });
+  await test('diagnostic safely displays code and reference without HTML execution or a send request',async()=>{
+    await panel.locator('#fb-telegram-diagnose').click();await panel.waitForFunction(()=>document.getElementById('fb-telegram-diagnostic').textContent.includes('FETCH_FAILED'));
+    const output=await panel.locator('#fb-telegram-diagnostic').innerText();assert(output.includes('diag-safe-fixture'));assert(output.includes('<script>'));assert.equal(await panel.evaluate(()=>window.DIAG_INJECTED),undefined);assert.equal(diagnoseCalls,1);assert.equal(testCalls,0);assert(!(await panel.locator('#fb-telegram-diagnose').isDisabled()));
+  });
+  await test('successful diagnostic distinguishes readable chat from verified message delivery',async()=>{
+    diagnoseReady=true;await panel.locator('#fb-telegram-diagnose').click();await panel.waitForFunction(()=>document.getElementById('fb-telegram-diagnostic').textContent.includes('CHAT_REACHABLE'));
+    const output=await panel.locator('#fb-telegram-diagnostic').textContent();assert(output.includes('برای تأیید ارسال واقعی'));assert(output.includes('HTTP 200'));assert(output.includes('\n'));assert.equal(diagnoseCalls,2);assert.equal(testCalls,0);
   });
   await test('uncertain-delivery retry asks for consent and transmits explicit risk confirmation',async()=>{
     panel.once('dialog',d=>d.accept());await panel.locator('[data-retry-id]').click();await panel.waitForFunction(()=>document.getElementById('fallback-history').textContent.includes('ارسال موفق'));assert.equal(retryBody.confirmDuplicateRisk,true);

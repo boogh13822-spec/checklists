@@ -105,54 +105,148 @@ var init_crypto = __esm({
 });
 
 // src/lib/fallback-adapters.ts
+function networkCode(error) {
+  const e = error;
+  const code = typeof e?.cause?.code === "string" ? e.cause.code : typeof e?.code === "string" ? e.code : "";
+  if (["ENOTFOUND", "EAI_AGAIN"].includes(code)) return "DNS_FAILURE";
+  if (["CERT_HAS_EXPIRED", "DEPTH_ZERO_SELF_SIGNED_CERT", "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "ERR_TLS_CERT_ALTNAME_INVALID", "ERR_SSL_PROTOCOL_ERROR"].includes(code)) return "TLS_FAILURE";
+  if (["ECONNRESET", "ECONNREFUSED", "UND_ERR_SOCKET"].includes(code)) return "NETWORK_RESET";
+  if (["ETIMEDOUT", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT"].includes(code) || e?.name === "TimeoutError") return "NETWORK_TIMEOUT";
+  return "FETCH_FAILED";
+}
+function identifier(value, signed = false) {
+  return typeof value === "number" && Number.isSafeInteger(value) && (signed || value >= 0) || typeof value === "string" && (signed ? /^-?\d{1,64}$/ : /^\d{1,64}$/).test(value);
+}
 function validChatId(value) {
   return /^-?[1-9]\d{0,19}$/.test(value) || /^@[A-Za-z][A-Za-z0-9_]{4,31}$/.test(value);
 }
 function validBotToken(value) {
   return /^\d{1,20}:[A-Za-z0-9_-]{20,200}$/.test(value);
 }
-var BotApiAdapter, adapters;
+var messages, BotApiAdapter, adapters;
 var init_fallback_adapters = __esm({
   "src/lib/fallback-adapters.ts"() {
     "use strict";
+    messages = {
+      NETWORK_TIMEOUT: "\u0645\u0647\u0644\u062A \u0627\u0631\u062A\u0628\u0627\u0637 \u0628\u0627 \u067E\u06CC\u0627\u0645\u200C\u0631\u0633\u0627\u0646 \u062A\u0645\u0627\u0645 \u0634\u062F.",
+      DNS_FAILURE: "\u0646\u0627\u0645 \u0645\u06CC\u0632\u0628\u0627\u0646 \u067E\u06CC\u0627\u0645\u200C\u0631\u0633\u0627\u0646 \u062F\u0631 \u0633\u0631\u0648\u0631 \u0642\u0627\u0628\u0644 \u062A\u0628\u062F\u06CC\u0644 \u0628\u0647 \u0646\u0634\u0627\u0646\u06CC \u0634\u0628\u06A9\u0647 \u0646\u0628\u0648\u062F.",
+      TLS_FAILURE: "\u0628\u0631\u0642\u0631\u0627\u0631\u06CC \u0627\u062A\u0635\u0627\u0644 \u0627\u0645\u0646 TLS \u0628\u0627 \u067E\u06CC\u0627\u0645\u200C\u0631\u0633\u0627\u0646 \u0646\u0627\u0645\u0648\u0641\u0642 \u0628\u0648\u062F.",
+      NETWORK_RESET: "\u0627\u062A\u0635\u0627\u0644 \u0633\u0631\u0648\u0631 \u0628\u0627 \u067E\u06CC\u0627\u0645\u200C\u0631\u0633\u0627\u0646 \u0642\u0637\u0639 \u06CC\u0627 \u0631\u062F \u0634\u062F.",
+      FETCH_FAILED: "\u0627\u062C\u0631\u0627\u06CC \u062F\u0631\u062E\u0648\u0627\u0633\u062A \u0627\u0632 \u0633\u0631\u0648\u0631 \u0628\u0647 \u067E\u06CC\u0627\u0645\u200C\u0631\u0633\u0627\u0646 \u0634\u06A9\u0633\u062A \u062E\u0648\u0631\u062F\u061B \u0646\u0648\u0639 \u062F\u0642\u06CC\u0642 \u062E\u0637\u0627\u06CC \u0634\u0628\u06A9\u0647 \u0627\u0632 runtime \u0645\u0634\u062E\u0635 \u0646\u0634\u062F.",
+      BODY_READ_FAILED: "\u067E\u0627\u0633\u062E \u0622\u063A\u0627\u0632 \u0634\u062F \u0648\u0644\u06CC \u062E\u0648\u0627\u0646\u062F\u0646 \u06A9\u0627\u0645\u0644 \u0622\u0646 \u0634\u06A9\u0633\u062A \u062E\u0648\u0631\u062F.",
+      RUNTIME_UNAVAILABLE: "\u0627\u0628\u0632\u0627\u0631 \u0644\u0627\u0632\u0645 \u0628\u0631\u0627\u06CC \u0627\u062C\u0631\u0627\u06CC \u062F\u0631\u062E\u0648\u0627\u0633\u062A \u06CC\u0627 \u0644\u063A\u0648 \u0632\u0645\u0627\u0646\u200C\u062F\u0627\u0631 \u0622\u0646 \u062F\u0631 runtime \u062F\u0631 \u062F\u0633\u062A\u0631\u0633 \u0646\u06CC\u0633\u062A.",
+      REQUEST_SETUP_FAILED: "\u062F\u0631\u062E\u0648\u0627\u0633\u062A \u067E\u06CC\u0634 \u0627\u0632 \u0634\u0631\u0648\u0639 \u0627\u0631\u062A\u0628\u0627\u0637 \u0622\u0645\u0627\u062F\u0647 \u0646\u0634\u062F.",
+      REDIRECT_BLOCKED: "\u067E\u06CC\u0627\u0645\u200C\u0631\u0633\u0627\u0646 \u067E\u0627\u0633\u062E \u0627\u0646\u062A\u0642\u0627\u0644 \u0646\u0634\u0627\u0646\u06CC \u062F\u0627\u062F\u061B \u0628\u0631\u0627\u06CC \u062D\u0641\u0627\u0638\u062A \u0627\u0632 \u062A\u0648\u06A9\u0646\u060C \u0627\u0646\u062A\u0642\u0627\u0644 \u062F\u0646\u0628\u0627\u0644 \u0646\u0634\u062F.",
+      INVALID_RESPONSE: "\u067E\u0627\u0633\u062E \u062F\u0631\u06CC\u0627\u0641\u062A\u06CC\u060C \u067E\u0627\u0633\u062E \u0645\u0639\u062A\u0628\u0631 \u0648 \u0645\u0648\u0631\u062F \u0627\u0646\u062A\u0638\u0627\u0631 Bot API \u0646\u0628\u0648\u062F.",
+      INVALID_TOKEN: "\u062A\u0648\u06A9\u0646 \u0631\u0628\u0627\u062A \u062A\u0648\u0633\u0637 API \u067E\u0630\u06CC\u0631\u0641\u062A\u0647 \u0646\u0634\u062F.",
+      INVALID_CHAT: "API \u0645\u0642\u0635\u062F \u0631\u0627 \u0646\u067E\u0630\u06CC\u0631\u0641\u062A\u061B \u0634\u0646\u0627\u0633\u0647\u0654 \u0686\u062A \u0647\u0645\u0627\u0646 \u067E\u06CC\u0627\u0645\u200C\u0631\u0633\u0627\u0646 \u0648 \u0634\u0631\u0648\u0639 \u06AF\u0641\u062A\u200C\u0648\u06AF\u0648/\u062F\u0633\u062A\u0631\u0633\u06CC \u0631\u0628\u0627\u062A \u0631\u0627 \u0628\u0631\u0631\u0633\u06CC \u06A9\u0646\u06CC\u062F.",
+      FORBIDDEN: "API \u062F\u0633\u062A\u0631\u0633\u06CC \u0627\u06CC\u0646 \u0639\u0645\u0644\u06CC\u0627\u062A \u0631\u0627 \u0631\u062F \u06A9\u0631\u062F\u061B \u0645\u0645\u06A9\u0646 \u0627\u0633\u062A \u0631\u0628\u0627\u062A \u0645\u0633\u062F\u0648\u062F \u06CC\u0627 \u0645\u062C\u0648\u0632 \u0645\u0642\u0635\u062F \u0645\u062D\u062F\u0648\u062F \u0628\u0627\u0634\u062F.",
+      RATE_LIMITED: "\u067E\u06CC\u0627\u0645\u200C\u0631\u0633\u0627\u0646 \u0645\u062D\u062F\u0648\u062F\u06CC\u062A \u0646\u0631\u062E \u0627\u0639\u0644\u0627\u0645 \u06A9\u0631\u062F.",
+      PROVIDER_ERROR: "\u067E\u06CC\u0627\u0645\u200C\u0631\u0633\u0627\u0646 \u067E\u0627\u0633\u062E \u0646\u0627\u0645\u0648\u0641\u0642 \u062F\u0627\u062F\u061B \u0648\u0636\u0639\u06CC\u062A HTTP \u062F\u0631 \u062C\u0632\u0626\u06CC\u0627\u062A \u0622\u0645\u062F\u0647 \u0627\u0633\u062A."
+    };
     BotApiAdapter = class {
-      constructor(origin) {
+      constructor(channel, origin) {
+        this.channel = channel;
         this.origin = origin;
       }
+      channel;
       origin;
-      async send(token, chatId, text) {
+      async request(token, method, body, timeoutMs) {
+        const start = Date.now();
+        const d = { referenceId: crypto.randomUUID(), channel: this.channel, method, phase: "setup", code: "", elapsedMs: 0 };
+        let controller;
+        let timer;
+        const fail2 = (code, retryAfter) => {
+          d.code = code;
+          d.elapsedMs = Math.max(0, Date.now() - start);
+          console.warn("MESSENGER_REQUEST_FAILED", { ...d });
+          const unknown = method === "sendMessage" && !["INVALID_TOKEN", "INVALID_CHAT", "FORBIDDEN", "RATE_LIMITED", "RUNTIME_UNAVAILABLE", "REQUEST_SETUP_FAILED"].includes(code);
+          return {
+            ok: false,
+            error: code + ": " + messages[code] + (d.httpStatus ? " HTTP=" + d.httpStatus + "." : "") + " \u0645\u0631\u062D\u0644\u0647=" + d.phase + "\u061B \u067E\u06CC\u06AF\u06CC\u0631\u06CC=" + d.referenceId + "." + (unknown ? " \u0646\u062A\u06CC\u062C\u0647\u0654 \u0627\u0631\u0633\u0627\u0644 \u0646\u0627\u0645\u0634\u062E\u0635 \u0627\u0633\u062A\u061B \u0627\u0631\u0633\u0627\u0644 \u062E\u0648\u062F\u06A9\u0627\u0631 \u062A\u06A9\u0631\u0627\u0631 \u0646\u0634\u062F." : ""),
+            diagnostic: { ...d },
+            ...retryAfter === void 0 ? {} : { retryAfter }
+          };
+        };
         try {
-          const response = await fetch(`${this.origin}/bot${token}/sendMessage`, {
+          if (typeof fetch !== "function" || typeof AbortController !== "function") return fail2("RUNTIME_UNAVAILABLE");
+          controller = new AbortController();
+          timer = setTimeout(() => controller.abort(), timeoutMs);
+          d.phase = "request";
+          const response = await fetch(`${this.origin}/bot${token}/${method}`, {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            // Plain text: customer content can never inject HTML/Markdown.
-            body: JSON.stringify({ chat_id: chatId, text }),
-            redirect: "error",
-            signal: AbortSignal.timeout(12e3)
+            headers: { "Content-Type": "application/json", Accept: "application/json" },
+            body: JSON.stringify(body),
+            redirect: "manual",
+            signal: controller.signal
           });
-          const data = await response.json().catch(() => null);
-          const code = data?.error_code ?? response.status;
-          if (response.ok && data?.ok === true && data.result?.message_id !== void 0) {
-            return { ok: true, messageId: String(data.result.message_id) };
+          d.httpStatus = response.status;
+          d.phase = "response";
+          if (response.status >= 300 && response.status < 400) return fail2("REDIRECT_BLOCKED");
+          d.phase = "body";
+          const text = await response.text();
+          d.phase = "response";
+          let data = null;
+          if (text.length <= 65536) {
+            try {
+              const value = JSON.parse(text);
+              if (value && typeof value === "object" && !Array.isArray(value)) data = value;
+            } catch {
+            }
           }
+          const code = data?.ok === false && Number.isInteger(data.error_code) ? data.error_code : response.status;
           if (code === 429) {
             const delay = Number(data?.parameters?.retry_after ?? response.headers.get("Retry-After"));
-            return {
-              ok: false,
-              error: "RATE_LIMITED: \u0645\u062D\u062F\u0648\u062F\u06CC\u062A \u0646\u0631\u062E \u067E\u06CC\u0627\u0645\u200C\u0631\u0633\u0627\u0646\u061B \u062A\u0644\u0627\u0634 \u0645\u062C\u062F\u062F \u0632\u0645\u0627\u0646\u200C\u0628\u0646\u062F\u06CC \u0634\u062F.",
-              retryAfter: Number.isFinite(delay) && delay > 0 ? Math.min(86400, Math.ceil(delay)) : 60
-            };
+            return fail2("RATE_LIMITED", Number.isFinite(delay) && delay > 0 ? Math.min(86400, Math.ceil(delay)) : 60);
           }
-          const error = code === 401 || code === 404 ? "INVALID_TOKEN: \u062A\u0648\u06A9\u0646 \u0628\u0627\u062A \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A." : code === 403 ? "FORBIDDEN: \u0628\u0627\u062A \u0645\u0633\u062F\u0648\u062F \u0627\u0633\u062A \u06CC\u0627 \u0645\u062C\u0648\u0632 \u0627\u0631\u0633\u0627\u0644 \u0628\u0647 \u0645\u0642\u0635\u062F \u0646\u062F\u0627\u0631\u062F." : code === 400 ? "INVALID_CHAT: \u0634\u0646\u0627\u0633\u0647 \u0645\u0642\u0635\u062F \u06CC\u0627 \u062F\u0633\u062A\u0631\u0633\u06CC \u0628\u0627\u062A \u0631\u0627 \u0628\u0631\u0631\u0633\u06CC \u06A9\u0646\u06CC\u062F\u061B \u06A9\u0627\u0631\u0628\u0631 \u0628\u0627\u06CC\u062F \u0628\u0627\u062A \u0631\u0627 Start \u06A9\u0646\u062F." : `PROVIDER_ERROR: \u067E\u0627\u0633\u062E \u0646\u0627\u0645\u0648\u0641\u0642 \u067E\u06CC\u0627\u0645\u200C\u0631\u0633\u0627\u0646 (${response.status}). \u0627\u062D\u062A\u0645\u0627\u0644 \u062A\u062D\u0648\u06CC\u0644 \u0646\u0627\u0645\u0634\u062E\u0635\u061B \u0627\u0631\u0633\u0627\u0644 \u062E\u0648\u062F\u06A9\u0627\u0631 \u062A\u06A9\u0631\u0627\u0631 \u0646\u0634\u062F.`;
-          return { ok: false, error };
-        } catch {
-          return { ok: false, error: "NETWORK_UNKNOWN: \u0627\u062A\u0635\u0627\u0644 \u0642\u0637\u0639/\u0645\u0646\u0642\u0636\u06CC \u0634\u062F\u061B \u0627\u062D\u062A\u0645\u0627\u0644 \u062A\u062D\u0648\u06CC\u0644 \u0646\u0627\u0645\u0634\u062E\u0635 \u0627\u0633\u062A. \u0628\u0631\u0627\u06CC \u062C\u0644\u0648\u06AF\u06CC\u0631\u06CC \u0627\u0632 \u062A\u06A9\u0631\u0627\u0631\u060C \u0627\u0631\u0633\u0627\u0644 \u0645\u062C\u062F\u062F \u062E\u0648\u062F\u06A9\u0627\u0631 \u0627\u0646\u062C\u0627\u0645 \u0646\u0634\u062F." };
+          if (!data || typeof data.ok !== "boolean") return fail2("INVALID_RESPONSE");
+          if (response.ok && data.ok) {
+            if (!data.result || typeof data.result !== "object" || Array.isArray(data.result)) return fail2("INVALID_RESPONSE");
+            const valid = method === "sendMessage" ? identifier(data.result.message_id) : identifier(data.result.id, method === "getChat");
+            if (!valid) return fail2("INVALID_RESPONSE");
+            d.code = "OK";
+            d.elapsedMs = Math.max(0, Date.now() - start);
+            return { ok: true, data, diagnostic: { ...d } };
+          }
+          return fail2(code === 401 || code === 404 ? "INVALID_TOKEN" : code === 403 ? "FORBIDDEN" : code === 400 && method !== "getMe" ? "INVALID_CHAT" : "PROVIDER_ERROR");
+        } catch (error) {
+          return fail2(controller?.signal.aborted ? "NETWORK_TIMEOUT" : d.phase === "setup" ? "REQUEST_SETUP_FAILED" : d.phase === "body" ? "BODY_READ_FAILED" : networkCode(error));
+        } finally {
+          if (timer !== void 0) clearTimeout(timer);
         }
+      }
+      async send(token, chatId, text) {
+        const result = await this.request(token, "sendMessage", { chat_id: chatId, text }, 12e3);
+        if (!result.ok) return result;
+        return { ok: true, messageId: String(result.data.result.message_id) };
+      }
+      /** Read-only bot identity and chat lookup. Never getUpdates, setWebhook or sendMessage. */
+      async diagnose(token, chatId) {
+        const checks = [];
+        const bot = await this.request(token, "getMe", {}, 6e3);
+        checks.push({
+          stage: "bot",
+          ok: bot.ok,
+          code: bot.ok ? "BOT_REACHABLE" : bot.diagnostic.code,
+          message: bot.ok ? "\u0627\u0631\u062A\u0628\u0627\u0637 \u0633\u0631\u0648\u0631 \u0628\u0627 API \u0648 \u0627\u0639\u062A\u0628\u0627\u0631 \u062A\u0648\u06A9\u0646 \u062A\u0623\u06CC\u06CC\u062F \u0634\u062F." : messages[bot.diagnostic.code],
+          diagnostic: bot.diagnostic
+        });
+        if (bot.ok) {
+          const chat = await this.request(token, "getChat", { chat_id: chatId }, 6e3);
+          checks.push({
+            stage: "chat",
+            ok: chat.ok,
+            code: chat.ok ? "CHAT_REACHABLE" : chat.diagnostic.code,
+            message: chat.ok ? "API \u0627\u0637\u0644\u0627\u0639\u0627\u062A \u0645\u0642\u0635\u062F \u0631\u0627 \u0628\u0631\u06AF\u0631\u062F\u0627\u0646\u062F\u061B \u0627\u06CC\u0646 \u0628\u0647\u200C\u062A\u0646\u0647\u0627\u06CC\u06CC \u062A\u0636\u0645\u06CC\u0646 \u0645\u062C\u0648\u0632 \u06CC\u0627 \u062A\u062D\u0648\u06CC\u0644 \u067E\u06CC\u0627\u0645 \u0646\u06CC\u0633\u062A." : messages[chat.diagnostic.code],
+            diagnostic: chat.diagnostic
+          });
+        }
+        return { channel: this.channel, ready: checks.length === 2 && checks.every((c) => c.ok), checks, messageSent: false };
       }
     };
     adapters = {
-      telegram: new BotApiAdapter("https://api.telegram.org"),
-      bale: new BotApiAdapter("https://tapi.bale.ai")
+      telegram: new BotApiAdapter("telegram", "https://api.telegram.org"),
+      bale: new BotApiAdapter("bale", "https://tapi.bale.ai")
     };
   }
 });
@@ -842,6 +936,14 @@ async function saveFallbackConfig(env, body) {
         OR (reason NOT IN ('test','event') AND ?=0)
         OR (reason='event' AND (?=0 OR (type='report_invoice' AND ?=0) OR (type='report_action' AND ?=0))))`).bind(JSON.stringify(channels), input.enabled ? 1 : 0, notifyEnabled ? 1 : 0, notifyInvoices ? 1 : 0, notifyActions ? 1 : 0)
   ]);
+}
+async function diagnoseFallback(env, channel) {
+  const config = await loadFallbackConfig(env);
+  const destination = config.channels.find((c) => c.channel === channel);
+  if (!destination) throw new Error("CHANNEL_NOT_CONFIGURED");
+  const token = await channelToken(env, destination);
+  if (!validBotToken(token) || !validChatId(destination.chatId)) throw new Error("INVALID_CONFIG");
+  return adapters[channel].diagnose(token, destination.chatId);
 }
 function smsPanelActive(env, settings) {
   if (settings.sms_enabled === 0 || settings.sms_provider === "console") return false;
@@ -4007,7 +4109,12 @@ var fallbackPanel = `
         <p id="fb-${ch}-source" class="hint"></p>
         <details class="text-xs"><summary class="cursor-pointer text-cream/50">\u062D\u0630\u0641 \u062A\u0648\u06A9\u0646 \u0630\u062E\u06CC\u0631\u0647\u200C\u0634\u062F\u0647</summary>
           <label class="flex gap-2 mt-2"><input id="fb-${ch}-clear" type="checkbox" /> \u062D\u0630\u0641 \u062A\u0648\u06A9\u0646 \u0628\u0631\u0646\u0627\u0645\u0647\u061B Secret \u0645\u062D\u06CC\u0637\u06CC \u062D\u0630\u0641 \u0646\u0645\u06CC\u200C\u0634\u0648\u062F.</label></details>
-        <button type="button" id="fb-${ch}-test" class="btn btn-ghost btn-sm">\u0630\u062E\u06CC\u0631\u0647 \u0648 \u062A\u0633\u062A \u0627\u062A\u0635\u0627\u0644</button>
+        <div class="flex flex-wrap gap-2">
+          <button type="button" id="fb-${ch}-diagnose" class="btn btn-ghost btn-sm">\u0628\u0631\u0631\u0633\u06CC \u0627\u0631\u062A\u0628\u0627\u0637 \u0628\u062F\u0648\u0646 \u0627\u0631\u0633\u0627\u0644</button>
+          <button type="button" id="fb-${ch}-test" class="btn btn-ghost btn-sm">\u0630\u062E\u06CC\u0631\u0647 \u0648 \u0627\u0631\u0633\u0627\u0644 \u067E\u06CC\u0627\u0645 \u0622\u0632\u0645\u0627\u06CC\u0634\u06CC</button>
+        </div>
+        <p class="hint">\u0628\u0631\u0631\u0633\u06CC \u0627\u0631\u062A\u0628\u0627\u0637 \u0641\u0642\u0637 \u062A\u0648\u06A9\u0646 \u0630\u062E\u06CC\u0631\u0647\u200C\u0634\u062F\u0647 \u0648 \u0645\u0642\u0635\u062F \u0631\u0627 \u0628\u0627 API \u0628\u0631\u0631\u0633\u06CC \u0645\u06CC\u200C\u06A9\u0646\u062F\u061B Webhook \u0644\u0627\u0632\u0645 \u0646\u06CC\u0633\u062A \u0648 \u067E\u06CC\u0627\u0645 \u062C\u062F\u06CC\u062F\u06CC \u0646\u0645\u06CC\u200C\u0633\u0627\u0632\u062F\u061B \u06A9\u0627\u0631\u0647\u0627\u06CC \u0642\u0628\u0644\u06CC \u0635\u0641 \u0645\u0645\u06A9\u0646 \u0627\u0633\u062A \u0637\u0628\u0642 \u0631\u0648\u0627\u0644 \u0627\u062F\u0627\u0645\u0647 \u06CC\u0627\u0628\u0646\u062F.</p>
+        <p id="fb-${ch}-diagnostic" class="hint whitespace-pre-line break-words" role="status" aria-live="polite"></p>
         <p id="fb-${ch}-result" class="hint" role="status"></p>
       </div>
     </fieldset>`).join("")}
@@ -4064,6 +4171,7 @@ var fallbackScripts = String.raw`
       var input=el('fb-'+ch+'-token');input.value='';input.type='password';input.disabled=!!(row&&row.tokenSource==='env');
       input.placeholder=row&&row.hasToken?'توکن محفوظ است؛ خالی یعنی بدون تغییر':'توکن بات را وارد کنید';
       el('fb-'+ch+'-reveal').textContent='نمایش';el('fb-'+ch+'-clear').checked=false;
+      el('fb-'+ch+'-diagnostic').textContent='';
       el('fb-'+ch+'-source').textContent=row&&row.tokenSource==='env'?'توکن از Secret ورکر خوانده می‌شود؛ برای تغییر، همان Secret را ویرایش کنید.':row&&row.hasToken?'توکن ذخیره شده و از سرور بازگردانده نمی‌شود.':'توکن واقعی را فقط اینجا یا در Secret ورکر وارد کنید.';
     });
     selectedFields();state(c);ready=true;setDirty(false);el('fallback-save').disabled=false;
@@ -4096,7 +4204,7 @@ var fallbackScripts = String.raw`
           '<div class="text-cream/40">'+esc(faDate(j.created_at))+'</div>'+
           (phone?'<button type="button" data-copy-phone="'+esc(phone)+'" class="font-mono select-all" dir="ltr" title="کپی شماره">'+esc(phone)+' ⧉</button>':'')+
           (j.type==='otp'?'<p class="text-amber-200">متن و شماره کد ورود در تاریخچه نمایش داده نمی‌شود.</p>':text?'<p class="whitespace-pre-wrap break-words">'+esc(text.slice(0,150))+(text.length>150?'…':'')+'</p>':'<p class="hint">محتوا در دسترس نیست؛ کلید رمزنگاری را بررسی کنید.</p>')+
-          (j.error?'<p class="text-amber-200 whitespace-pre-wrap break-words">'+esc(j.error.replace(/^[A-Z_]+:\s*/,''))+'</p>':'')+
+          (j.error?'<p class="text-amber-200 whitespace-pre-wrap break-words">'+esc(j.error)+'</p>':'')+
           '<details><summary class="cursor-pointer text-cream/50">جزئیات'+(text.length>150?' و متن کامل':'')+'</summary><div class="mt-2 space-y-2">'+
           (text.length>150?'<pre class="whitespace-pre-wrap break-words font-sans">'+esc(text)+'</pre>':'')+
           '<p>تعداد تلاش در این نوبت: '+fa(j.attempts)+' | مقصد: <bdi>'+esc(j.chat_id)+'</bdi></p><p>شناسه: <bdi>'+esc(j.id)+'</bdi></p></div></details>'+
@@ -4113,6 +4221,18 @@ var fallbackScripts = String.raw`
   channels.forEach(function(ch){
     ['selected','chat','token','clear'].forEach(function(key){el('fb-'+ch+'-'+key).addEventListener(key==='chat'||key==='token'?'input':'change',function(){setDirty(true);selectedFields();});});
     el('fb-'+ch+'-reveal').addEventListener('click',function(){var input=el('fb-'+ch+'-token');input.type=input.type==='password'?'text':'password';this.textContent=input.type==='password'?'نمایش':'مخفی';});
+    el('fb-'+ch+'-diagnose').addEventListener('click',async function(){
+      if(busy||!ready)return;
+      var output=el('fb-'+ch+'-diagnostic');
+      if(dirty){output.textContent='ابتدا تغییرات را با دکمهٔ ذخیره پیام‌های ادمین ذخیره کنید؛ سپس بررسی ارتباط را بزنید.';return;}
+      busy=true;lockConfig(true);var button=this;setLoading(button,true,'در حال بررسی…');output.textContent='بررسی از سرور Cloudflare انجام می‌شود؛ پیام جدید ارسال نمی‌شود…';
+      try {
+        var result=await api('/api/admin/fallback/diagnose',{method:'POST',body:{channel:ch}});
+        output.textContent=result.checks.map(function(check){var d=check.diagnostic;return(check.stage==='bot'?'اعتبار توکن و ارتباط: ':'دسترسی به مقصد: ')+(check.ok?'موفق — ':'ناموفق — ')+check.message+' ['+check.code+']'+(d?' (مرحله '+d.phase+(d.httpStatus?'؛ HTTP '+d.httpStatus:'')+'؛ مدت '+fa(d.elapsedMs)+' میلی‌ثانیه؛ پیگیری '+d.referenceId+')':'');}).join('\n')+
+          (result.ready?'\nAPI بات و مقصد پاسخ دادند؛ برای تأیید ارسال واقعی، جداگانه پیام آزمایشی بفرستید.':'\nبررسی متوقف شد؛ کد خطا و شناسهٔ پیگیری را بدون توکن برای پشتیبانی بفرستید.');
+      }catch(e){output.textContent=e.message||'بررسی کامل نشد؛ ارتباط مرورگر با سایت را هم بررسی کنید.';}
+      finally{busy=false;lockConfig(false);setLoading(button,false);}
+    });
     el('fb-'+ch+'-test').addEventListener('click',async function(){if(busy||!ready)return;busy=true;lockConfig(true);var btn=this;setLoading(btn,true,'در حال ثبت تست…');try{
       if(dirty)await save();var result=await api('/api/admin/fallback/test',{method:'POST',body:{channel:ch}});tests[ch]=result.ids;
       el('fb-'+ch+'-result').textContent='تست در صف است؛ نتیجه خودکار به‌روز می‌شود. دریافت واقعی پیام را هم بررسی کنید.';
@@ -7385,8 +7505,8 @@ async function upgradeBackup(db) {
   const data = {};
   let bytes = 0;
   for (const table of tables) {
-    const identifier = '"' + table.name.replace(/"/g, '""') + '"';
-    const rows = await db.prepare(`SELECT * FROM ${identifier} LIMIT 20001`).all();
+    const identifier2 = '"' + table.name.replace(/"/g, '""') + '"';
+    const rows = await db.prepare(`SELECT * FROM ${identifier2} LIMIT 20001`).all();
     if ((rows.results?.length ?? 0) > 2e4) throw new Error("BACKUP_TOO_LARGE");
     data[table.name] = rows.results ?? [];
     bytes += new TextEncoder().encode(JSON.stringify(data[table.name])).byteLength;
@@ -13989,6 +14109,7 @@ var ACTION_LABELS = {
   admin_report_failed: { label: "\u06AF\u0632\u0627\u0631\u0634 \u0627\u062F\u0645\u06CC\u0646 \u062F\u0631 \u0635\u0641 \u062B\u0628\u062A \u0646\u0634\u062F", tone: "danger", iconName: "warning" },
   invoice_correct: { label: "\u0627\u0635\u0644\u0627\u062D \u0641\u0627\u06A9\u062A\u0648\u0631", tone: "warning", iconName: "receipt" },
   fallback_settings_update: { label: "\u062A\u0646\u0638\u06CC\u0645 \u067E\u06CC\u0627\u0645\u200C\u0647\u0627\u06CC \u0627\u062F\u0645\u06CC\u0646", tone: "info", iconName: "settings" },
+  fallback_diagnose: { label: "\u0628\u0631\u0631\u0633\u06CC \u0627\u0631\u062A\u0628\u0627\u0637 \u0628\u062F\u0648\u0646 \u0627\u0631\u0633\u0627\u0644", tone: "info", iconName: "shield" },
   fallback_test: { label: "\u062A\u0633\u062A \u0627\u062A\u0635\u0627\u0644 \u067E\u06CC\u0627\u0645\u200C\u0631\u0633\u0627\u0646", tone: "muted", iconName: "chat" },
   fallback_retry: { label: "\u062A\u0644\u0627\u0634 \u0645\u062C\u062F\u062F \u067E\u06CC\u0627\u0645 \u0627\u062F\u0645\u06CC\u0646", tone: "warning", iconName: "chat" },
   shift_open: { label: "\u0628\u0627\u0632 \u0634\u062F\u0646 \u0635\u0646\u062F\u0648\u0642", tone: "success", iconName: "receipt" },
@@ -14488,7 +14609,7 @@ function reportsCsv(data) {
 
 // src/index.ts
 var app = new Hono3();
-var APP_BUILD = SCHEMA_VERSION;
+var APP_BUILD = "messenger-diagnostics-v5";
 function resolveTimeZone2(env) {
   return resolveTimeZone(env.TZ_NAME);
 }
@@ -14603,10 +14724,11 @@ var sameOriginWrite = async (c, next) => {
 };
 app.use("/api/*", sameOriginWrite);
 app.use("/login", sameOriginWrite);
-var loginBodyLimit = bodyLimit({ maxSize: 16 * 1024, onError: (c) => fail(c, "\u062D\u062C\u0645 \u0641\u0631\u0645 \u0648\u0631\u0648\u062F \u0628\u06CC\u0634 \u0627\u0632 \u062D\u062F \u0645\u062C\u0627\u0632 \u0627\u0633\u062A.", 413, "BODY_TOO_LARGE") });
+var loginBodyLimit = bodyLimit({ maxSize: 16 * 1024, onError: (c) => fail(c, "\u062D\u062C\u0645 \u062F\u0631\u062E\u0648\u0627\u0633\u062A \u0628\u06CC\u0634 \u0627\u0632 \u062D\u062F \u0645\u062C\u0627\u0632 \u0627\u0633\u062A.", 413, "BODY_TOO_LARGE") });
 app.use("/login", loginBodyLimit);
 app.use("/api/auth/login", loginBodyLimit);
 app.use("/api/admin/system/schema", loginBodyLimit);
+app.use("/api/admin/fallback/diagnose", loginBodyLimit);
 app.use("/api/*", async (c, next) => {
   if (c.req.method === "GET") {
     await next();
@@ -16126,6 +16248,37 @@ app.put("/api/admin/fallback", requireApiRole("admin"), async (c) => {
   await audit(c, "fallback_settings_update", { targetType: "settings", details: "\u062A\u0646\u0638\u06CC\u0645\u0627\u062A \u0645\u0633\u06CC\u0631 \u062C\u0627\u06CC\u06AF\u0632\u06CC\u0646 \u067E\u06CC\u0627\u0645\u06A9 \u062A\u063A\u06CC\u06CC\u0631 \u06A9\u0631\u062F (\u0628\u062F\u0648\u0646 \u062B\u0628\u062A \u062A\u0648\u06A9\u0646)." });
   return ok(c, { saved: true });
 });
+app.post("/api/admin/fallback/diagnose", requireApiRole("admin"), async (c) => {
+  const { dbRateLimit: dbRateLimit2 } = await Promise.resolve().then(() => (init_otp(), otp_exports));
+  const rate = await dbRateLimit2(c.env.DB, "fallback:diagnose:" + c.get("user").uid, 3, 60);
+  if (!rate) return fail(c, "\u0628\u0631\u0631\u0633\u06CC \u0627\u0631\u062A\u0628\u0627\u0637 \u0641\u0639\u0644\u0627\u064B \u0628\u0647\u200C\u0639\u0644\u062A \u062E\u0637\u0627\u06CC \u062F\u06CC\u062A\u0627\u0628\u06CC\u0633 \u0645\u0645\u06A9\u0646 \u0646\u06CC\u0633\u062A.", 503, "DIAGNOSIS_UNAVAILABLE");
+  if (!rate.allowed) {
+    c.header("Retry-After", String(rate.retryAfter));
+    return fail(c, "\u062D\u062F\u0627\u06A9\u062B\u0631 \u06F3 \u0628\u0631\u0631\u0633\u06CC \u0627\u0631\u062A\u0628\u0627\u0637 \u062F\u0631 \u062F\u0642\u06CC\u0642\u0647\u061B \u06A9\u0645\u06CC \u0628\u0639\u062F \u062F\u0648\u0628\u0627\u0631\u0647 \u062A\u0644\u0627\u0634 \u06A9\u0646\u06CC\u062F.", 429, "RATE_LIMITED");
+  }
+  let body;
+  try {
+    body = await c.req.json();
+  } catch {
+    return fail(c, "JSON \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "BAD_JSON");
+  }
+  if (!body || body.channel !== "telegram" && body.channel !== "bale") return fail(c, "\u067E\u06CC\u0627\u0645\u200C\u0631\u0633\u0627\u0646 \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "INVALID_CHANNEL");
+  let report;
+  try {
+    report = await diagnoseFallback(c.env, body.channel);
+  } catch {
+    return fail(c, "\u0645\u0642\u0635\u062F \u0630\u062E\u06CC\u0631\u0647\u200C\u0634\u062F\u0647\u060C \u062A\u0648\u06A9\u0646 \u06CC\u0627 \u06A9\u0644\u06CC\u062F \u0631\u0645\u0632\u0646\u06AF\u0627\u0631\u06CC \u062F\u0631 \u062F\u0633\u062A\u0631\u0633 \u0646\u06CC\u0633\u062A. \u062A\u0646\u0638\u06CC\u0645\u0627\u062A \u0631\u0627 \u0630\u062E\u06CC\u0631\u0647 \u0648 Secret \u0645\u0648\u062C\u0648\u062F \u0631\u0627 \u0628\u062F\u0648\u0646 \u0628\u0631\u0646\u0627\u0645\u0647 \u0639\u0648\u0636 \u0646\u06A9\u0646\u06CC\u062F.", 400, "FALLBACK_CONFIG_ERROR");
+  }
+  await logAdminAction(c.env.DB, {
+    adminId: c.get("user").uid,
+    adminName: c.get("user").name,
+    action: "fallback_diagnose",
+    targetType: "messenger",
+    targetId: body.channel,
+    details: report.checks.map((check) => check.stage + ":" + check.code + ":" + check.diagnostic.referenceId).join(" | ")
+  });
+  return ok(c, report);
+});
 app.post("/api/admin/fallback/test", requireApiRole("admin"), async (c) => {
   const { dbRateLimit: dbRateLimit2 } = await Promise.resolve().then(() => (init_otp(), otp_exports));
   const limit = await dbRateLimit2(c.env.DB, "fallback:test:" + c.get("user").uid, 3, 60);
@@ -16170,7 +16323,7 @@ app.post("/api/admin/fallback/:id/retry", requireApiRole("admin"), async (c) => 
     previous = await retryFallbackJob(c.env, id, body?.confirmDuplicateRisk === true);
   } catch (e) {
     const code = e instanceof Error ? e.message : "";
-    const messages = {
+    const messages2 = {
       NOT_FOUND: "\u067E\u06CC\u0627\u0645 \u067E\u06CC\u062F\u0627 \u0646\u0634\u062F.",
       OTP_NO_REPLAY: "\u06A9\u062F \u0648\u0631\u0648\u062F \u0642\u0627\u0628\u0644 \u0627\u0631\u0633\u0627\u0644 \u0645\u062C\u062F\u062F \u0646\u06CC\u0633\u062A\u061B \u0645\u0634\u062A\u0631\u06CC \u0628\u0627\u06CC\u062F \u06A9\u062F \u062A\u0627\u0632\u0647 \u062F\u0631\u062E\u0648\u0627\u0633\u062A \u06A9\u0646\u062F.",
       NOT_RETRYABLE: "\u067E\u06CC\u0627\u0645 \u062F\u0631 \u0635\u0641\u060C \u0627\u0631\u0633\u0627\u0644\u200C\u0634\u062F\u0647 \u06CC\u0627 \u0645\u0646\u0642\u0636\u06CC \u0627\u0633\u062A\u061B \u062F\u0648\u0628\u0627\u0631\u0647 \u0627\u0631\u0633\u0627\u0644 \u0646\u0634\u062F.",
@@ -16178,7 +16331,7 @@ app.post("/api/admin/fallback/:id/retry", requireApiRole("admin"), async (c) => 
       CONFIG_CHANGED: "\u0645\u0633\u06CC\u0631 \u06CC\u0627 \u0645\u0642\u0635\u062F \u062E\u0627\u0645\u0648\u0634/\u062A\u063A\u06CC\u06CC\u0631 \u06A9\u0631\u062F\u0647 \u0627\u0633\u062A\u061B \u062A\u0646\u0638\u06CC\u0645\u0627\u062A \u0631\u0627 \u0628\u0631\u0631\u0633\u06CC \u06A9\u0646\u06CC\u062F.",
       INVALID_TOKEN: "\u062A\u0648\u06A9\u0646 \u0645\u0639\u062A\u0628\u0631 \u0646\u06CC\u0633\u062A."
     };
-    return fail(c, messages[code] ?? "\u06A9\u0644\u06CC\u062F \u0648 \u062A\u0646\u0638\u06CC\u0645\u0627\u062A \u0645\u0642\u0635\u062F \u0631\u0627 \u0628\u0631\u0631\u0633\u06CC \u06A9\u0646\u06CC\u062F.", code === "NOT_FOUND" ? 404 : 409, messages[code] ? code : "CONFIG_ERROR");
+    return fail(c, messages2[code] ?? "\u06A9\u0644\u06CC\u062F \u0648 \u062A\u0646\u0638\u06CC\u0645\u0627\u062A \u0645\u0642\u0635\u062F \u0631\u0627 \u0628\u0631\u0631\u0633\u06CC \u06A9\u0646\u06CC\u062F.", code === "NOT_FOUND" ? 404 : 409, messages2[code] ? code : "CONFIG_ERROR");
   }
   await audit(c, "fallback_retry", { targetType: "message", targetId: id, details: `\u062A\u0644\u0627\u0634 \u0645\u062C\u062F\u062F \u0622\u06AF\u0627\u0647\u0627\u0646\u0647 \u0645\u062F\u06CC\u0631 (\u0628\u062F\u0648\u0646 \u062A\u063A\u06CC\u06CC\u0631 \u0645\u0627\u0644\u06CC). \u0646\u0648\u0628\u062A \u0642\u0628\u0644\u06CC: ${previous.previousAttempts} \u062A\u0644\u0627\u0634\u061B \u0646\u062A\u06CC\u062C\u0647: ${(previous.previousError ?? "\u0646\u0627\u0645\u0634\u062E\u0635").slice(0, 200)}\u061B \u067E\u0630\u06CC\u0631\u0634 \u062E\u0637\u0631 \u062A\u06A9\u0631\u0627\u0631: ${body?.confirmDuplicateRisk === true ? "\u0628\u0644\u0647" : "\u062E\u06CC\u0631"}.` });
   return ok(c, { message: "\u062F\u0648\u0628\u0627\u0631\u0647 \u062F\u0631 \u0635\u0641 \u0642\u0631\u0627\u0631 \u06AF\u0631\u0641\u062A\u061B \u0646\u062A\u06CC\u062C\u0647 \u062F\u0631 \u062A\u0627\u0631\u06CC\u062E\u0686\u0647 \u0645\u0634\u062E\u0635 \u0645\u06CC\u200C\u0634\u0648\u062F." }, 202);
@@ -16670,7 +16823,7 @@ async function scheduled(controller, env, ctx) {
 var index_default = {
   async fetch(request, env, ctx) {
     const response = await app.fetch(request, env, ctx);
-    if (["POST", "PUT", "PATCH", "DELETE"].includes(request.method) || request.method === "GET" && new URL(request.url).pathname === "/api/admin/fallback/history" && response.status === 200) {
+    if (["POST", "PUT", "PATCH", "DELETE"].includes(request.method) && new URL(request.url).pathname !== "/api/admin/fallback/diagnose" || request.method === "GET" && new URL(request.url).pathname === "/api/admin/fallback/history" && response.status === 200) {
       ctx.waitUntil((async () => {
         if ((await schemaStatus(env.DB)).ready) await processFallbackQueue(env);
       })().catch(() => console.error("fallback dispatcher failed")));

@@ -78,7 +78,7 @@ try {
     calls=[];await m.processFallbackQueue(env);assert.equal(calls.length,1);
     const call=calls[0];const body=JSON.parse(call.opts.body);
     assert(body.text.includes('09120000000'));assert(body.text.includes(params.message));
-    assert(body.text.includes('شناسه کاربر: 1'));assert(!body.parse_mode);assert.equal(call.opts.redirect,'error');
+    assert(body.text.includes('شناسه کاربر: 1'));assert(!body.parse_mode);assert.equal(call.opts.redirect,'manual');
     assert.equal(rows().filter(r=>r.status==='sent').length,1);
   });
   await test('second channel uses Bale native API', async()=>{
