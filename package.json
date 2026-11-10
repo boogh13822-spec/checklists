@@ -22,7 +22,8 @@
     "test:fallback:api": "node scripts/test-fallback-api.mjs",
     "fallback:setup": "bash scripts/setup-fallback.sh",
     "test:upgrade": "node scripts/test-upgrade.mjs",
-    "test:browser": "node scripts/test-browser.mjs"
+    "test:browser": "node scripts/test-browser.mjs",
+    "test:login": "node scripts/test-login.mjs"
   },
   "dependencies": {
     "hono": "^4.13.13"

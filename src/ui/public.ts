@@ -442,24 +442,10 @@ export function loginPage(
   /**
    * پیام‌های تشخیصی صفحهٔ ورود:
    *  - expired : نشست قبلی منقضی شده (یا کلید سرور عوض شده)
-   *  - cookie  : ورود موفق بود ولی مرورگر کوکی را ذخیره نکرد
+   * Legacy e=cookie URLs intentionally no longer blame browser settings.
    *  - loggedout: کاربر خودش خارج شده
    */
   const noticeBox = (() => {
-    if (notice === 'cookie') {
-      return `<div class="mb-5 rounded-xl border border-rose-500/30 bg-rose-500/[0.08] p-3.5 flex items-start gap-2.5">
-        <span class="text-rose-300 mt-0.5">${icon('warning', 'w-3.5 h-3.5')}</span>
-        <div class="text-[11px] text-rose-100/80 leading-6">
-          <div class="font-semibold text-rose-200 mb-1">مرورگر کوکی ورود را ذخیره نکرد</div>
-          نام کاربری و رمز درست بود، ولی برای ادامه باید کوکی ذخیره شود. این موارد را بررسی کنید:
-          <ul class="mt-1.5 space-y-1 list-disc list-inside">
-            <li>حالت ناشناس (Incognito) یا مسدودکنندهٔ کوکی را خاموش کنید.</li>
-            <li>اگر از دامنهٔ بدون HTTPS استفاده می‌کنید، سایت را با <span class="font-mono" dir="ltr">https://</span> باز کنید.</li>
-            <li>مطمئن شوید آدرس سایت همیشه یک شکل است (با/بدون www یا پیش‌نمایش).</li>
-          </ul>
-        </div>
-      </div>`;
-    }
     if (notice === 'loggedout') {
       return `<div class="mb-5 rounded-xl border border-white/10 bg-white/[0.04] p-3.5 text-[11px] text-cream/60 leading-6">
         از حساب خارج شدید. برای ادامه دوباره وارد شوید.
@@ -550,6 +536,10 @@ export function loginPage(
             <span>ورود به پنل</span>
           </button>
         </form>
+        <div id="login-feedback" class="hidden mt-4 rounded-xl border border-amber-500/25 p-3 text-xs leading-6" role="status" aria-live="polite">
+          <p id="login-feedback-text"></p>
+          <a id="login-open" href="/login${safeNext ? '?next=' + encodeURIComponent(safeNext) : ''}" target="_blank" rel="noopener noreferrer" class="text-gold underline">باز کردن صفحه ورود در پنجرهٔ مستقل</a>
+        </div>
 
         <div class="mt-6 rounded-xl border border-amber-500/20 bg-amber-500/[0.05] p-4 flex items-start gap-2.5">
           <span class="text-amber-300/80 mt-0.5">${icon('shield', 'w-3.5 h-3.5')}</span>
@@ -574,6 +564,27 @@ export function loginPage(
     var btn = $('#login-btn');
     var next = ${jsonForScript(safeNext)};
 
+    var submitting = false;
+    async function confirmSession(expected) {
+      for (var attempt = 0; attempt < 3; attempt++) {
+        var controller = new AbortController();
+        var timer = setTimeout(function () { controller.abort(); }, 4000);
+        try {
+          var response = await fetch('/api/auth/session?_login_check=' + Date.now() + '-' + attempt, {
+            credentials: 'same-origin', cache: 'no-store', redirect: 'error',
+            headers: { 'Accept': 'application/json' }, signal: controller.signal
+          });
+          var result = response.ok ? await response.json() : null;
+          if (result && result.ok && result.data && result.data.authenticated &&
+              result.data.userId === expected.userId && result.data.role === expected.role) return true;
+        } catch (_) {
+          // Network/server failures are not evidence of blocked cookies, nor proof of login.
+        } finally { clearTimeout(timer); }
+        if (attempt < 2) await new Promise(function (resolve) { setTimeout(resolve, 350 * (attempt + 1)); });
+      }
+      return false;
+    }
+
     $('#toggle-pass').addEventListener('click', function () {
       var input = $('#password');
       input.type = input.type === 'password' ? 'text' : 'password';
@@ -581,30 +592,21 @@ export function loginPage(
 
     form.addEventListener('submit', async function (event) {
       event.preventDefault();
+      if (submitting) return;
       var phone = $('#phone').value.trim().replace(/[۰-۹]/g, function (d) { return String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)); });
       var password = $('#password').value;
       if (!phone || !password) { toast('شماره موبایل و رمز عبور را وارد کنید.', 'error'); return; }
 
+      submitting = true;
+      var navigating = false;
+      $('#login-feedback').classList.add('hidden');
       setLoading(btn, true, 'در حال ورود…');
       try {
         var data = await api('/api/auth/login', { method: 'POST', body: { phone: phone, password: password } });
 
-        // تأیید نشست: اگر مرورگر کوکی را ذخیره نکرده باشد، کاربر بی‌نهایت بین
-        // صفحهٔ ورود و پنل می‌چرخد و پیام گمراه‌کنندهٔ «نشست منقضی» می‌بیند.
-        var sessionOk = false;
-        try {
-          var session = await fetch('/api/auth/session', {
-            credentials: 'same-origin',
-            headers: { 'Accept': 'application/json' }
-          }).then(function (r) { return r.json(); });
-          sessionOk = !!(session && session.ok && session.data && session.data.authenticated);
-        } catch (error) {
-          sessionOk = true; // خطای شبکه را به حساب مشکل کوکی نگذاریم
-        }
-
-        if (!sessionOk) {
-          setLoading(btn, false);
-          window.location.href = '/login?e=cookie' + (next ? '&next=' + encodeURIComponent(next) : '');
+        if (!await confirmSession(data)) {
+          $('#login-feedback-text').textContent = 'ورود کامل نشد. دوباره تلاش کنید یا صفحهٔ ورود را در پنجرهٔ مستقل باز کنید.';
+          $('#login-feedback').classList.remove('hidden');
           return;
         }
 
@@ -615,13 +617,15 @@ export function loginPage(
                    : data.redirect;
 
         // replace تا دکمهٔ «بازگشت» مرورگر کاربر را به صفحهٔ ورود برنگرداند
+        navigating = true;
         window.location.replace(target);
       } catch (error) {
         // خطای «نیاز به ورود» خودش هندل شده و صفحه در حال تغییر است
         if (error && error.message !== 'UNAUTHORIZED') {
           toast(error.message, 'error');
         }
-        setLoading(btn, false);
+      } finally {
+        if (!navigating) { submitting = false; setLoading(btn, false); }
       }
     });
   })();

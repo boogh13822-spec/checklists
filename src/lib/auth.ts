@@ -178,6 +178,7 @@ export const attachUser: MiddlewareHandler<AppEnv> = async (c, next) => {
     // خطای دیتابیس (مثلاً ستون تازه‌ای که مایگریشن نشده) نباید کل برنامه را
     // ۵۰۰ کند؛ کاربر مهمان در نظر گرفته می‌شود و خطا در کنسول می‌ماند.
     console.error('attachUser:getActiveUser failed:', error);
+    c.set('sessionLookupFailed', true);
     c.set('user', null);
     await next();
     return;
@@ -320,15 +321,17 @@ export function assertJwtSecret(env: Bindings): string | null {
 /** وضعیت نشست برای صفحهٔ ورود/تشخیص عیب */
 export type SessionInfo = {
   authenticated: boolean;
+  userId: number | null;
   role: Role | null;
   name: string | null;
   expiresAt: number | null;
 };
 
 export function sessionInfo(user: JwtPayload | null): SessionInfo {
-  if (!user) return { authenticated: false, role: null, name: null, expiresAt: null };
+  if (!user) return { authenticated: false, userId: null, role: null, name: null, expiresAt: null };
   return {
     authenticated: true,
+    userId: user.uid,
     role: user.role,
     name: user.name,
     expiresAt: user.exp ? user.exp * 1000 : null,

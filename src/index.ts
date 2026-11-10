@@ -254,6 +254,11 @@ app.use('*', async (c, next) => {
   if (c.req.path.startsWith('/api/')) {
     c.header('Cache-Control', 'no-store');
   }
+  if (c.req.path.startsWith('/api/auth/') || c.req.path === '/login') {
+    c.header('CDN-Cache-Control', 'no-store');
+    c.header('Cloudflare-CDN-Cache-Control', 'no-store');
+    c.res.headers.append('Vary', 'Cookie');
+  }
 });
 
 /* --------------------------------------------------------------------------
@@ -936,6 +941,8 @@ app.post('/api/auth/login', async (c) => {
     return fail(c, 'داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
   }
 
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return fail(c, 'داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
+
   const phone = normalizePhone(String(body.phone ?? ''));
   const password = String(body.password ?? '');
 
@@ -984,6 +991,7 @@ app.post('/api/auth/login', async (c) => {
   setSessionCookie(c, token, isSecureRequest(c), ttl);
 
   return ok(c, {
+    userId: user.id,
     name: user.name,
     role: user.role,
     redirect: homeForRole(user.role),
@@ -996,10 +1004,11 @@ app.post('/api/auth/login', async (c) => {
 
 /**
  * وضعیت نشست فعلی — صفحهٔ ورود بعد از ورود موفق آن را صدا می‌زند تا مطمئن شود
- * مرورگر واقعاً کوکی را ذخیره کرده است. این از حلقهٔ «ورود می‌کنم ولی باز به
- * صفحهٔ ورود برمی‌گردم» جلوگیری می‌کند و علت را صریح نشان می‌دهد.
+ * نشست معتبرِ همان کاربر در دسترس است. عدم تأیید، به‌تنهایی علت مشکل
+ * مرورگر را مشخص نمی‌کند؛ خطای موقت DB نیز جداگانه با 503 اعلام می‌شود.
  */
 app.get('/api/auth/session', (c) => {
+  if (c.get('sessionLookupFailed')) return fail(c, 'بررسی ورود موقتاً در دسترس نیست؛ دوباره تلاش کنید.', 503, 'SESSION_UNAVAILABLE');
   return ok(c, sessionInfo(c.get('user') ?? null));
 });
 

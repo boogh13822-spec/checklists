@@ -32,14 +32,32 @@ try{
   const menu=Array.from({length:1000},(_,i)=>({name:'محصول آزمون '+i,price:1000+i,category:'گروه '+(i%10)}));
   await request('/api/admin/settings',{method:'PUT',body:{points_mode:'invoice',invoice_points:23,menu_items:menu}});
   const archive=join(dir,'libraries.tar');await writeFile(archive,brotliDecompressSync(await readFile(join(dirname(tools.resolve('@sparticuz/chromium')),'../bin/al2023.tar.br'))));execFileSync('tar',['-xf',archive,'-C',dir]);
-  browser=await playwright.launch({executablePath:await chromium.executablePath(),args:chromium.args.filter(a=>!['--disable-web-security','--disable-site-isolation-trials'].includes(a)),env:{...process.env,LD_LIBRARY_PATH:join(dir,'lib')+':'+(process.env.LD_LIBRARY_PATH||'')},headless:true});
+  browser=await playwright.launch({executablePath:await chromium.executablePath(),args:chromium.args.filter(a=>!['--disable-web-security','--disable-site-isolation-trials','--single-process'].includes(a)),env:{...process.env,LD_LIBRARY_PATH:join(dir,'lib')+':'+(process.env.LD_LIBRARY_PATH||'')},headless:true});
   const errors=[];
   async function pageFor(cookie){
-    const context=await browser.newContext({viewport:{width:1280,height:900}});await context.addCookies([{name:cookie.split('=')[0],value:cookie.slice(cookie.indexOf('=')+1),url:BASE}]);
+    const context=await browser.newContext({viewport:{width:1280,height:900}});if(cookie)await context.addCookies([{name:cookie.split('=')[0],value:cookie.slice(cookie.indexOf('=')+1),url:BASE}]);
     await context.route('**/*',r=>new URL(r.request().url()).origin===new URL(BASE).origin?r.continue():r.abort());
     await context.addInitScript(()=>document.addEventListener('DOMContentLoaded',()=>{const s=document.createElement('style');s.textContent='.hidden{display:none!important}';document.head.appendChild(s);}));
     const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));return page;
   }
+  async function fillLogin(page){await page.locator('#phone').fill(process.env.ADMIN_PHONE||'09120000000');await page.locator('#password').fill(process.env.ADMIN_PASSWORD||'Admin@12345');}
+  await test('login with legacy cookie URL has no old warning and real cookie login reaches dashboard',async()=>{
+    const page=await pageFor('');await page.goto(BASE+'/login?e=cookie');assert(!(await page.locator('body').innerText()).includes('مرورگر کوکی ورود را ذخیره نکرد'));await fillLogin(page);await page.locator('#login-btn').click();await page.waitForURL(BASE+'/admin');const cookie=(await page.context().cookies()).find(c=>c.name==='cc_session');assert(cookie&&cookie.httpOnly&&cookie.sameSite==='Lax');
+  });
+  await test('real browser retries one stale unauthenticated session response and completes login',async()=>{
+    const page=await pageFor('');let probes=0;await page.route('**/api/auth/session*',async route=>{if(++probes===1)await route.fulfill({json:{ok:true,data:{authenticated:false,userId:null,role:null}}});else await route.continue();});
+    await page.goto(BASE+'/login');await fillLogin(page);await page.locator('#login-btn').click();await page.waitForURL(BASE+'/admin');assert.equal(probes,2);
+  });
+  await test('real browser with no returned cookie stops on form after three checks with safe standalone link',async()=>{
+    const page=await pageFor('');let probes=0;page.on('request',r=>{if(r.url().includes('/api/auth/session'))probes++;});await page.route('**/api/auth/login',r=>r.fulfill({json:{ok:true,data:{userId:1,role:'admin',name:'fixture',redirect:'/admin'}}}));
+    await page.goto(BASE+'/login');await fillLogin(page);await page.locator('#login-btn').click();await page.waitForFunction(()=>!document.getElementById('login-feedback').classList.contains('hidden'));assert.equal(probes,3);assert(new URL(page.url()).pathname==='/login');assert.equal((await page.context().cookies()).filter(c=>c.name==='cc_session').length,0);assert(!(await page.locator('#login-btn').isDisabled()));assert.equal(await page.locator('#login-open').getAttribute('target'),'_blank');
+  });
+  await test('real browser session network failure does not report welcome or blame browser cookies',async()=>{
+    const page=await pageFor('');let probes=0;await page.route('**/api/auth/session*',r=>{probes++;return r.abort();});await page.goto(BASE+'/login');await fillLogin(page);await page.locator('#login-btn').click();await page.waitForFunction(()=>!document.getElementById('login-feedback').classList.contains('hidden'));assert.equal(probes,3);assert(new URL(page.url()).pathname==='/login');assert(!(await page.locator('body').innerText()).includes('مرورگر کوکی ورود را ذخیره نکرد'));assert(!(await page.locator('#login-btn').isDisabled()));
+  });
+  await test('real browser wrong password stays on login and shows credential error, not cookie error',async()=>{
+    const page=await pageFor('');await page.goto(BASE+'/login');await fillLogin(page);await page.locator('#password').fill('definitely-wrong');await page.locator('#login-btn').click();await page.waitForFunction(()=>document.getElementById('toast-host').textContent.includes('اشتباه'));assert(new URL(page.url()).pathname==='/login');assert(!(await page.locator('#login-btn').isDisabled()));assert(await page.locator('#login-feedback').evaluate(el=>el.classList.contains('hidden')));
+  });
   const staffPage=await pageFor(staff);
   await test('large-menu staff landing shows categories, not 1000 product cards',async()=>{await staffPage.goto(BASE+'/staff');await staffPage.waitForSelector('#custom-add');assert.equal(await staffPage.locator('#menu-grid [data-menu-index]').count(),0);assert.equal(await staffPage.locator('#category-tabs [data-cat]').count(),11);});
   await test('category and search render 40 at a time; show-more appends another page',async()=>{

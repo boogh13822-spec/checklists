@@ -248,6 +248,8 @@ export type AppEnv = {
     settings: AppSettings;
     /** کوکی نشست وجود داشت ولی معتبر نبود (برای پیام دقیق «نشست منقضی») */
     sessionInvalid?: boolean;
+    /** A transient DB lookup failure is not a rejected/missing browser cookie. */
+    sessionLookupFailed?: boolean;
   };
 };
 
