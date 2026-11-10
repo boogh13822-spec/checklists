@@ -9,9 +9,10 @@
 import { drainFallbackQueue, retryFallbackJob, enqueueFallback, fallbackHistory, loadFallbackConfig, processFallbackQueue, safeFallbackConfig, saveFallbackConfig, smsPanelActive } from './lib/fallback';
 import { adminFallbackPage } from './ui/fallback';
 import { Hono } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import { notifyAdminAction, notifyAdminInvoice } from './lib/admin-notifications';
 
-import type { Context } from 'hono';
+import type { Context, MiddlewareHandler } from 'hono';
 import type { AppEnv, Bindings, InvoiceItem, InvoiceRow, Role } from './types';
 import {
   attachUser,
@@ -22,6 +23,8 @@ import {
   clientKey,
   createToken,
   getActiveUser,
+  ensureSessionVersion,
+  loginDestination,
   homeForRole,
   isSecureRequest,
   customerSessionTtl,
@@ -130,6 +133,7 @@ import { adminLogsCsv, adminLogsPage, adminReportsPage, reportsCsv } from './ui/
  * ========================================================================== */
 
 const app = new Hono<AppEnv>();
+const APP_BUILD = 'auth-native-v3';
 
 /**
  * منطقه‌ی زمانی از متغیر محیطی TZ_NAME (پیش‌فرض Asia/Tehran).
@@ -254,7 +258,9 @@ app.use('*', async (c, next) => {
   if (c.req.path.startsWith('/api/')) {
     c.header('Cache-Control', 'no-store');
   }
-  if (c.req.path.startsWith('/api/auth/') || c.req.path === '/login') {
+  if (c.req.path.startsWith('/api/auth/') || c.req.path === '/login' || c.req.path === '/auth/complete') {
+    c.header('Cache-Control', 'no-store');
+    c.header('X-App-Build', APP_BUILD);
     c.header('CDN-Cache-Control', 'no-store');
     c.header('Cloudflare-CDN-Cache-Control', 'no-store');
     c.res.headers.append('Vary', 'Cookie');
@@ -275,7 +281,7 @@ app.use('*', attachUser);
 /* --------------------------------------------------------------------------
  *  محافظ CSRF: درخواست‌های تغییردهنده باید هم‌مبدأ باشند
  * -------------------------------------------------------------------------- */
-app.use('/api/*', async (c, next) => {
+const sameOriginWrite: MiddlewareHandler<AppEnv> = async (c, next) => {
   const method = c.req.method.toUpperCase();
   if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') {
     await next();
@@ -287,7 +293,7 @@ app.use('/api/*', async (c, next) => {
     try {
       const requestUrl = new URL(c.req.url);
       const originUrl = new URL(origin);
-      if (originUrl.host !== requestUrl.host) {
+      if (originUrl.origin !== requestUrl.origin) {
         return c.json({ ok: false, error: 'درخواست غیرمجاز (CSRF).' }, 403);
       }
     } catch {
@@ -303,7 +309,12 @@ app.use('/api/*', async (c, next) => {
   }
 
   await next();
-});
+};
+app.use('/api/*', sameOriginWrite);
+app.use('/login', sameOriginWrite);
+const loginBodyLimit = bodyLimit({ maxSize: 16 * 1024, onError: (c) => fail(c, 'حجم فرم ورود بیش از حد مجاز است.', 413, 'BODY_TOO_LARGE') });
+app.use('/login', loginBodyLimit);
+app.use('/api/auth/login', loginBodyLimit);
 
 /* --------------------------------------------------------------------------
  *  محدودسازی نرخ عمومی API
@@ -928,52 +939,67 @@ app.get('/admin/export/customers.csv', requirePageRole('admin'), async (c) => {
  *  API — احراز هویت
  * ========================================================================== */
 
-app.post('/api/auth/login', async (c) => {
+async function handleStaffLogin(c: Context<AppEnv>) {
+  const native = c.req.path === '/login';
+  let next = '';
+  let phone = '';
+  function reject(message: string, status: 400 | 401 | 403 | 429 | 500 | 503, code: string) {
+    return native
+      ? c.html(loginPage(c.get('settings'), next, false, '', { message, phone }), status)
+      : fail(c, message, status, code);
+  }
   const secret = assertJwtSecret(c.env);
   if (!secret) {
-    return fail(c, 'کلید JWT تنظیم نشده است. با دستور «wrangler secret put JWT_SECRET» آن را تنظیم کنید.', 500, 'NO_SECRET');
+    return reject('کلید JWT تنظیم نشده است. با دستور «wrangler secret put JWT_SECRET» آن را تنظیم کنید.', 500, 'NO_SECRET');
   }
 
   let body: Record<string, unknown>;
   try {
-    body = (await c.req.json()) as Record<string, unknown>;
+    body = (native ? await c.req.parseBody() : await c.req.json()) as Record<string, unknown>;
   } catch {
-    return fail(c, 'داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
+    return reject('داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
   }
 
-  if (!body || typeof body !== 'object' || Array.isArray(body)) return fail(c, 'داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return reject('داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
 
-  const phone = normalizePhone(String(body.phone ?? ''));
+  if (typeof body.phone !== 'string' || typeof body.password !== 'string') return reject('شماره موبایل و رمز عبور نامعتبر است.', 400, 'INVALID_INPUT');
+  next = typeof body.next === 'string' ? body.next.slice(0, 200) : '';
+  phone = normalizePhone(body.phone);
   const password = String(body.password ?? '');
 
   if (!/^09\d{9}$/.test(phone) || password.length < 1) {
-    return fail(c, 'شماره موبایل و رمز عبور را وارد کنید.', 400, 'INVALID_INPUT');
+    return reject('شماره موبایل و رمز عبور را وارد کنید.', 400, 'INVALID_INPUT');
   }
   if (password.length > 200) {
-    return fail(c, 'رمز عبور نامعتبر است.', 400, 'INVALID_INPUT');
+    return reject('رمز عبور نامعتبر است.', 400, 'INVALID_INPUT');
   }
 
   const rateKey = `login:${clientKey(c)}:${phone}`;
   const rate = checkRateLimit(rateKey, 8, 15 * 60_000);
   if (!rate.allowed) {
     c.header('Retry-After', String(rate.retryAfter));
-    return fail(c, 'تلاش‌های ناموفق زیاد بوده است. ۱۵ دقیقه بعد دوباره تلاش کنید.', 429, 'RATE_LIMITED');
+    return reject('تلاش‌های ناموفق زیاد بوده است. ۱۵ دقیقه بعد دوباره تلاش کنید.', 429, 'RATE_LIMITED');
   }
 
   // شماره با هر قالبی که ذخیره شده باشد پیدا می‌شود (+98 / 0098 / بدون صفر)
-  const user = await findUserByPhoneLoose(c.env.DB, phone);
+  let user;
+  try { user = await findUserByPhoneLoose(c.env.DB, phone); }
+  catch (error) {
+    console.error('AUTH_LOGIN_DATABASE_UNAVAILABLE', error);
+    c.header('Retry-After', '5');
+    return reject('خواندن حساب از دیتابیس ممکن نیست. کمی بعد دوباره تلاش کنید؛ اگر ادامه داشت مدیر باید اتصال و ارتقای دیتابیس را بررسی کند.', 503, 'AUTH_DATABASE_UNAVAILABLE');
+  }
 
   // ترتیب بررسی مهم است: اول رمز، بعد وضعیت حساب.
   // این‌طور هیچ‌کس بدون دانستن رمز نمی‌فهمد حساب «غیرفعال» یا «بدون رمز» است.
   const passwordOk = await verifyPassword(password, user?.password_hash ?? null);
   if (!user || !passwordOk) {
     await logLoginFailure(c, phone, user ? 'wrong_password' : 'unknown_phone');
-    return fail(c, 'شماره موبایل یا رمز عبور اشتباه است.', 401, 'INVALID_CREDENTIALS');
+    return reject('شماره موبایل یا رمز عبور اشتباه است.', 401, 'INVALID_CREDENTIALS');
   }
   if (user.role !== 'staff' && user.role !== 'admin') {
     await logLoginFailure(c, phone, 'not_staff');
-    return fail(
-      c,
+    return reject(
       'این حساب مشتری است؛ از صفحهٔ «باشگاه من» با کد پیامکی وارد شوید.',
       403,
       'WRONG_PORTAL'
@@ -981,14 +1007,25 @@ app.post('/api/auth/login', async (c) => {
   }
   if (user.is_active !== 1) {
     await logLoginFailure(c, phone, 'inactive');
-    return fail(c, 'حساب شما غیرفعال شده است. با مدیر تماس بگیرید.', 403, 'ACCOUNT_DISABLED');
+    return reject('حساب شما غیرفعال شده است. با مدیر تماس بگیرید.', 403, 'ACCOUNT_DISABLED');
   }
 
+  const verifiedHash = user.password_hash;
+  try { user = await ensureSessionVersion(c.env.DB, user); }
+  catch (error) {
+    console.error('AUTH_SESSION_SCHEMA_UNAVAILABLE', error);
+    return reject('ساخت نشست امن ممکن نشد. مدیر باید دسترسی و ساختار دیتابیس را بررسی کند.', 503, 'AUTH_SCHEMA_UNAVAILABLE');
+  }
+  if (!user || user.is_active !== 1 || (user.role !== 'staff' && user.role !== 'admin') || user.password_hash !== verifiedHash) {
+    return reject('اطلاعات حساب تغییر کرده است. لطفاً دوباره وارد شوید.', 401, 'CREDENTIALS_CHANGED');
+  }
   resetRateLimit(rateKey);
 
   const ttl = sessionTtl(c.env);
   const token = await createToken(secret, user, ttl);
   setSessionCookie(c, token, isSecureRequest(c), ttl);
+
+  if (native) return c.redirect('/auth/complete?uid=' + user.id + '&next=' + encodeURIComponent(loginDestination(next, user.role)), 303);
 
   return ok(c, {
     userId: user.id,
@@ -1000,11 +1037,27 @@ app.post('/api/auth/login', async (c) => {
     cookieName: 'cc_session',
     secureCookie: isSecureRequest(c),
   });
+}
+app.post('/api/auth/login', handleStaffLogin);
+app.post('/login', handleStaffLogin);
+
+// Verify on a real browser navigation, not an AJAX success message or a client timer.
+app.get('/auth/complete', (c) => {
+  if (c.get('sessionLookupFailed')) {
+    c.header('Retry-After', '5');
+    return c.html(loginPage(c.get('settings'), '', false, '', { message: 'خواندن نشست از دیتابیس موقتاً ممکن نیست. کمی بعد دوباره تلاش کنید.' }), 503);
+  }
+  const user = c.get('user');
+  const expectedUid = c.req.query('uid');
+  if (!user || (expectedUid !== undefined && expectedUid !== String(user.uid))) return c.html(loginPage(c.get('settings'), '', false, '', {
+    message: 'نشست معتبر دریافت نشد. ورود را از همین صفحه انجام دهید. اگر تکرار شد، مجاز بودن کوکی این سایت و نشانی دامنه را بررسی کنید.',
+  }), 401);
+  return c.redirect(loginDestination(c.req.query('next') ?? '', user.role), 303);
 });
 
 /**
- * وضعیت نشست فعلی — صفحهٔ ورود بعد از ورود موفق آن را صدا می‌زند تا مطمئن شود
- * نشست معتبرِ همان کاربر در دسترس است. عدم تأیید، به‌تنهایی علت مشکل
+ * وضعیت نشست فعلی برای کلاینت‌های API؛ فرم ورود به این probe وابسته نیست.
+ * نشست از JWT و وضعیت فعلی حساب در دیتابیس بررسی می‌شود. عدم تأیید، به‌تنهایی علت مشکل
  * مرورگر را مشخص نمی‌کند؛ خطای موقت DB نیز جداگانه با 503 اعلام می‌شود.
  */
 app.get('/api/auth/session', (c) => {
@@ -1239,6 +1292,7 @@ app.post('/api/me/sms-opt-in', requireApiRole('customer'), async (c) => {
 });
 
 app.get('/api/auth/me', async (c) => {
+  if (c.get('sessionLookupFailed')) return fail(c, 'خواندن نشست موقتاً ممکن نیست.', 503, 'SESSION_UNAVAILABLE');
   const user = c.get('user');
   if (!user) return ok(c, { authenticated: false, user: null });
 
@@ -2645,6 +2699,7 @@ app.get('/api/health', async (c) => {
     return ok(c, {
       status: 'ok',
       database: 'connected',
+      build: APP_BUILD,
       users: row?.c ?? 0,
       time: new Date().toISOString(),
     });

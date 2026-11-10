@@ -4142,6 +4142,34 @@ function adminFallbackPage(settings, userName) {
   });
 }
 
+// node_modules/hono/dist/http-exception.js
+var HTTPException = class extends Error {
+  res;
+  status;
+  /**
+  * Creates an instance of `HTTPException`.
+  * @param status - HTTP status code for the exception. Defaults to 500.
+  * @param options - Additional options for the exception.
+  */
+  constructor(status = 500, options) {
+    super(options?.message, { cause: options?.cause });
+    this.res = options?.res;
+    this.status = status;
+  }
+  /**
+  * Returns the response object associated with the exception.
+  * If a response object is not provided, a new response is created with the error message and status code.
+  * @returns The response object.
+  */
+  getResponse() {
+    if (this.res) return new Response(this.res.body, {
+      status: this.status,
+      headers: this.res.headers
+    });
+    return new Response(this.message, { status: this.status });
+  }
+};
+
 // node_modules/hono/dist/request/constants.js
 var GET_MATCH_RESULT = /* @__PURE__ */ Symbol();
 
@@ -5914,6 +5942,40 @@ var Hono3 = class extends Hono {
   }
 };
 
+// node_modules/hono/dist/middleware/body-limit/index.js
+var ERROR_MESSAGE = "Payload Too Large";
+var bodyLimit = (options) => {
+  const onError = options.onError || (() => {
+    const res = new Response(ERROR_MESSAGE, { status: 413 });
+    throw new HTTPException(413, { res });
+  });
+  const maxSize = options.maxSize;
+  return async function bodyLimit2(c, next) {
+    if (!c.req.raw.body) return next();
+    const hasTransferEncoding = c.req.raw.headers.has("transfer-encoding");
+    if (c.req.raw.headers.has("content-length") && !hasTransferEncoding) return parseInt(c.req.raw.headers.get("content-length") || "0", 10) > maxSize ? onError(c) : next();
+    let size = 0;
+    const chunks = [];
+    const rawReader = c.req.raw.body.getReader();
+    for (; ; ) {
+      const { done, value } = await rawReader.read();
+      if (done) break;
+      size += value.length;
+      if (size > maxSize) return onError(c);
+      chunks.push(value);
+    }
+    const requestInit = {
+      body: new ReadableStream({ start(controller) {
+        for (const chunk of chunks) controller.enqueue(chunk);
+        controller.close();
+      } }),
+      duplex: "half"
+    };
+    c.req.raw = new Request(c.req.raw, requestInit);
+    return next();
+  };
+};
+
 // src/lib/admin-notifications.ts
 init_db();
 init_fallback();
@@ -6559,6 +6621,7 @@ var sign2 = Jwt.sign;
 
 // src/lib/auth.ts
 init_utils();
+init_db();
 var SESSION_COOKIE = "cc_session";
 var SESSION_TTL_SECONDS = 12 * 60 * 60;
 function customerSessionTtl(env) {
@@ -6642,15 +6705,45 @@ async function readSession(c, secret) {
   }
 }
 async function getActiveUser(db, uid) {
-  const user = await db.prepare(
-    `SELECT id, name, phone, birth_date, points, lifetime_points, tier, referred_by,
-              last_visit_date, avg_visit_interval, role, password_hash, is_active,
-              first_purchase_at, referral_rewarded, last_churn_sms_at, sms_opt_in,
-              token_version, created_at
-       FROM users WHERE id = ? LIMIT 1`
-  ).bind(uid).first();
+  const user = await db.prepare("SELECT * FROM users WHERE id = ? LIMIT 1").bind(uid).first();
   if (!user || user.is_active !== 1) return null;
-  return user;
+  const ready = await ensureSessionVersion(db, user);
+  return ready?.is_active === 1 ? ready : null;
+}
+async function ensureSessionVersion(db, user) {
+  if (Number.isSafeInteger(user.token_version) && user.token_version >= 0) return user;
+  if (user.token_version !== void 0) throw new Error("AUTH_SESSION_VERSION_INVALID");
+  try {
+    await db.prepare("ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0").run();
+    console.info("AUTH_SCHEMA_UPGRADE: users.token_version added");
+    await logAdminAction(db, {
+      adminId: null,
+      adminName: "\u0633\u06CC\u0633\u062A\u0645",
+      action: "auth_schema_upgrade",
+      targetType: "schema",
+      targetId: "users.token_version",
+      details: "ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0"
+    });
+  } catch (error) {
+    if (!/duplicate column name:\s*token_version\b/i.test(String(error))) throw error;
+  }
+  const current = await db.prepare("SELECT * FROM users WHERE id = ? LIMIT 1").bind(user.id).first();
+  if (current && (!Number.isSafeInteger(current.token_version) || current.token_version < 0)) {
+    throw new Error("AUTH_SESSION_VERSION_INVALID");
+  }
+  return current;
+}
+function loginDestination(next, role) {
+  const home = homeForRole(role);
+  if (!next || next.length > 200 || /[\\\x00-\x20\x7f]/.test(next)) return home;
+  try {
+    const url = new URL(next, "https://navigation.invalid");
+    if (!next.startsWith("/") || url.origin !== "https://navigation.invalid") return home;
+    if (url.pathname !== home && !url.pathname.startsWith(home + "/")) return home;
+    return url.pathname + url.search + url.hash;
+  } catch {
+    return home;
+  }
 }
 var attachUser = async (c, next) => {
   const secret = c.env.JWT_SECRET;
@@ -6689,6 +6782,7 @@ var attachUser = async (c, next) => {
   await next();
 };
 function unauthorized(c) {
+  if (c.get("sessionLookupFailed")) return fail(c, "\u062F\u06CC\u062A\u0627\u0628\u06CC\u0633 \u0645\u0648\u0642\u062A\u0627\u064B \u062F\u0631 \u062F\u0633\u062A\u0631\u0633 \u0646\u06CC\u0633\u062A\u061B \u062F\u0648\u0628\u0627\u0631\u0647 \u062A\u0644\u0627\u0634 \u06A9\u0646\u06CC\u062F.", 503, "SESSION_UNAVAILABLE");
   return fail(c, "\u0644\u0637\u0641\u0627\u064B \u0627\u0628\u062A\u062F\u0627 \u0648\u0627\u0631\u062F \u062D\u0633\u0627\u0628 \u062E\u0648\u062F \u0634\u0648\u06CC\u062F.", 401, "UNAUTHORIZED");
 }
 function forbidden(c) {
@@ -6707,6 +6801,10 @@ function requirePageRole(...roles) {
     const user = c.get("user");
     const url = new URL(c.req.url);
     if (!user) {
+      if (c.get("sessionLookupFailed")) {
+        c.header("Retry-After", "5");
+        return c.html(errorPage(503, "\u062E\u0648\u0627\u0646\u062F\u0646 \u062D\u0633\u0627\u0628 \u0627\u0632 \u062F\u06CC\u062A\u0627\u0628\u06CC\u0633 \u0645\u0648\u0642\u062A\u0627\u064B \u0645\u0645\u06A9\u0646 \u0646\u06CC\u0633\u062A. \u06A9\u0645\u06CC \u0628\u0639\u062F \u0635\u0641\u062D\u0647 \u0631\u0627 \u062F\u0648\u0628\u0627\u0631\u0647 \u0628\u0627\u0632 \u06A9\u0646\u06CC\u062F.", c.get("settings")?.cafe_name), 503);
+      }
       const expired = c.get("sessionInvalid") ? "&expired=1" : "";
       return c.redirect(`/login?next=${encodeURIComponent(url.pathname + url.search)}${expired}`, 302);
     }
@@ -8256,7 +8354,7 @@ function registerPage(settings, presetReferral, presetPhone = "") {
     cafeName: settings.cafe_name
   });
 }
-function loginPage(settings, next, expired = false, notice = "") {
+function loginPage(settings, next, expired = false, notice = "", feedback) {
   const cafe = escapeHtml(settings.cafe_name);
   const safeNext = next.startsWith("/") && !next.startsWith("//") ? next : "";
   const noticeBox = (() => {
@@ -8323,19 +8421,21 @@ function loginPage(settings, next, expired = false, notice = "") {
 
         ${noticeBox}
 
-        <form id="login-form" class="space-y-4" novalidate>
+        ${feedback ? `<div id="login-feedback" role="alert" class="mb-4 rounded-xl border border-amber-500/25 p-3 text-xs leading-6">${escapeHtml(feedback.message)}</div>` : ""}
+        <form id="login-form" method="post" action="/login" target="_top" class="space-y-4">
+          <input type="hidden" name="next" value="${escapeHtml(safeNext)}" />
           <div>
             <label class="label" for="phone">\u0634\u0645\u0627\u0631\u0647 \u0645\u0648\u0628\u0627\u06CC\u0644</label>
             <div class="relative">
               <span class="absolute right-3 top-1/2 -translate-y-1/2 text-cream/30">${icon("phone", "w-4 h-4")}</span>
-              <input id="phone" type="tel" inputmode="numeric" dir="ltr" class="field !pr-10 text-left tracking-wider" placeholder="09xxxxxxxxx" maxlength="13" autocomplete="username" required />
+              <input name="phone" id="phone" value="${escapeHtml(feedback?.phone ?? "")}" type="tel" inputmode="numeric" dir="ltr" class="field !pr-10 text-left tracking-wider" placeholder="09xxxxxxxxx" maxlength="20" autocomplete="username" required />
             </div>
           </div>
           <div>
             <label class="label" for="password">\u0631\u0645\u0632 \u0639\u0628\u0648\u0631</label>
             <div class="relative">
               <span class="absolute right-3 top-1/2 -translate-y-1/2 text-cream/30">${icon("key", "w-4 h-4")}</span>
-              <input id="password" type="password" class="field !pr-10 !pl-11" placeholder="\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022" autocomplete="current-password" required />
+              <input name="password" id="password" maxlength="200" type="password" class="field !pr-10 !pl-11" placeholder="\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022" autocomplete="current-password" required />
               <button type="button" id="toggle-pass" class="absolute left-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-lg text-cream/40 hover:text-gold hover:bg-white/5 flex items-center justify-center" aria-label="\u0646\u0645\u0627\u06CC\u0634 \u0631\u0645\u0632">
                 ${icon("search", "w-4 h-4")}
               </button>
@@ -8347,10 +8447,6 @@ function loginPage(settings, next, expired = false, notice = "") {
             <span>\u0648\u0631\u0648\u062F \u0628\u0647 \u067E\u0646\u0644</span>
           </button>
         </form>
-        <div id="login-feedback" class="hidden mt-4 rounded-xl border border-amber-500/25 p-3 text-xs leading-6" role="status" aria-live="polite">
-          <p id="login-feedback-text"></p>
-          <a id="login-open" href="/login${safeNext ? "?next=" + encodeURIComponent(safeNext) : ""}" target="_blank" rel="noopener noreferrer" class="text-gold underline">\u0628\u0627\u0632 \u06A9\u0631\u062F\u0646 \u0635\u0641\u062D\u0647 \u0648\u0631\u0648\u062F \u062F\u0631 \u067E\u0646\u062C\u0631\u0647\u0654 \u0645\u0633\u062A\u0642\u0644</a>
-        </div>
 
         <div class="mt-6 rounded-xl border border-amber-500/20 bg-amber-500/[0.05] p-4 flex items-start gap-2.5">
           <span class="text-amber-300/80 mt-0.5">${icon("shield", "w-3.5 h-3.5")}</span>
@@ -8371,72 +8467,19 @@ function loginPage(settings, next, expired = false, notice = "") {
   const scripts = `
   (function () {
     var form = $('#login-form');
-    var btn = $('#login-btn');
-    var next = ${jsonForScript(safeNext)};
-
     var submitting = false;
-    async function confirmSession(expected) {
-      for (var attempt = 0; attempt < 3; attempt++) {
-        var controller = new AbortController();
-        var timer = setTimeout(function () { controller.abort(); }, 4000);
-        try {
-          var response = await fetch('/api/auth/session?_login_check=' + Date.now() + '-' + attempt, {
-            credentials: 'same-origin', cache: 'no-store', redirect: 'error',
-            headers: { 'Accept': 'application/json' }, signal: controller.signal
-          });
-          var result = response.ok ? await response.json() : null;
-          if (result && result.ok && result.data && result.data.authenticated &&
-              result.data.userId === expected.userId && result.data.role === expected.role) return true;
-        } catch (_) {
-          // Network/server failures are not evidence of blocked cookies, nor proof of login.
-        } finally { clearTimeout(timer); }
-        if (attempt < 2) await new Promise(function (resolve) { setTimeout(resolve, 350 * (attempt + 1)); });
-      }
-      return false;
-    }
-
     $('#toggle-pass').addEventListener('click', function () {
       var input = $('#password');
       input.type = input.type === 'password' ? 'text' : 'password';
     });
-
-    form.addEventListener('submit', async function (event) {
-      event.preventDefault();
-      if (submitting) return;
-      var phone = $('#phone').value.trim().replace(/[\u06F0-\u06F9]/g, function (d) { return String('\u06F0\u06F1\u06F2\u06F3\u06F4\u06F5\u06F6\u06F7\u06F8\u06F9'.indexOf(d)); });
-      var password = $('#password').value;
-      if (!phone || !password) { toast('\u0634\u0645\u0627\u0631\u0647 \u0645\u0648\u0628\u0627\u06CC\u0644 \u0648 \u0631\u0645\u0632 \u0639\u0628\u0648\u0631 \u0631\u0627 \u0648\u0627\u0631\u062F \u06A9\u0646\u06CC\u062F.', 'error'); return; }
-
+    form.addEventListener('submit', function (event) {
+      if (submitting) { event.preventDefault(); return; }
       submitting = true;
-      var navigating = false;
-      $('#login-feedback').classList.add('hidden');
-      setLoading(btn, true, '\u062F\u0631 \u062D\u0627\u0644 \u0648\u0631\u0648\u062F\u2026');
-      try {
-        var data = await api('/api/auth/login', { method: 'POST', body: { phone: phone, password: password } });
-
-        if (!await confirmSession(data)) {
-          $('#login-feedback-text').textContent = '\u0648\u0631\u0648\u062F \u06A9\u0627\u0645\u0644 \u0646\u0634\u062F. \u062F\u0648\u0628\u0627\u0631\u0647 \u062A\u0644\u0627\u0634 \u06A9\u0646\u06CC\u062F \u06CC\u0627 \u0635\u0641\u062D\u0647\u0654 \u0648\u0631\u0648\u062F \u0631\u0627 \u062F\u0631 \u067E\u0646\u062C\u0631\u0647\u0654 \u0645\u0633\u062A\u0642\u0644 \u0628\u0627\u0632 \u06A9\u0646\u06CC\u062F.';
-          $('#login-feedback').classList.remove('hidden');
-          return;
-        }
-
-        toast('\u062E\u0648\u0634 \u0622\u0645\u062F\u06CC\u062F ' + data.name, 'success');
-        var target = next && next.indexOf('/admin') === 0 && data.role === 'admin' ? next
-                   : next && next.indexOf('/staff') === 0 && data.role === 'staff' ? next
-                   : next && next.indexOf('/me') === 0 && data.role === 'customer' ? next
-                   : data.redirect;
-
-        // replace \u062A\u0627 \u062F\u06A9\u0645\u0647\u0654 \xAB\u0628\u0627\u0632\u06AF\u0634\u062A\xBB \u0645\u0631\u0648\u0631\u06AF\u0631 \u06A9\u0627\u0631\u0628\u0631 \u0631\u0627 \u0628\u0647 \u0635\u0641\u062D\u0647\u0654 \u0648\u0631\u0648\u062F \u0628\u0631\u0646\u06AF\u0631\u062F\u0627\u0646\u062F
-        navigating = true;
-        window.location.replace(target);
-      } catch (error) {
-        // \u062E\u0637\u0627\u06CC \xAB\u0646\u06CC\u0627\u0632 \u0628\u0647 \u0648\u0631\u0648\u062F\xBB \u062E\u0648\u062F\u0634 \u0647\u0646\u062F\u0644 \u0634\u062F\u0647 \u0648 \u0635\u0641\u062D\u0647 \u062F\u0631 \u062D\u0627\u0644 \u062A\u063A\u06CC\u06CC\u0631 \u0627\u0633\u062A
-        if (error && error.message !== 'UNAUTHORIZED') {
-          toast(error.message, 'error');
-        }
-      } finally {
-        if (!navigating) { submitting = false; setLoading(btn, false); }
-      }
+      setLoading($('#login-btn'), true, '\u062F\u0631 \u062D\u0627\u0644 \u0648\u0631\u0648\u062F\u2026');
+    });
+    window.addEventListener('pageshow', function () {
+      submitting = false;
+      setLoading($('#login-btn'), false);
     });
   })();
   `;
@@ -13016,6 +13059,7 @@ var ACTION_LABELS = {
   shift_close: { label: "\u0628\u0633\u062A\u0646 \u0635\u0646\u062F\u0648\u0642", tone: "info", iconName: "receipt" },
   cash_in: { label: "\u0648\u0631\u0648\u062F \u0646\u0642\u062F \u0628\u0647 \u0635\u0646\u062F\u0648\u0642", tone: "success", iconName: "receipt" },
   cash_out: { label: "\u062E\u0631\u0648\u062C \u0646\u0642\u062F \u0627\u0632 \u0635\u0646\u062F\u0648\u0642", tone: "warning", iconName: "receipt" },
+  auth_schema_upgrade: { label: "\u0627\u0631\u062A\u0642\u0627\u06CC \u0633\u0627\u0632\u06AF\u0627\u0631\u06CC \u0646\u0634\u0633\u062A", tone: "info", iconName: "shield" },
   password_change: { label: "\u062A\u063A\u06CC\u06CC\u0631 \u0631\u0645\u0632 \u0639\u0628\u0648\u0631", tone: "warning", iconName: "shield" },
   staff_password_reset: { label: "\u0628\u0627\u0632\u0646\u0634\u0627\u0646\u06CC \u0631\u0645\u0632 \u06A9\u0627\u0631\u0645\u0646\u062F", tone: "warning", iconName: "shield" },
   invoice_void: { label: "\u0627\u0628\u0637\u0627\u0644 \u0641\u0627\u06A9\u062A\u0648\u0631", tone: "danger", iconName: "close" },
@@ -13507,6 +13551,7 @@ function reportsCsv(data) {
 
 // src/index.ts
 var app = new Hono3();
+var APP_BUILD = "auth-native-v3";
 function resolveTimeZone2(env) {
   return resolveTimeZone(env.TZ_NAME);
 }
@@ -13580,7 +13625,9 @@ app.use("*", async (c, next) => {
   if (c.req.path.startsWith("/api/")) {
     c.header("Cache-Control", "no-store");
   }
-  if (c.req.path.startsWith("/api/auth/") || c.req.path === "/login") {
+  if (c.req.path.startsWith("/api/auth/") || c.req.path === "/login" || c.req.path === "/auth/complete") {
+    c.header("Cache-Control", "no-store");
+    c.header("X-App-Build", APP_BUILD);
     c.header("CDN-Cache-Control", "no-store");
     c.header("Cloudflare-CDN-Cache-Control", "no-store");
     c.res.headers.append("Vary", "Cookie");
@@ -13592,7 +13639,7 @@ app.use("*", async (c, next) => {
   await next();
 });
 app.use("*", attachUser);
-app.use("/api/*", async (c, next) => {
+var sameOriginWrite = async (c, next) => {
   const method = c.req.method.toUpperCase();
   if (method === "GET" || method === "HEAD" || method === "OPTIONS") {
     await next();
@@ -13603,7 +13650,7 @@ app.use("/api/*", async (c, next) => {
     try {
       const requestUrl = new URL(c.req.url);
       const originUrl = new URL(origin);
-      if (originUrl.host !== requestUrl.host) {
+      if (originUrl.origin !== requestUrl.origin) {
         return c.json({ ok: false, error: "\u062F\u0631\u062E\u0648\u0627\u0633\u062A \u063A\u06CC\u0631\u0645\u062C\u0627\u0632 (CSRF)." }, 403);
       }
     } catch {
@@ -13616,7 +13663,12 @@ app.use("/api/*", async (c, next) => {
     }
   }
   await next();
-});
+};
+app.use("/api/*", sameOriginWrite);
+app.use("/login", sameOriginWrite);
+var loginBodyLimit = bodyLimit({ maxSize: 16 * 1024, onError: (c) => fail(c, "\u062D\u062C\u0645 \u0641\u0631\u0645 \u0648\u0631\u0648\u062F \u0628\u06CC\u0634 \u0627\u0632 \u062D\u062F \u0645\u062C\u0627\u0632 \u0627\u0633\u062A.", 413, "BODY_TOO_LARGE") });
+app.use("/login", loginBodyLimit);
+app.use("/api/auth/login", loginBodyLimit);
 app.use("/api/*", async (c, next) => {
   if (c.req.method === "GET") {
     await next();
@@ -14117,42 +14169,56 @@ app.get("/admin/export/customers.csv", requirePageRole("admin"), async (c) => {
     }
   });
 });
-app.post("/api/auth/login", async (c) => {
+async function handleStaffLogin(c) {
+  const native = c.req.path === "/login";
+  let next = "";
+  let phone = "";
+  function reject(message, status, code) {
+    return native ? c.html(loginPage(c.get("settings"), next, false, "", { message, phone }), status) : fail(c, message, status, code);
+  }
   const secret = assertJwtSecret(c.env);
   if (!secret) {
-    return fail(c, "\u06A9\u0644\u06CC\u062F JWT \u062A\u0646\u0638\u06CC\u0645 \u0646\u0634\u062F\u0647 \u0627\u0633\u062A. \u0628\u0627 \u062F\u0633\u062A\u0648\u0631 \xABwrangler secret put JWT_SECRET\xBB \u0622\u0646 \u0631\u0627 \u062A\u0646\u0638\u06CC\u0645 \u06A9\u0646\u06CC\u062F.", 500, "NO_SECRET");
+    return reject("\u06A9\u0644\u06CC\u062F JWT \u062A\u0646\u0638\u06CC\u0645 \u0646\u0634\u062F\u0647 \u0627\u0633\u062A. \u0628\u0627 \u062F\u0633\u062A\u0648\u0631 \xABwrangler secret put JWT_SECRET\xBB \u0622\u0646 \u0631\u0627 \u062A\u0646\u0638\u06CC\u0645 \u06A9\u0646\u06CC\u062F.", 500, "NO_SECRET");
   }
   let body;
   try {
-    body = await c.req.json();
+    body = native ? await c.req.parseBody() : await c.req.json();
   } catch {
-    return fail(c, "\u062F\u0627\u062F\u0647\u200C\u0647\u0627\u06CC \u0627\u0631\u0633\u0627\u0644\u06CC \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "BAD_JSON");
+    return reject("\u062F\u0627\u062F\u0647\u200C\u0647\u0627\u06CC \u0627\u0631\u0633\u0627\u0644\u06CC \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "BAD_JSON");
   }
-  if (!body || typeof body !== "object" || Array.isArray(body)) return fail(c, "\u062F\u0627\u062F\u0647\u200C\u0647\u0627\u06CC \u0627\u0631\u0633\u0627\u0644\u06CC \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "BAD_JSON");
-  const phone = normalizePhone(String(body.phone ?? ""));
+  if (!body || typeof body !== "object" || Array.isArray(body)) return reject("\u062F\u0627\u062F\u0647\u200C\u0647\u0627\u06CC \u0627\u0631\u0633\u0627\u0644\u06CC \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "BAD_JSON");
+  if (typeof body.phone !== "string" || typeof body.password !== "string") return reject("\u0634\u0645\u0627\u0631\u0647 \u0645\u0648\u0628\u0627\u06CC\u0644 \u0648 \u0631\u0645\u0632 \u0639\u0628\u0648\u0631 \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "INVALID_INPUT");
+  next = typeof body.next === "string" ? body.next.slice(0, 200) : "";
+  phone = normalizePhone(body.phone);
   const password = String(body.password ?? "");
   if (!/^09\d{9}$/.test(phone) || password.length < 1) {
-    return fail(c, "\u0634\u0645\u0627\u0631\u0647 \u0645\u0648\u0628\u0627\u06CC\u0644 \u0648 \u0631\u0645\u0632 \u0639\u0628\u0648\u0631 \u0631\u0627 \u0648\u0627\u0631\u062F \u06A9\u0646\u06CC\u062F.", 400, "INVALID_INPUT");
+    return reject("\u0634\u0645\u0627\u0631\u0647 \u0645\u0648\u0628\u0627\u06CC\u0644 \u0648 \u0631\u0645\u0632 \u0639\u0628\u0648\u0631 \u0631\u0627 \u0648\u0627\u0631\u062F \u06A9\u0646\u06CC\u062F.", 400, "INVALID_INPUT");
   }
   if (password.length > 200) {
-    return fail(c, "\u0631\u0645\u0632 \u0639\u0628\u0648\u0631 \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "INVALID_INPUT");
+    return reject("\u0631\u0645\u0632 \u0639\u0628\u0648\u0631 \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "INVALID_INPUT");
   }
   const rateKey = `login:${clientKey(c)}:${phone}`;
   const rate = checkRateLimit(rateKey, 8, 15 * 6e4);
   if (!rate.allowed) {
     c.header("Retry-After", String(rate.retryAfter));
-    return fail(c, "\u062A\u0644\u0627\u0634\u200C\u0647\u0627\u06CC \u0646\u0627\u0645\u0648\u0641\u0642 \u0632\u06CC\u0627\u062F \u0628\u0648\u062F\u0647 \u0627\u0633\u062A. \u06F1\u06F5 \u062F\u0642\u06CC\u0642\u0647 \u0628\u0639\u062F \u062F\u0648\u0628\u0627\u0631\u0647 \u062A\u0644\u0627\u0634 \u06A9\u0646\u06CC\u062F.", 429, "RATE_LIMITED");
+    return reject("\u062A\u0644\u0627\u0634\u200C\u0647\u0627\u06CC \u0646\u0627\u0645\u0648\u0641\u0642 \u0632\u06CC\u0627\u062F \u0628\u0648\u062F\u0647 \u0627\u0633\u062A. \u06F1\u06F5 \u062F\u0642\u06CC\u0642\u0647 \u0628\u0639\u062F \u062F\u0648\u0628\u0627\u0631\u0647 \u062A\u0644\u0627\u0634 \u06A9\u0646\u06CC\u062F.", 429, "RATE_LIMITED");
   }
-  const user = await findUserByPhoneLoose(c.env.DB, phone);
+  let user;
+  try {
+    user = await findUserByPhoneLoose(c.env.DB, phone);
+  } catch (error) {
+    console.error("AUTH_LOGIN_DATABASE_UNAVAILABLE", error);
+    c.header("Retry-After", "5");
+    return reject("\u062E\u0648\u0627\u0646\u062F\u0646 \u062D\u0633\u0627\u0628 \u0627\u0632 \u062F\u06CC\u062A\u0627\u0628\u06CC\u0633 \u0645\u0645\u06A9\u0646 \u0646\u06CC\u0633\u062A. \u06A9\u0645\u06CC \u0628\u0639\u062F \u062F\u0648\u0628\u0627\u0631\u0647 \u062A\u0644\u0627\u0634 \u06A9\u0646\u06CC\u062F\u061B \u0627\u06AF\u0631 \u0627\u062F\u0627\u0645\u0647 \u062F\u0627\u0634\u062A \u0645\u062F\u06CC\u0631 \u0628\u0627\u06CC\u062F \u0627\u062A\u0635\u0627\u0644 \u0648 \u0627\u0631\u062A\u0642\u0627\u06CC \u062F\u06CC\u062A\u0627\u0628\u06CC\u0633 \u0631\u0627 \u0628\u0631\u0631\u0633\u06CC \u06A9\u0646\u062F.", 503, "AUTH_DATABASE_UNAVAILABLE");
+  }
   const passwordOk = await verifyPassword(password, user?.password_hash ?? null);
   if (!user || !passwordOk) {
     await logLoginFailure(c, phone, user ? "wrong_password" : "unknown_phone");
-    return fail(c, "\u0634\u0645\u0627\u0631\u0647 \u0645\u0648\u0628\u0627\u06CC\u0644 \u06CC\u0627 \u0631\u0645\u0632 \u0639\u0628\u0648\u0631 \u0627\u0634\u062A\u0628\u0627\u0647 \u0627\u0633\u062A.", 401, "INVALID_CREDENTIALS");
+    return reject("\u0634\u0645\u0627\u0631\u0647 \u0645\u0648\u0628\u0627\u06CC\u0644 \u06CC\u0627 \u0631\u0645\u0632 \u0639\u0628\u0648\u0631 \u0627\u0634\u062A\u0628\u0627\u0647 \u0627\u0633\u062A.", 401, "INVALID_CREDENTIALS");
   }
   if (user.role !== "staff" && user.role !== "admin") {
     await logLoginFailure(c, phone, "not_staff");
-    return fail(
-      c,
+    return reject(
       "\u0627\u06CC\u0646 \u062D\u0633\u0627\u0628 \u0645\u0634\u062A\u0631\u06CC \u0627\u0633\u062A\u061B \u0627\u0632 \u0635\u0641\u062D\u0647\u0654 \xAB\u0628\u0627\u0634\u06AF\u0627\u0647 \u0645\u0646\xBB \u0628\u0627 \u06A9\u062F \u067E\u06CC\u0627\u0645\u06A9\u06CC \u0648\u0627\u0631\u062F \u0634\u0648\u06CC\u062F.",
       403,
       "WRONG_PORTAL"
@@ -14160,12 +14226,23 @@ app.post("/api/auth/login", async (c) => {
   }
   if (user.is_active !== 1) {
     await logLoginFailure(c, phone, "inactive");
-    return fail(c, "\u062D\u0633\u0627\u0628 \u0634\u0645\u0627 \u063A\u06CC\u0631\u0641\u0639\u0627\u0644 \u0634\u062F\u0647 \u0627\u0633\u062A. \u0628\u0627 \u0645\u062F\u06CC\u0631 \u062A\u0645\u0627\u0633 \u0628\u06AF\u06CC\u0631\u06CC\u062F.", 403, "ACCOUNT_DISABLED");
+    return reject("\u062D\u0633\u0627\u0628 \u0634\u0645\u0627 \u063A\u06CC\u0631\u0641\u0639\u0627\u0644 \u0634\u062F\u0647 \u0627\u0633\u062A. \u0628\u0627 \u0645\u062F\u06CC\u0631 \u062A\u0645\u0627\u0633 \u0628\u06AF\u06CC\u0631\u06CC\u062F.", 403, "ACCOUNT_DISABLED");
+  }
+  const verifiedHash = user.password_hash;
+  try {
+    user = await ensureSessionVersion(c.env.DB, user);
+  } catch (error) {
+    console.error("AUTH_SESSION_SCHEMA_UNAVAILABLE", error);
+    return reject("\u0633\u0627\u062E\u062A \u0646\u0634\u0633\u062A \u0627\u0645\u0646 \u0645\u0645\u06A9\u0646 \u0646\u0634\u062F. \u0645\u062F\u06CC\u0631 \u0628\u0627\u06CC\u062F \u062F\u0633\u062A\u0631\u0633\u06CC \u0648 \u0633\u0627\u062E\u062A\u0627\u0631 \u062F\u06CC\u062A\u0627\u0628\u06CC\u0633 \u0631\u0627 \u0628\u0631\u0631\u0633\u06CC \u06A9\u0646\u062F.", 503, "AUTH_SCHEMA_UNAVAILABLE");
+  }
+  if (!user || user.is_active !== 1 || user.role !== "staff" && user.role !== "admin" || user.password_hash !== verifiedHash) {
+    return reject("\u0627\u0637\u0644\u0627\u0639\u0627\u062A \u062D\u0633\u0627\u0628 \u062A\u063A\u06CC\u06CC\u0631 \u06A9\u0631\u062F\u0647 \u0627\u0633\u062A. \u0644\u0637\u0641\u0627\u064B \u062F\u0648\u0628\u0627\u0631\u0647 \u0648\u0627\u0631\u062F \u0634\u0648\u06CC\u062F.", 401, "CREDENTIALS_CHANGED");
   }
   resetRateLimit(rateKey);
   const ttl = sessionTtl(c.env);
   const token = await createToken(secret, user, ttl);
   setSessionCookie(c, token, isSecureRequest(c), ttl);
+  if (native) return c.redirect("/auth/complete?uid=" + user.id + "&next=" + encodeURIComponent(loginDestination(next, user.role)), 303);
   return ok(c, {
     userId: user.id,
     name: user.name,
@@ -14176,6 +14253,20 @@ app.post("/api/auth/login", async (c) => {
     cookieName: "cc_session",
     secureCookie: isSecureRequest(c)
   });
+}
+app.post("/api/auth/login", handleStaffLogin);
+app.post("/login", handleStaffLogin);
+app.get("/auth/complete", (c) => {
+  if (c.get("sessionLookupFailed")) {
+    c.header("Retry-After", "5");
+    return c.html(loginPage(c.get("settings"), "", false, "", { message: "\u062E\u0648\u0627\u0646\u062F\u0646 \u0646\u0634\u0633\u062A \u0627\u0632 \u062F\u06CC\u062A\u0627\u0628\u06CC\u0633 \u0645\u0648\u0642\u062A\u0627\u064B \u0645\u0645\u06A9\u0646 \u0646\u06CC\u0633\u062A. \u06A9\u0645\u06CC \u0628\u0639\u062F \u062F\u0648\u0628\u0627\u0631\u0647 \u062A\u0644\u0627\u0634 \u06A9\u0646\u06CC\u062F." }), 503);
+  }
+  const user = c.get("user");
+  const expectedUid = c.req.query("uid");
+  if (!user || expectedUid !== void 0 && expectedUid !== String(user.uid)) return c.html(loginPage(c.get("settings"), "", false, "", {
+    message: "\u0646\u0634\u0633\u062A \u0645\u0639\u062A\u0628\u0631 \u062F\u0631\u06CC\u0627\u0641\u062A \u0646\u0634\u062F. \u0648\u0631\u0648\u062F \u0631\u0627 \u0627\u0632 \u0647\u0645\u06CC\u0646 \u0635\u0641\u062D\u0647 \u0627\u0646\u062C\u0627\u0645 \u062F\u0647\u06CC\u062F. \u0627\u06AF\u0631 \u062A\u06A9\u0631\u0627\u0631 \u0634\u062F\u060C \u0645\u062C\u0627\u0632 \u0628\u0648\u062F\u0646 \u06A9\u0648\u06A9\u06CC \u0627\u06CC\u0646 \u0633\u0627\u06CC\u062A \u0648 \u0646\u0634\u0627\u0646\u06CC \u062F\u0627\u0645\u0646\u0647 \u0631\u0627 \u0628\u0631\u0631\u0633\u06CC \u06A9\u0646\u06CC\u062F."
+  }), 401);
+  return c.redirect(loginDestination(c.req.query("next") ?? "", user.role), 303);
 });
 app.get("/api/auth/session", (c) => {
   if (c.get("sessionLookupFailed")) return fail(c, "\u0628\u0631\u0631\u0633\u06CC \u0648\u0631\u0648\u062F \u0645\u0648\u0642\u062A\u0627\u064B \u062F\u0631 \u062F\u0633\u062A\u0631\u0633 \u0646\u06CC\u0633\u062A\u061B \u062F\u0648\u0628\u0627\u0631\u0647 \u062A\u0644\u0627\u0634 \u06A9\u0646\u06CC\u062F.", 503, "SESSION_UNAVAILABLE");
@@ -14355,6 +14446,7 @@ app.post("/api/me/sms-opt-in", requireApiRole("customer"), async (c) => {
   return ok(c, { smsOptIn: optIn });
 });
 app.get("/api/auth/me", async (c) => {
+  if (c.get("sessionLookupFailed")) return fail(c, "\u062E\u0648\u0627\u0646\u062F\u0646 \u0646\u0634\u0633\u062A \u0645\u0648\u0642\u062A\u0627\u064B \u0645\u0645\u06A9\u0646 \u0646\u06CC\u0633\u062A.", 503, "SESSION_UNAVAILABLE");
   const user = c.get("user");
   if (!user) return ok(c, { authenticated: false, user: null });
   const dbUser = await getActiveUser(c.env.DB, user.uid);
@@ -15526,6 +15618,7 @@ app.get("/api/health", async (c) => {
     return ok(c, {
       status: "ok",
       database: "connected",
+      build: APP_BUILD,
       users: row?.c ?? 0,
       time: (/* @__PURE__ */ new Date()).toISOString()
     });

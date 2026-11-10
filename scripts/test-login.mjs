@@ -1,6 +1,5 @@
-/** Login regressions: real SQLite/Worker routes plus client-script VM. No live browser or external network. */
+/** Login regressions: real SQLite/Worker routes, legacy upgrades and native form navigation. No external network. */
 import assert from 'node:assert/strict';
-import vm from 'node:vm';
 import { DatabaseSync } from 'node:sqlite';
 import { build } from 'esbuild';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
@@ -11,7 +10,7 @@ import { pathToFileURL } from 'node:url';
 const dir = await mkdtemp(join(tmpdir(), 'login-tests-'));
 try {
   const file = join(dir, 'module.mjs');
-  await build({ stdin: { contents: `export { loginPage } from './src/ui/public'; export { DEFAULT_SETTINGS, invalidateSettingsCache } from './src/lib/settings'; export { default as worker } from './src/index';`, resolveDir: process.cwd() }, bundle: true, platform: 'node', format: 'esm', outfile: file });
+  await build({ stdin: { contents: `export { createToken, resetRateLimit, loginDestination, getActiveUser } from './src/lib/auth'; export { loginPage } from './src/ui/public'; export { DEFAULT_SETTINGS, invalidateSettingsCache } from './src/lib/settings'; export { default as worker } from './src/index';`, resolveDir: process.cwd() }, bundle: true, platform: 'node', format: 'esm', outfile: file });
   const m = await import(pathToFileURL(file));
   let passed = 0;
   async function test(name, fn) { await fn(); passed++; console.log('✅ ' + name); }
@@ -32,14 +31,16 @@ try {
   let db, env;
   function reset() {
     m.invalidateSettingsCache();
+    m.resetRateLimit('login:local:09120000000');
+    if (db) db.close();
     const next=database();db=next.db;
     env={DB:next.api, JWT_SECRET:'local-test-only-not-real-0123456789abcdef'};
   }
   globalThis.fetch=async()=>{throw new Error('Unexpected external network in login test');};
 
   async function http(path,{method='GET',body,cookie='',https=false,headers={}}={}) {
-    const tasks=[];const r=await m.worker.fetch(new Request((https?'https':'http')+'://app.test'+path,{method,headers:{'Content-Type':'application/json',...(cookie?{Cookie:cookie}:{}),...headers},...(body!==undefined?{body:JSON.stringify(body)}:{})}),env,{waitUntil:p=>tasks.push(p)});
-    await Promise.all(tasks);return {response:r,json:await r.json()};
+    const tasks=[];const r=await m.worker.fetch(new Request((https?'https':'http')+'://app.test'+path,{method,headers:{'Content-Type':body instanceof URLSearchParams?'application/x-www-form-urlencoded':'application/json',...(cookie?{Cookie:cookie}:{}),...headers},...(body!==undefined?{body:body instanceof URLSearchParams?body.toString():JSON.stringify(body)}:{})}),env,{waitUntil:p=>tasks.push(p)});
+    await Promise.all(tasks);const text=await r.text();return {response:r,text,json:r.headers.get('content-type')?.includes('application/json')?JSON.parse(text):null};
   }
   async function login(options={}) {
     const r=await http('/api/auth/login',{method:'POST',body:{phone:'09120000000',password:'Admin@12345'},...options});assert.equal(r.response.status,200);return r;
@@ -60,7 +61,7 @@ try {
     assert.equal((await http('/api/admin/stats')).response.status,401);
   });
   await test('transient DB session lookup failure returns 503, preserves cookie, then recovers',async()=>{
-    reset();const l=await login();const cookie=l.response.headers.get('set-cookie').split(';')[0];const prepare=env.DB.prepare.bind(env.DB);env.DB.prepare=q=>{const s=prepare(q);if(q.includes('token_version, created_at')&&q.includes('FROM users WHERE id'))s.first=async()=>{throw new Error('simulated DB outage');};return s;};
+    reset();const l=await login();const cookie=l.response.headers.get('set-cookie').split(';')[0];const prepare=env.DB.prepare.bind(env.DB);env.DB.prepare=q=>{const s=prepare(q);if(q.includes('SELECT * FROM users WHERE id'))s.first=async()=>{throw new Error('simulated DB outage');};return s;};
     const s=await http('/api/auth/session',{cookie});assert.equal(s.response.status,503);assert.equal(s.json.code,'SESSION_UNAVAILABLE');assert.equal(s.response.headers.get('set-cookie'),null);
     env.DB.prepare=prepare;assert.equal((await http('/api/auth/session',{cookie})).json.data.authenticated,true);
   });
@@ -69,48 +70,98 @@ try {
     assert.equal((await http('/api/auth/login',{method:'POST',body:null})).response.status,400);
   });
 
-  const loginData={userId:1,role:'admin',name:'مدیر',redirect:'/admin'};
-  const signedIn=(extra={})=>({ok:true,data:{authenticated:true,userId:1,role:'admin',...extra}});
-  const responseJson=(body,status=200)=>({ok:status>=200&&status<300,json:async()=>body});
-  function client({replies=[responseJson(signedIn())],post=async()=>loginData,next='',timeout=false}={}) {
-    const nodes=new Map(),toasts=[],navigations=[],probes=[],posts=[];
-    function node(id){if(!nodes.has(id))nodes.set(id,{value:id==='#phone'?'09120000000':id==='#password'?'Admin@12345':'',disabled:false,dataset:{},textContent:'',handlers:{},classList:{values:new Set(['hidden']),add(v){this.values.add(v);},remove(v){this.values.delete(v);},contains(v){return this.values.has(v);}},addEventListener(e,fn){this.handlers[e]=fn;}});return nodes.get(id);}
-    const html=m.loginPage(m.DEFAULT_SETTINGS,next,false,'cookie');const block=[...html.matchAll(/<script(?![^>]*src=)[^>]*>([\s\S]*?)<\/script>/g)].map(m=>m[1]).find(s=>s.includes('async function confirmSession'));
-    const sandbox={console,AbortController,URL,Date,Promise,Number,String,JSON,$:node,toast:(...a)=>toasts.push(a),api:async(path,opts)=>{posts.push({path,opts});return post();},setLoading:(btn,on)=>{btn.disabled=on;},setTimeout:(fn,ms)=>{const handle={cancelled:false};if(ms<1000||timeout)queueMicrotask(()=>{if(!handle.cancelled)fn();});return handle;},clearTimeout:h=>{h.cancelled=true;},fetch:async(url,opts)=>{const idx=probes.length;probes.push({url,opts});const reply=replies[Math.min(idx,replies.length-1)];if(typeof reply==='function')return reply(url,opts);if(reply instanceof Error)throw reply;return reply;}};
-    sandbox.window={location:{replace:url=>navigations.push(url)}};vm.runInNewContext(block,sandbox);
-    return {node,html,toasts,navigations,probes,posts,submit:()=>node('#login-form').handlers.submit({preventDefault(){}})};
-  }
-  await test('old cookie error URLs no longer render the accusatory banner or Incognito advice',async()=>{
-    const c=client();assert(!c.html.includes('مرورگر کوکی ورود را ذخیره نکرد'));assert(!c.html.includes('Incognito'));assert(!c.html.includes('/login?e=cookie'));assert(c.html.includes('id="login-feedback"'));assert(c.html.includes('rel="noopener noreferrer"'));
+  await test('legacy DB without optional loyalty fields accepts login and the resulting session',async()=>{
+    reset();db.exec('ALTER TABLE users DROP COLUMN lifetime_points; ALTER TABLE users DROP COLUMN sms_opt_in;');
+    const l=await login();const cookie=l.response.headers.get('set-cookie').split(';')[0];
+    const s=await http('/api/auth/session',{cookie});assert.equal(s.response.status,200);assert.equal(s.json.data.authenticated,true);
   });
-  await test('normal login navigates only after confirming same identity with a cache-busting, no-store probe',async()=>{
-    const c=client({next:'/admin/settings'});await c.submit();assert.deepEqual(c.navigations,['/admin/settings']);assert.equal(c.posts.length,1);assert.equal(c.probes.length,1);assert.match(c.probes[0].url,/\?_login_check=/);assert.equal(c.probes[0].opts.cache,'no-store');assert.equal(c.probes[0].opts.credentials,'same-origin');assert.equal(c.probes[0].opts.redirect,'error');
+
+  const credentials={phone:'09120000000',password:'Admin@12345'};
+  function legacy(){db.exec('ALTER TABLE users DROP COLUMN token_version; ALTER TABLE users DROP COLUMN lifetime_points; ALTER TABLE users DROP COLUMN sms_opt_in;');}
+  function hasVersion(){return db.prepare('PRAGMA table_info(users)').all().some(c=>c.name==='token_version');}
+  function native(body=credentials,extra={}){return http('/login',{method:'POST',body:new URLSearchParams(body),...extra});}
+  await test('native form sets one secure cookie, then server confirms it and reaches role-bound destination',async()=>{
+    reset();const l=await native({...credentials,next:'/admin/settings?tab=menu'},{https:true});assert.equal(l.response.status,303);assert.match(l.response.headers.get('cache-control'),/no-store/);assert.equal(l.response.headers.getSetCookie().length,1);
+    const cookie=l.response.headers.get('set-cookie').split(';')[0];const target=l.response.headers.get('location');assert(!target.includes(credentials.password));const done=await http(target,{cookie,https:true});assert.equal(done.response.status,303);assert.equal(done.response.headers.get('location'),'/admin/settings?tab=menu');assert.equal(done.response.headers.get('x-app-build'),'auth-native-v3');
   });
-  await test('a transient negative or 503 response is retried without replaying credentials or showing cookie error',async()=>{
-    for(const first of [responseJson({ok:true,data:{authenticated:false}}),responseJson({ok:false},503)]){const c=client({replies:[first,responseJson(signedIn())]});await c.submit();assert.equal(c.posts.length,1);assert.equal(c.probes.length,2);assert.deepEqual(c.navigations,['/admin']);assert.notEqual(c.probes[0].url,c.probes[1].url);assert.equal(c.toasts.length,1);}
+  await test('legacy login adds only session version, preserves all user data and records the additive upgrade once',async()=>{
+    reset();legacy();const before=db.prepare('SELECT * FROM users ORDER BY id').all();const l=await login();assert(hasVersion());const after=db.prepare('SELECT * FROM users ORDER BY id').all();assert.deepEqual(JSON.parse(JSON.stringify(after.map(({token_version,...row})=>row))),JSON.parse(JSON.stringify(before)));assert(after.every(r=>r.token_version===0));
+    const cookie=l.response.headers.get('set-cookie').split(';')[0];assert.equal((await http('/api/auth/session',{cookie})).json.data.authenticated,true);await login();assert.equal(db.prepare("SELECT COUNT(*) c FROM admin_logs WHERE action='auth_schema_upgrade'").get().c,1);
+    assert(!db.prepare('PRAGMA table_info(users)').all().some(c=>['lifetime_points','sms_opt_in'].includes(c.name)));
   });
-  await test('network and invalid JSON failures recover if a later session probe succeeds',async()=>{
-    for(const first of [new Error('network down'),{ok:true,json:async()=>{throw new Error('not JSON');}}]){const c=client({replies:[first,responseJson(signedIn())]});await c.submit();assert.deepEqual(c.navigations,['/admin']);assert.equal(c.probes.length,2);}
+  await test('valid pre-upgrade signed session can upgrade version and remain authenticated',async()=>{
+    reset();legacy();const token=await m.createToken(env.JWT_SECRET,{id:1,name:'legacy',role:'admin'});const s=await http('/api/auth/session',{cookie:'cc_session='+token});assert.equal(s.json.data.authenticated,true);assert(hasVersion());
   });
-  await test('persistent blocked cookie stays on form with recovery link, exactly three probes and no false welcome',async()=>{
-    const c=client({replies:[responseJson({ok:true,data:{authenticated:false}})]});await c.submit();assert.equal(c.probes.length,3);assert.equal(c.posts.length,1);assert.equal(c.navigations.length,0);assert.equal(c.toasts.length,0);assert.equal(c.node('#login-btn').disabled,false);assert(!c.node('#login-feedback').classList.contains('hidden'));assert(c.node('#login-feedback-text').textContent.includes('ورود کامل نشد'));await c.submit();assert.equal(c.posts.length,2);
+  await test('two concurrent legacy logins tolerate only duplicate-column race and both authenticate',async()=>{
+    reset();legacy();const results=await Promise.all([login(),login()]);for(const l of results){const cookie=l.response.headers.get('set-cookie').split(';')[0];assert.equal((await http('/api/auth/session',{cookie})).json.data.authenticated,true);}assert.equal(db.prepare("SELECT COUNT(*) c FROM admin_logs WHERE action='auth_schema_upgrade'").get().c,1);
   });
-  await test('persistent network failure never counts as successful authentication',async()=>{
-    const c=client({replies:[new Error('offline')]});await c.submit();assert.equal(c.probes.length,3);assert.equal(c.navigations.length,0);assert.equal(c.toasts.length,0);assert.equal(c.node('#login-btn').disabled,false);
+  await test('anonymous and bad-password requests never upgrade the DB',async()=>{
+    reset();legacy();assert.equal((await http('/api/auth/session')).json.data.authenticated,false);assert.equal((await http('/auth/complete')).response.status,401);assert.equal((await native({...credentials,password:'wrong'})).response.status,401);assert(!hasVersion());
   });
-  await test('wrong-account or wrong-role stale responses cannot complete login',async()=>{
-    for(const extra of [{userId:2},{role:'staff'}]){const c=client({replies:[responseJson(signedIn(extra))]});await c.submit();assert.equal(c.navigations.length,0);assert.equal(c.probes.length,3);}
+  await test('inactive account with correct password cannot trigger migration or receive a cookie',async()=>{
+    reset();legacy();db.prepare('UPDATE users SET is_active=0 WHERE id=1').run();const r=await native();assert.equal(r.response.status,403);assert.equal(r.response.headers.get('set-cookie'),null);assert(!hasVersion());
   });
-  await test('each hanging probe has an abort deadline and releases the form after bounded attempts',async()=>{
-    const c=client({timeout:true,replies:[(_url,opts)=>new Promise((resolve,reject)=>opts.signal.addEventListener('abort',()=>reject(new Error('aborted'))))]});await c.submit();assert.equal(c.probes.length,3);assert(c.probes.every(p=>p.opts.signal.aborted));assert.equal(c.node('#login-btn').disabled,false);assert.equal(c.navigations.length,0);
+  await test('DDL failure is a server/schema error, never a successful login or a wiped DB',async()=>{
+    reset();legacy();const before=db.prepare('SELECT * FROM users').all();const prepare=env.DB.prepare.bind(env.DB);env.DB.prepare=q=>{const stmt=prepare(q);if(q.startsWith('ALTER TABLE'))stmt.run=async()=>{throw new Error('simulated D1 read-only');};return stmt;};
+    const r=await http('/api/auth/login',{method:'POST',body:credentials});assert.equal(r.response.status,503);assert.equal(r.json.code,'AUTH_SCHEMA_UNAVAILABLE');assert.equal(r.response.headers.get('set-cookie'),null);assert.deepEqual(db.prepare('SELECT * FROM users').all(),before);
   });
-  await test('double submit sends credentials once; wrong credentials still show the actual error',async()=>{
-    let release;const pending=new Promise(r=>release=r);const c=client({post:()=>pending});const a=c.submit(),b=c.submit();assert.equal(c.posts.length,1);release(loginData);await Promise.all([a,b]);assert.equal(c.navigations.length,1);
-    const bad=client({post:async()=>{throw new Error('رمز اشتباه است');}});await bad.submit();assert.equal(bad.probes.length,0);assert.equal(bad.toasts[0][0],'رمز اشتباه است');assert.equal(bad.node('#login-btn').disabled,false);
+  await test('corrupt negative session version fails closed without resetting it',async()=>{
+    reset();db.prepare('UPDATE users SET token_version=-1 WHERE id=1').run();const r=await http('/api/auth/login',{method:'POST',body:credentials});assert.equal(r.response.status,503);assert.equal(r.response.headers.get('set-cookie'),null);assert.equal(db.prepare('SELECT token_version v FROM users WHERE id=1').get().v,-1);
   });
-  await test('external next URLs and admin destinations for staff are not followed',async()=>{
-    const external=client({next:'//evil.test'});await external.submit();assert.deepEqual(external.navigations,['/admin']);
-    const staff=client({next:'/admin',post:async()=>({...loginData,userId:2,role:'staff',redirect:'/staff'}),replies:[responseJson(signedIn({userId:2,role:'staff'}))]});await staff.submit();assert.deepEqual(staff.navigations,['/staff']);
+  await test('password change racing with legacy repair cannot mint a token from the old password',async()=>{
+    reset();legacy();const prepare=env.DB.prepare.bind(env.DB);env.DB.prepare=q=>{const stmt=prepare(q);if(q.startsWith('ALTER TABLE')){const run=stmt.run.bind(stmt);stmt.run=async()=>{const r=await run();db.prepare("UPDATE users SET password_hash='changed-concurrently',token_version=1 WHERE id=1").run();return r;};}return stmt;};
+    const r=await http('/api/auth/login',{method:'POST',body:credentials});assert.equal(r.response.status,401);assert.equal(r.json.code,'CREDENTIALS_CHANGED');assert.equal(r.response.headers.get('set-cookie'),null);
   });
-  console.log(`\n${passed}/${passed} login regression checks passed (SQLite/Worker routes and client VM; not a live browser).`);
+  await test('concurrent revocation during repair is re-read, not overwritten with zero',async()=>{
+    reset();legacy();const token=await m.createToken(env.JWT_SECRET,{id:1,name:'legacy',role:'admin'});const prepare=env.DB.prepare.bind(env.DB);env.DB.prepare=q=>{const stmt=prepare(q);if(q.startsWith('ALTER TABLE'))stmt.run=async()=>{db.exec('ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0');db.prepare('UPDATE users SET token_version=2 WHERE id=1').run();throw new Error('D1_ERROR: duplicate column name: token_version: SQLITE_ERROR');};return stmt;};
+    const r=await http('/api/auth/session',{cookie:'cc_session='+token});assert.equal(r.json.data.authenticated,false);assert.equal(db.prepare('SELECT token_version v FROM users WHERE id=1').get().v,2);
+  });
+  await test('native wrong-password response preserves phone, never echoes password, and supports retry',async()=>{
+    reset();const r=await native({...credentials,password:'not-the-secret-<script>'});assert.equal(r.response.status,401);assert.match(r.text,/اشتباه/);assert(r.text.includes('value="09120000000"'));assert(!r.text.includes('not-the-secret'));assert(!r.text.includes('disabled='));assert.equal((await native()).response.status,303);
+  });
+  await test('normal form handles Persian and Arabic digits and international phone format on the server',async()=>{
+    for(const phone of ['۰۹۱۲۰۰۰۰۰۰۰','٠٩١٢٠٠٠٠٠٠٠','+98 912 000 0000','00989120000000']){reset();assert.equal((await native({...credentials,phone})).response.status,303,phone);}
+  });
+  await test('native form works without any JS auth fetch, API helper or session-probe gate',async()=>{
+    const html=m.loginPage(m.DEFAULT_SETTINGS,'/admin/settings',false,'cookie');assert.match(html,/<form[^>]*method="post"[^>]*action="\/login"[^>]*target="_top"/);assert.match(html,/name="phone"/);assert.match(html,/name="password"/);assert.match(html,/name="next" value="\/admin\/settings"/);assert(!html.includes('confirmSession'));assert(!html.includes('ورود کامل نشد'));assert(!html.includes('login-open'));assert(!html.includes('Incognito'));
+  });
+  await test('form/JSON login both reject cross-origin including same host over wrong scheme',async()=>{
+    reset();for(const path of ['/login','/api/auth/login'])for(const headers of [{Origin:'https://evil.test'},{Origin:'https://app.test'},{'Sec-Fetch-Site':'cross-site'}]){const r=await http(path,{method:'POST',body:path==='/login'?new URLSearchParams(credentials):credentials,headers});assert.equal(r.response.status,403);assert.equal(r.response.headers.get('set-cookie'),null);}
+    assert.equal((await native(credentials,{headers:{Origin:'http://app.test','Sec-Fetch-Site':'same-origin'}})).response.status,303);
+  });
+  await test('safe navigation rejects external, backslash, traversal and role-prefix lookalikes',async()=>{
+    for(const next of ['//evil.test','/\\evil.test','https://evil.test','/administrator','/staff','/admin/../../staff','/admin\nInjected: x','/admin/../staff'])assert.equal(m.loginDestination(next,'admin'),'/admin',next);
+    assert.equal(m.loginDestination('/staffing','staff'),'/staff');assert.equal(m.loginDestination('/admin/settings?x=1','admin'),'/admin/settings?x=1');
+  });
+  await test('completion without valid cookie is denied and never redirects to protected data',async()=>{
+    reset();for(const cookie of ['', 'cc_session=forged.jwt.token']){const r=await http('/auth/complete?next=/admin',{cookie});assert.equal(r.response.status,401);assert.equal(r.response.headers.get('location'),null);assert.match(r.text,/نشست معتبر دریافت نشد/);}assert.equal((await http('/api/admin/stats')).response.status,401);
+  });
+  await test('DB outage yields 503 not fake logout across completion, protected page, protected API and auth/me',async()=>{
+    reset();const l=await login();const cookie=l.response.headers.get('set-cookie').split(';')[0];const prepare=env.DB.prepare.bind(env.DB);env.DB.prepare=q=>{const s=prepare(q);if(q.includes('SELECT * FROM users WHERE id'))s.first=async()=>{throw new Error('simulated lookup outage');};return s;};
+    for(const path of ['/auth/complete?next=/admin','/admin','/api/admin/stats','/api/auth/me']){const r=await http(path,{cookie});assert.equal(r.response.status,503,path);assert.equal(r.response.headers.get('location'),null);assert.equal(r.response.headers.get('set-cookie'),null);}
+  });
+  await test('initial account DB outage returns a useful 503 on native form, without cookie',async()=>{
+    reset();const prepare=env.DB.prepare.bind(env.DB);env.DB.prepare=q=>{const s=prepare(q);if(q.includes('FROM users'))s.first=async()=>{throw new Error('simulated DB outage');};return s;};const r=await native();assert.equal(r.response.status,503);assert.match(r.text,/خواندن حساب از دیتابیس/);assert.equal(r.response.headers.get('set-cookie'),null);
+  });
+  await test('malformed bodies, non-string credentials and oversized form/JSON fail safely',async()=>{
+    reset();for(const body of [null,[],{phone:[],password:'x'},{phone:credentials.phone,password:{}}])assert.equal((await http('/api/auth/login',{method:'POST',body})).response.status,400);
+    for(const path of ['/login','/api/auth/login']){const body={...credentials,password:'x'.repeat(17000)};assert.equal((await http(path,{method:'POST',body:path==='/login'?new URLSearchParams(body):body})).response.status,413);}
+  });
+  await test('form and API share failed-login rate limit; retry header is preserved',async()=>{
+    reset();for(let i=0;i<8;i++){const r=await (i%2?native({...credentials,password:'wrong'}):http('/api/auth/login',{method:'POST',body:{...credentials,password:'wrong'}}));assert.equal(r.response.status,401);}
+    const r=await native();assert.equal(r.response.status,429);assert(Number(r.response.headers.get('retry-after'))>0);assert.equal(r.response.headers.get('set-cookie'),null);
+  });
+  await test('health exposes deployment build identifier but no secret or credentials',async()=>{
+    reset();const r=await http('/api/health');assert.equal(r.json.data.build,'auth-native-v3');assert(!r.text.includes(env.JWT_SECRET));assert(!r.text.includes(credentials.password));
+  });
+  await test('legacy native login completes all server redirects and renders the actual dashboard',async()=>{
+    reset();legacy();const l=await native();assert.equal(l.response.status,303);const cookie=l.response.headers.get('set-cookie').split(';')[0];const done=await http(l.response.headers.get('location'),{cookie});assert.equal(done.response.status,303);const dashboard=await http(done.response.headers.get('location'),{cookie});assert.equal(dashboard.response.status,200);assert.match(dashboard.text,/text\/javascript|<script/);
+  });
+  await test('completion cannot mistake a valid different account for the intended sign-in identity',async()=>{
+    reset();const l=await login();const cookie=l.response.headers.get('set-cookie').split(';')[0];const r=await http('/auth/complete?uid=2&next=/admin',{cookie});assert.equal(r.response.status,401);assert.equal(r.response.headers.get('location'),null);
+  });
+  await test('form feedback and redirect fields are HTML escaped and never create inline code',async()=>{
+    const html=m.loginPage(m.DEFAULT_SETTINGS,'/admin/"<script>INJECTED</script>',false,'',{message:'<script>ERROR_INJECTED</script>',phone:'" onfocus="INJECTED'});assert(!html.includes('<script>INJECTED'));assert(!html.includes('<script>ERROR_INJECTED'));assert(html.includes('&lt;script&gt;ERROR_INJECTED'));
+  });
+  console.log(`\n${passed}/${passed} login regression checks passed.`);
 } finally { await rm(dir,{recursive:true,force:true}); }

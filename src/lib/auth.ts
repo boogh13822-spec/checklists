@@ -8,6 +8,8 @@ import { sign, verify } from 'hono/jwt';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import type { AppEnv, JwtPayload, Role, UserRow, Bindings } from '../types';
 import { fail } from './utils';
+import { logAdminAction } from './db';
+import { errorPage } from '../ui/layout';
 
 export const SESSION_COOKIE = 'cc_session';
 export const SESSION_TTL_SECONDS = 12 * 60 * 60; // ۱۲ ساعت (پیش‌فرض)
@@ -138,18 +140,49 @@ export async function getActiveUser(
   db: D1Database,
   uid: number
 ): Promise<UserRow | null> {
-  const user = await db
-    .prepare(
-      `SELECT id, name, phone, birth_date, points, lifetime_points, tier, referred_by,
-              last_visit_date, avg_visit_interval, role, password_hash, is_active,
-              first_purchase_at, referral_rewarded, last_churn_sms_at, sms_opt_in,
-              token_version, created_at
-       FROM users WHERE id = ? LIMIT 1`
-    )
-    .bind(uid)
-    .first<UserRow>();
+  const user = await db.prepare('SELECT * FROM users WHERE id = ? LIMIT 1').bind(uid).first<UserRow>();
   if (!user || user.is_active !== 1) return null;
-  return user;
+  const ready = await ensureSessionVersion(db, user);
+  return ready?.is_active === 1 ? ready : null;
+}
+
+/**
+ * Only the existing, security-critical migration is repaired here, never financial
+ * schema/data. Called after password/OTP/signature verification, not for guests.
+ * Re-read after ALTER (including concurrent ALTER) so revocations are not lost.
+ */
+export async function ensureSessionVersion(db: D1Database, user: UserRow): Promise<UserRow | null> {
+  if (Number.isSafeInteger(user.token_version) && user.token_version >= 0) return user;
+  if (user.token_version !== undefined) throw new Error('AUTH_SESSION_VERSION_INVALID');
+  try {
+    await db.prepare('ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0').run();
+    console.info('AUTH_SCHEMA_UPGRADE: users.token_version added');
+    await logAdminAction(db, {
+      adminId: null, adminName: 'سیستم', action: 'auth_schema_upgrade',
+      targetType: 'schema', targetId: 'users.token_version',
+      details: 'ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0',
+    });
+  } catch (error) {
+    // Another invocation may have added this exact column first. Nothing else is swallowed.
+    if (!/duplicate column name:\s*token_version\b/i.test(String(error))) throw error;
+  }
+  const current = await db.prepare('SELECT * FROM users WHERE id = ? LIMIT 1').bind(user.id).first<UserRow>();
+  if (current && (!Number.isSafeInteger(current.token_version) || current.token_version < 0)) {
+    throw new Error('AUTH_SESSION_VERSION_INVALID');
+  }
+  return current;
+}
+
+/** Role-bound, local navigation only; never accept protocol-relative URLs/backslashes. */
+export function loginDestination(next: string, role: Role): string {
+  const home = homeForRole(role);
+  if (!next || next.length > 200 || /[\\\x00-\x20\x7f]/.test(next)) return home;
+  try {
+    const url = new URL(next, 'https://navigation.invalid');
+    if (!next.startsWith('/') || url.origin !== 'https://navigation.invalid') return home;
+    if (url.pathname !== home && !url.pathname.startsWith(home + '/')) return home;
+    return url.pathname + url.search + url.hash;
+  } catch { return home; }
 }
 
 /** Middleware: پر کردن c.set('user') از کوکی */
@@ -198,6 +231,7 @@ export const attachUser: MiddlewareHandler<AppEnv> = async (c, next) => {
 
 /** پاسخ ۴۰۱ JSON برای API */
 function unauthorized(c: Context<AppEnv>) {
+  if (c.get('sessionLookupFailed')) return fail(c, 'دیتابیس موقتاً در دسترس نیست؛ دوباره تلاش کنید.', 503, 'SESSION_UNAVAILABLE');
   return fail(c, 'لطفاً ابتدا وارد حساب خود شوید.', 401, 'UNAUTHORIZED');
 }
 
@@ -228,6 +262,10 @@ export function requirePageRole(...roles: Role[]): MiddlewareHandler<AppEnv> {
     const user = c.get('user');
     const url = new URL(c.req.url);
     if (!user) {
+      if (c.get('sessionLookupFailed')) {
+        c.header('Retry-After', '5');
+        return c.html(errorPage(503, 'خواندن حساب از دیتابیس موقتاً ممکن نیست. کمی بعد صفحه را دوباره باز کنید.', c.get('settings')?.cafe_name), 503);
+      }
       // اگر کوکی وجود داشت ولی معتبر نبود، پیام «نشست منقضی» دقیق است؛
       // در ورود اول (بدون کوکی) نباید این پیام گمراه‌کننده نمایش داده شود.
       const expired = c.get('sessionInvalid') ? '&expired=1' : '';

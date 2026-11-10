@@ -9,7 +9,7 @@ import {
   formatNumberFa,
   toPersianDigits,
 } from '../lib/utils';
-import { icon, publicShell, jsonForScript } from './layout';
+import { icon, publicShell } from './layout';
 
 /* ==========================================================================
  *  صفحه‌ی فرود
@@ -434,7 +434,8 @@ export function loginPage(
   settings: AppSettings,
   next: string,
   expired = false,
-  notice = ''
+  notice = '',
+  feedback?: { message: string; phone?: string }
 ): string {
   const cafe = escapeHtml(settings.cafe_name);
   const safeNext = next.startsWith('/') && !next.startsWith('//') ? next : '';
@@ -512,19 +513,21 @@ export function loginPage(
 
         ${noticeBox}
 
-        <form id="login-form" class="space-y-4" novalidate>
+        ${feedback ? `<div id="login-feedback" role="alert" class="mb-4 rounded-xl border border-amber-500/25 p-3 text-xs leading-6">${escapeHtml(feedback.message)}</div>` : ''}
+        <form id="login-form" method="post" action="/login" target="_top" class="space-y-4">
+          <input type="hidden" name="next" value="${escapeHtml(safeNext)}" />
           <div>
             <label class="label" for="phone">شماره موبایل</label>
             <div class="relative">
               <span class="absolute right-3 top-1/2 -translate-y-1/2 text-cream/30">${icon('phone', 'w-4 h-4')}</span>
-              <input id="phone" type="tel" inputmode="numeric" dir="ltr" class="field !pr-10 text-left tracking-wider" placeholder="09xxxxxxxxx" maxlength="13" autocomplete="username" required />
+              <input name="phone" id="phone" value="${escapeHtml(feedback?.phone ?? '')}" type="tel" inputmode="numeric" dir="ltr" class="field !pr-10 text-left tracking-wider" placeholder="09xxxxxxxxx" maxlength="20" autocomplete="username" required />
             </div>
           </div>
           <div>
             <label class="label" for="password">رمز عبور</label>
             <div class="relative">
               <span class="absolute right-3 top-1/2 -translate-y-1/2 text-cream/30">${icon('key', 'w-4 h-4')}</span>
-              <input id="password" type="password" class="field !pr-10 !pl-11" placeholder="••••••••" autocomplete="current-password" required />
+              <input name="password" id="password" maxlength="200" type="password" class="field !pr-10 !pl-11" placeholder="••••••••" autocomplete="current-password" required />
               <button type="button" id="toggle-pass" class="absolute left-2 top-1/2 -translate-y-1/2 w-8 h-8 rounded-lg text-cream/40 hover:text-gold hover:bg-white/5 flex items-center justify-center" aria-label="نمایش رمز">
                 ${icon('search', 'w-4 h-4')}
               </button>
@@ -536,10 +539,6 @@ export function loginPage(
             <span>ورود به پنل</span>
           </button>
         </form>
-        <div id="login-feedback" class="hidden mt-4 rounded-xl border border-amber-500/25 p-3 text-xs leading-6" role="status" aria-live="polite">
-          <p id="login-feedback-text"></p>
-          <a id="login-open" href="/login${safeNext ? '?next=' + encodeURIComponent(safeNext) : ''}" target="_blank" rel="noopener noreferrer" class="text-gold underline">باز کردن صفحه ورود در پنجرهٔ مستقل</a>
-        </div>
 
         <div class="mt-6 rounded-xl border border-amber-500/20 bg-amber-500/[0.05] p-4 flex items-start gap-2.5">
           <span class="text-amber-300/80 mt-0.5">${icon('shield', 'w-3.5 h-3.5')}</span>
@@ -558,75 +557,24 @@ export function loginPage(
   </div>
   `;
 
+  // Authentication uses a native top-level POST + 303, including without JS/CDN.
+  // JS only improves feedback; it never decides whether a session is authenticated.
   const scripts = `
   (function () {
     var form = $('#login-form');
-    var btn = $('#login-btn');
-    var next = ${jsonForScript(safeNext)};
-
     var submitting = false;
-    async function confirmSession(expected) {
-      for (var attempt = 0; attempt < 3; attempt++) {
-        var controller = new AbortController();
-        var timer = setTimeout(function () { controller.abort(); }, 4000);
-        try {
-          var response = await fetch('/api/auth/session?_login_check=' + Date.now() + '-' + attempt, {
-            credentials: 'same-origin', cache: 'no-store', redirect: 'error',
-            headers: { 'Accept': 'application/json' }, signal: controller.signal
-          });
-          var result = response.ok ? await response.json() : null;
-          if (result && result.ok && result.data && result.data.authenticated &&
-              result.data.userId === expected.userId && result.data.role === expected.role) return true;
-        } catch (_) {
-          // Network/server failures are not evidence of blocked cookies, nor proof of login.
-        } finally { clearTimeout(timer); }
-        if (attempt < 2) await new Promise(function (resolve) { setTimeout(resolve, 350 * (attempt + 1)); });
-      }
-      return false;
-    }
-
     $('#toggle-pass').addEventListener('click', function () {
       var input = $('#password');
       input.type = input.type === 'password' ? 'text' : 'password';
     });
-
-    form.addEventListener('submit', async function (event) {
-      event.preventDefault();
-      if (submitting) return;
-      var phone = $('#phone').value.trim().replace(/[۰-۹]/g, function (d) { return String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)); });
-      var password = $('#password').value;
-      if (!phone || !password) { toast('شماره موبایل و رمز عبور را وارد کنید.', 'error'); return; }
-
+    form.addEventListener('submit', function (event) {
+      if (submitting) { event.preventDefault(); return; }
       submitting = true;
-      var navigating = false;
-      $('#login-feedback').classList.add('hidden');
-      setLoading(btn, true, 'در حال ورود…');
-      try {
-        var data = await api('/api/auth/login', { method: 'POST', body: { phone: phone, password: password } });
-
-        if (!await confirmSession(data)) {
-          $('#login-feedback-text').textContent = 'ورود کامل نشد. دوباره تلاش کنید یا صفحهٔ ورود را در پنجرهٔ مستقل باز کنید.';
-          $('#login-feedback').classList.remove('hidden');
-          return;
-        }
-
-        toast('خوش آمدید ' + data.name, 'success');
-        var target = next && next.indexOf('/admin') === 0 && data.role === 'admin' ? next
-                   : next && next.indexOf('/staff') === 0 && data.role === 'staff' ? next
-                   : next && next.indexOf('/me') === 0 && data.role === 'customer' ? next
-                   : data.redirect;
-
-        // replace تا دکمهٔ «بازگشت» مرورگر کاربر را به صفحهٔ ورود برنگرداند
-        navigating = true;
-        window.location.replace(target);
-      } catch (error) {
-        // خطای «نیاز به ورود» خودش هندل شده و صفحه در حال تغییر است
-        if (error && error.message !== 'UNAUTHORIZED') {
-          toast(error.message, 'error');
-        }
-      } finally {
-        if (!navigating) { submitting = false; setLoading(btn, false); }
-      }
+      setLoading($('#login-btn'), true, 'در حال ورود…');
+    });
+    window.addEventListener('pageshow', function () {
+      submitting = false;
+      setLoading($('#login-btn'), false);
     });
   })();
   `;
