@@ -1,0 +1,40 @@
+{
+  "name": "cafe-club",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "باشگاه مشتریان کافه روی Cloudflare Workers + Hono + D1",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "deploy:setup": "bash scripts/deploy.sh",
+    "update": "bash scripts/update.sh",
+    "rescue:admin": "bash scripts/rescue-admin.sh",
+    "typecheck": "tsc --noEmit",
+    "db:init:local": "wrangler d1 execute cafe-club-db --local --file=./schema.sql",
+    "db:init:remote": "wrangler d1 execute cafe-club-db --remote --file=./schema.sql",
+    "hash-password": "node scripts/hash-password.mjs",
+    "build:single": "npm run schema:check && esbuild src/index.ts --bundle --format=esm --platform=neutral --conditions=workerd,worker,browser --target=es2022 --outfile=single-file/worker.js --log-level=warning",
+    "preview": "wrangler dev --ip 0.0.0.0 --port 8787",
+    "test:ui": "node scripts/test-ui.mjs",
+    "test:e2e": "node scripts/test-e2e.mjs",
+    "test:fallback": "node scripts/test-fallback.mjs",
+    "test:fallback:api": "node scripts/test-fallback-api.mjs",
+    "fallback:setup": "bash scripts/setup-fallback.sh",
+    "test:upgrade": "node scripts/test-upgrade.mjs",
+    "test:browser": "node scripts/test-browser.mjs",
+    "test:login": "node scripts/test-login.mjs",
+    "test:schema": "node scripts/test-schema.mjs",
+    "schema:check": "node scripts/generate-schema.mjs --check",
+    "test:recovery:browser": "node scripts/test-recovery-browser.mjs"
+  },
+  "dependencies": {
+    "hono": "^4.13.13"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261021.1",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.9.3",
+    "wrangler": "^4.151.3"
+  }
+}

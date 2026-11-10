@@ -1,0 +1,2846 @@
+/**
+ * ============================================================================
+ *  باشگاه مشتریان کافه — Cloudflare Worker
+ * ----------------------------------------------------------------------------
+ *  Hono + Cloudflare D1 + JWT (hono/jwt) + Tailwind CDN + Vanilla JS
+ *  همه‌ی مسیرها، API ها، صفحات و جاب‌های Cron در همین پروژه قرار دارند.
+ * ============================================================================
+ */
+import { drainFallbackQueue, retryFallbackJob, enqueueFallback, fallbackHistory, loadFallbackConfig, processFallbackQueue, safeFallbackConfig, saveFallbackConfig, smsPanelActive } from './lib/fallback';
+import { adminFallbackPage } from './ui/fallback';
+import { Hono } from 'hono';
+import { maintenancePage } from './ui/maintenance';
+import { schemaStatus, applySchemaSteps, upgradeBackup, backupReceipt, verifyBackupReceipt, invalidateSchemaCache, isSchemaError, SCHEMA_VERSION } from './lib/schema';
+import { bodyLimit } from 'hono/body-limit';
+import { notifyAdminAction, notifyAdminInvoice } from './lib/admin-notifications';
+
+import type { Context, MiddlewareHandler } from 'hono';
+import type { AppEnv, Bindings, InvoiceItem, InvoiceRow, Role } from './types';
+import {
+  attachUser,
+  assertJwtSecret,
+  sessionInfo,
+  checkRateLimit,
+  clearSessionCookie,
+  clientKey,
+  createToken,
+  getActiveUser,
+  ensureSessionVersion,
+  loginDestination,
+  homeForRole,
+  isSecureRequest,
+  customerSessionTtl,
+  requireApiRole,
+  requirePageRole,
+  resetRateLimit,
+  sessionTtl,
+  setSessionCookie,
+} from './lib/auth';
+import {
+  adjustPoints,
+  createCoupon,
+  customerActivityStatus,
+  evaluateCoupon,
+  exportCustomers,
+  findUserByPhone,
+  findUserByPhoneLoose,
+  findUserById,
+  getCustomerDetail,
+  exportAdminLogs,
+  getCustomerPanelData,
+  getDashboardStats,
+  getPopularItems,
+  getReportsData,
+  listAdminLogs,
+  logAdminAction,
+  hasVisitPointsToday,
+  listCoupons,
+  listCustomers,
+  listInvoices,
+  listSmsLogs,
+  listStaff,
+  recordInvoice,
+  sendInvoiceReceipt,
+  redeemPointsForCoupon,
+  registerCustomer,
+  voidInvoice,
+} from './lib/db';
+import { coerceSmsProvider, loadMenuItems, loadSettings, saveSetting, saveSettings } from './lib/settings';
+import { fetchSmsCredit, fetchWeather, renderSms, sendSms, weatherSummary } from './lib/sms';
+import {
+  dispatchCron,
+  getJobRuns,
+  isJobName,
+  runJobByName,
+} from './lib/jobs';
+import { hashPassword, verifyPassword, generateCouponCode } from './lib/crypto';
+import { requestOtpCode, verifyOtpCode } from './lib/otp';
+import {
+  addCashMovement,
+  closeShift,
+  getOpenShift,
+  getShiftDetail,
+  getShiftSummary,
+  listOpenShifts,
+  listShifts,
+  openShift,
+} from './lib/shifts';
+import {
+  DEFAULT_TIMEZONE,
+  fail,
+  formatJalali,
+  formatNumberFa,
+  isValidBirthDate,
+  jalaliMonthRange,
+  jalaliWeekday,
+  normalizePhone,
+  ok,
+  resolveTimeZone as resolveTimeZoneName,
+  safeJsonParse,
+  todayISO,
+  toIntInRange,
+  toPersianDigits,
+  toLatinDigits,
+  toPositiveInt,
+  utcStamp,
+  zonedDayRange,
+  zonedDaySeries,
+} from './lib/utils';
+
+import { errorPage } from './ui/layout';
+import {
+  customerLoginPage,
+  customerPanelPage,
+} from './ui/customer';
+import { landingPage, loginPage, registerPage } from './ui/public';
+import { staffPage, staffHistoryPage, customerSummaryForApi } from './ui/staff';
+import { staffShiftPage, adminShiftsPage, adminShiftDetailPage } from './ui/shift';
+import {
+  adminCustomerDetailPage,
+  adminCustomersPage,
+  adminDashboardPage,
+  adminInvoicesPage,
+  customersCsv,
+} from './ui/admin';
+import {
+  adminCouponsPage,
+  adminSettingsPage,
+  adminSmsPage,
+  adminStaffPage,
+} from './ui/adminManage';
+import { adminLogsCsv, adminLogsPage, adminReportsPage, reportsCsv } from './ui/reports';
+
+/* ==========================================================================
+ *  راه‌اندازی اپلیکیشن
+ * ========================================================================== */
+
+const app = new Hono<AppEnv>();
+const APP_BUILD = SCHEMA_VERSION;
+
+/**
+ * منطقه‌ی زمانی از متغیر محیطی TZ_NAME (پیش‌فرض Asia/Tehran).
+ * اگر مقدار نامعتبر باشد، به پیش‌فرض برمی‌گردیم تا اپ کرش نکند.
+ */
+function resolveTimeZone(env: Bindings): string {
+  return resolveTimeZoneName(env.TZ_NAME);
+}
+
+/** ثبت اقدام حساس مدیر در گزارش اقدامات (بدون شکست دادن عملیات اصلی) */
+async function audit(
+  c: {
+    env: Bindings;
+    get: (key: 'user') => { uid: number; name: string } | undefined;
+    req: { header: (name: string) => string | undefined };
+  },
+  action: string,
+  opts: { targetType?: string; targetId?: string | number | null; details?: string } = {}
+): Promise<void> {
+  const actor = c.get('user');
+  const ip =
+    c.req.header('CF-Connecting-IP') ||
+    c.req.header('X-Forwarded-For')?.split(',')[0]?.trim() ||
+    null;
+
+  const logId = await logAdminAction(c.env.DB, {
+    adminId: actor?.uid ?? null,
+    adminName: actor?.name ?? 'سیستم',
+    action,
+    targetType: opts.targetType ?? null,
+    targetId: opts.targetId ?? null,
+    details: opts.details ?? null,
+    ip,
+  });
+  if (logId) await notifyAdminAction(c.env, { id: logId, action, actor: actor?.name ?? 'سیستم', targetId: opts.targetId, details: opts.details });
+}
+
+
+/**
+ * ثبت تلاش ناموفق ورود (بدون رمز و بدون توکن) برای پشتیبانی.
+ * فقط وقتی کاربر وجود دارد ثبت می‌شود تا جدول لاگ با شماره‌های تصادفی پر نشود.
+ */
+async function logLoginFailure(
+  c: Context<AppEnv>,
+  phone: string,
+  reason: 'unknown_phone' | 'wrong_password' | 'inactive' | 'not_staff'
+): Promise<void> {
+  try {
+    const reasonText: Record<typeof reason, string> = {
+      unknown_phone: 'شماره در سیستم ثبت نشده است',
+      wrong_password: 'رمز عبور نادرست',
+      inactive: 'حساب غیرفعال است',
+      not_staff: 'حساب مشتری است (ورود پرسنل نیست)',
+    };
+    await logAdminAction(c.env.DB, {
+      adminId: null,
+      adminName: 'ورود ناموفق',
+      action: 'login_failed',
+      targetType: 'auth',
+      targetId: null,
+      details: `تلاش ورود با شمارهٔ ${phone} — ${reasonText[reason]}`,
+      ip: clientKey(c),
+    });
+  } catch (error) {
+    console.error('logLoginFailure failed:', error);
+  }
+}
+
+/**
+ * هش رمزهای پیش‌فرضی که در schema.sql / مستندات عمومی آمده‌اند.
+ * اگر رمز فعال کاربر با یکی از این‌ها برابر باشد، در داشبورد هشدار داده می‌شود.
+ * (این‌ها هش هستند، نه رمز؛ برای مقایسه امن است.)
+ */
+const DEFAULT_PASSWORD_HASHES: string[] = [
+  'pbkdf2$25000$2qmBxvUUUsoHnkNI8TJ0sQ==$0h0jweqD5x5UfV/MM+J/1FGvBKYuW5TXAqLmW+9+tGs=',
+  'pbkdf2$25000$WGzL3eKGGQiLplcEmrJL+Q==$EM2ACxk1AoH2M0BuNE7ULuQfjeJsgl3FzFRHArKb9Zk=',
+];
+
+/* --------------------------------------------------------------------------
+ *  هدرهای امنیتی
+ * -------------------------------------------------------------------------- */
+/**
+ * سیاست امنیتی محتوا (CSP).
+ *  - script: خودِ اپ + CDN تیلویند. «unsafe-inline/unsafe-eval» چون Tailwind در مرورگر
+ *    استایل می‌سازد و رابط کاربری از onclick استفاده می‌کند. اگر روزی استایل‌ها
+ *    کامپایل شد و onclick‌ها به addEventListener تبدیل شدند، این دو را حذف کنید.
+ *  - style/font: Google Fonts (وزیرمتن)
+ *  - frame-ancestors 'none' ⇢ جایگزین مدرن X-Frame-Options
+ */
+const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' data: https://fonts.gstatic.com",
+  "img-src 'self' data: blob:",
+  "connect-src 'self'",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join('; ');
+
+app.use('*', async (c, next) => {
+  await next();
+  c.header('X-Content-Type-Options', 'nosniff');
+  c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
+  c.header('X-XSS-Protection', '0');
+  c.header('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  c.header('Cross-Origin-Opener-Policy', 'same-origin');
+  c.header('X-Frame-Options', 'DENY');
+  c.header('Content-Security-Policy', CONTENT_SECURITY_POLICY);
+  // HSTS فقط روی HTTPS معنا دارد؛ در wrangler dev نادیده گرفته می‌شود
+  if (new URL(c.req.url).protocol === 'https:') {
+    c.header('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
+
+  const contentType = c.res.headers.get('Content-Type') ?? '';
+  if (contentType.includes('text/html')) {
+    c.header('Cache-Control', 'no-store, no-cache, must-revalidate');
+  }
+  // داده‌های احراز هویت‌شده و JSON هرگز در کش ذخیره نشوند
+  if (c.req.path.startsWith('/api/')) {
+    c.header('Cache-Control', 'no-store');
+  }
+  if (c.req.path.startsWith('/api/auth/') || c.req.path === '/login' || c.req.path === '/auth/complete') {
+    c.header('Cache-Control', 'no-store');
+    c.header('X-App-Build', APP_BUILD);
+    c.header('CDN-Cache-Control', 'no-store');
+    c.header('Cloudflare-CDN-Cache-Control', 'no-store');
+    c.res.headers.append('Vary', 'Cookie');
+  }
+});
+
+/* --------------------------------------------------------------------------
+ *  بارگذاری تنظیمات و کاربر در هر درخواست
+ * -------------------------------------------------------------------------- */
+app.use('*', async (c, next) => {
+  const settings = await loadSettings(c.env);
+  c.set('settings', settings);
+  await next();
+});
+
+app.use('*', attachUser);
+
+/* --------------------------------------------------------------------------
+ *  محافظ CSRF: درخواست‌های تغییردهنده باید هم‌مبدأ باشند
+ * -------------------------------------------------------------------------- */
+const sameOriginWrite: MiddlewareHandler<AppEnv> = async (c, next) => {
+  const method = c.req.method.toUpperCase();
+  if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') {
+    await next();
+    return;
+  }
+
+  const origin = c.req.header('Origin');
+  if (origin) {
+    try {
+      const requestUrl = new URL(c.req.url);
+      const originUrl = new URL(origin);
+      if (originUrl.origin !== requestUrl.origin) {
+        return c.json({ ok: false, error: 'درخواست غیرمجاز (CSRF).' }, 403);
+      }
+    } catch {
+      return c.json({ ok: false, error: 'مبدأ درخواست نامعتبر است.' }, 403);
+    }
+  } else {
+    // برخی مرورگرها Origin را برای درخواست‌های هم‌مبدأ نمی‌فرستند؛
+    // در این حالت از هدر استاندارد Fetch Metadata استفاده می‌کنیم.
+    const site = c.req.header('Sec-Fetch-Site');
+    if (site && site !== 'same-origin' && site !== 'none') {
+      return c.json({ ok: false, error: 'درخواست غیرمجاز (CSRF).' }, 403);
+    }
+  }
+
+  await next();
+};
+app.use('/api/*', sameOriginWrite);
+app.use('/login', sameOriginWrite);
+const loginBodyLimit = bodyLimit({ maxSize: 16 * 1024, onError: (c) => fail(c, 'حجم فرم ورود بیش از حد مجاز است.', 413, 'BODY_TOO_LARGE') });
+app.use('/login', loginBodyLimit);
+app.use('/api/auth/login', loginBodyLimit);
+app.use('/api/admin/system/schema', loginBodyLimit);
+
+/* --------------------------------------------------------------------------
+ *  محدودسازی نرخ عمومی API
+ * -------------------------------------------------------------------------- */
+app.use('/api/*', async (c, next) => {
+  if (c.req.method === 'GET') {
+    await next();
+    return;
+  }
+  const limit = checkRateLimit(`api:${clientKey(c)}`, 120, 60_000);
+  if (!limit.allowed) {
+    c.header('Retry-After', String(limit.retryAfter));
+    return c.json({ ok: false, error: 'تعداد درخواست‌ها زیاد است. کمی بعد تلاش کنید.' }, 429);
+  }
+  await next();
+});
+
+/** Business writes and dashboards must not run against a partially upgraded DB. */
+app.use('*', async (c, next) => {
+  const path = c.req.path;
+  const recovery = path === '/admin/system' || path === '/api/admin/system/schema' || path === '/admin/export/backup.json';
+  const auth = ['/api/auth/login', '/api/auth/logout', '/api/auth/session', '/api/auth/me', '/me/login'].includes(path);
+  const business = /^(?:\/admin(?:\/|$)|\/staff(?:\/|$)|\/me(?:\/|$)|\/api\/)/.test(path);
+  const publicWrite = ['/api/auth/register','/api/auth/otp/request','/api/auth/otp/verify'].includes(path);
+  if (recovery || auth || path === '/api/health' || !business || (!c.get('user') && !publicWrite)) return next();
+  const status = await schemaStatus(c.env.DB);
+  if (!status.ready) {
+    if (path.startsWith('/api/')) return fail(c, 'ساختار دیتابیس نیاز به ارتقا دارد. مدیر از بخش بررسی دیتابیس اقدام کند.', 503, 'SCHEMA_UPGRADE_REQUIRED');
+    if (c.get('user')?.role === 'admin') return c.redirect('/admin/system', 303);
+    return c.html(errorPage(503, 'ساختار دیتابیس باید توسط مدیر به‌روزرسانی شود. هیچ اطلاعاتی حذف نشده است.', c.get('settings').cafe_name), 503);
+  }
+  await next();
+});
+
+app.get('/admin/system', requirePageRole('admin'), async (c) => {
+  return c.html(maintenancePage(c.get('settings'), await schemaStatus(c.env.DB, true)));
+});
+app.get('/api/admin/system/schema', requireApiRole('admin'), async (c) => {
+  const status = await schemaStatus(c.env.DB, true);
+  return ok(c, { ready: status.ready, remaining: status.pending.length, missing: status.pending.map(p => p.key), blocked: status.blocked });
+});
+app.post('/api/admin/system/schema', requireApiRole('admin'), async (c) => {
+  let body: Record<string, unknown>;
+  try { body = await c.req.json(); } catch { return fail(c, 'درخواست نامعتبر است.', 400, 'BAD_JSON'); }
+  if (!body || body.confirmBackup !== true || !await verifyBackupReceipt(c.env.JWT_SECRET, c.get('user')!.uid, body.receipt)) {
+    return fail(c, 'ابتدا پشتیبان را از همین صفحه دریافت و ذخیره کنید؛ تأیید آن ۱۵ دقیقه معتبر است.', 409, 'BACKUP_REQUIRED');
+  }
+  const before = await schemaStatus(c.env.DB, true);
+  if (before.blocked.length) {
+    return fail(c, 'اطلاعات پایه یا تاریخی مفقود است؛ ارتقای خودکار امن نیست. Binding و نسخهٔ پشتیبان باید بررسی شوند.', 409, 'MANUAL_REVIEW_REQUIRED');
+  }
+  const status = await applySchemaSteps(c.env.DB, c.get('user')!);
+  return ok(c, { ready: status.ready, remaining: status.pending.length });
+});
+
+/* ==========================================================================
+ *  صفحات عمومی
+ * ========================================================================== */
+
+app.get('/', (c) => {
+  const settings = c.get('settings');
+  // Keep public entry reachable even if a previous session leads to a broken panel.
+  return c.html(landingPage(settings));
+});
+
+app.get('/register', (c) => {
+  const settings = c.get('settings');
+  const ref = (c.req.query('ref') ?? '').trim().slice(0, 30);
+  const phone = normalizePhone(c.req.query('phone') ?? '');
+  return c.html(registerPage(settings, ref, /^09\d{9}$/.test(phone) ? phone : ''));
+});
+
+app.get('/login', (c) => {
+  const settings = c.get('settings');
+  // A stored session must not force the user away from the recovery/login form.
+  const next = (c.req.query('next') ?? '').slice(0, 200);
+  const expired = c.req.query('expired') === '1';
+  const notice = (c.req.query('e') ?? '').slice(0, 20);
+  return c.html(loginPage(settings, next, expired, notice));
+});
+
+/* ==========================================================================
+ *  صفحات محافظت‌شده — کارمند
+ * ========================================================================== */
+
+app.get('/staff', requirePageRole('staff', 'admin'), async (c) => {
+  const settings = c.get('settings');
+  const user = c.get('user')!;
+  const menu = await loadMenuItems(c.env);
+  const tz = resolveTimeZone(c.env);
+  const day = zonedDayRange(tz);
+
+  const [statsRow, recentRes, openShiftRow, popular] = await Promise.all([
+    c.env.DB.prepare(
+      `SELECT COUNT(*) AS c,
+              COALESCE(SUM(amount), 0) AS s,
+              COALESCE(SUM(paid_cash), 0) AS cash
+       FROM invoices WHERE voided_at IS NULL AND registered_by = ? AND created_at >= ? AND created_at < ?`
+    )
+      .bind(user.uid, day.start, day.end)
+      .first<{ c: number; s: number; cash: number }>(),
+    c.env.DB.prepare(
+      `SELECT i.id, i.amount, i.created_at, i.payment_method, u.name AS customer_name
+       FROM invoices i JOIN users u ON u.id = i.user_id
+       WHERE i.voided_at IS NULL AND i.registered_by = ? AND i.created_at >= ? AND i.created_at < ?
+       ORDER BY i.id DESC LIMIT 8`
+    )
+      .bind(user.uid, day.start, day.end)
+      .all<{
+        id: number;
+        amount: number;
+        created_at: string;
+        customer_name: string;
+        payment_method: string | null;
+      }>(),
+    getOpenShift(c.env.DB, user.uid),
+    getPopularItems(c.env.DB, 8),
+  ]);
+
+  return c.html(
+    staffPage(
+      settings,
+      { name: user.name },
+      menu,
+      { count: statsRow?.c ?? 0, total: statsRow?.s ?? 0 },
+      recentRes.results ?? [],
+      user.role === 'admin',
+      {
+        popular,
+        openShift: openShiftRow
+          ? { id: openShiftRow.id, opening_cash: openShiftRow.opening_cash, opened_at: openShiftRow.opened_at }
+          : null,
+        todayCash: statsRow?.cash ?? 0,
+        requireShift: settings.require_shift === 1,
+      }
+    )
+  );
+});
+
+app.get('/staff/shift', requirePageRole('staff', 'admin'), async (c) => {
+  const settings = c.get('settings');
+  const user = c.get('user')!;
+
+  const openShiftRow = await getOpenShift(c.env.DB, user.uid);
+  const summary = openShiftRow ? await getShiftSummary(c.env.DB, openShiftRow) : null;
+
+  const own = await listShifts(c.env.DB, { pageSize: 8 });
+  const history = user.role === 'admin' ? own.items : await filterShiftsForStaff(c.env.DB, user.uid);
+
+  return c.html(
+    staffShiftPage({
+      settings,
+      userName: user.name,
+      role: user.role === 'admin' ? 'admin' : 'staff',
+      openShift: openShiftRow,
+      summary,
+      history,
+      canViewAll: user.role === 'admin',
+    })
+  );
+});
+
+/** ۸ شیفت آخرِ یک کارمند (برای صفحهٔ صندوق) */
+async function filterShiftsForStaff(db: D1Database, staffId: number) {
+  const page = await listShifts(db, { pageSize: 8, staffId });
+  return page.items;
+}
+
+app.get('/admin/shifts', requirePageRole('admin'), async (c) => {
+  const settings = c.get('settings');
+  const user = c.get('user')!;
+  const page = toPositiveInt(c.req.query('page'), 1) || 1;
+  const statusParam = c.req.query('status') ?? 'all';
+  const status = statusParam === 'open' || statusParam === 'closed' ? statusParam : 'all';
+  const staffId = toPositiveInt(c.req.query('staff'), 0) || undefined;
+
+  const result = await listShifts(c.env.DB, {
+    page,
+    pageSize: 20,
+    status: status === 'all' ? undefined : status,
+    staffId,
+    from: c.req.query('from') ?? '',
+    to: c.req.query('to') ?? '',
+  });
+
+  const [staffOptions, openShifts] = await Promise.all([
+    c.env.DB.prepare(`SELECT id, name FROM users WHERE role IN ('staff','admin') ORDER BY name ASC`).all<{
+      id: number;
+      name: string;
+    }>(),
+    listOpenShifts(c.env.DB),
+  ]);
+
+  return c.html(
+    adminShiftsPage({
+      settings,
+      userName: user.name,
+      shifts: result.items,
+      total: result.total,
+      page: result.page,
+      pageSize: result.pageSize,
+      filters: {
+        from: c.req.query('from') ?? '',
+        to: c.req.query('to') ?? '',
+        staffId: staffId ?? null,
+        status,
+      },
+      staffOptions: staffOptions.results ?? [],
+      openShifts,
+    })
+  );
+});
+
+app.get('/admin/shifts/:id', requirePageRole('admin'), async (c) => {
+  const settings = c.get('settings');
+  const user = c.get('user')!;
+  const id = toPositiveInt(c.req.param('id'), 0);
+  if (!id) return c.notFound();
+
+  const detail = await getShiftDetail(c.env.DB, id);
+  if (!detail) return c.notFound();
+
+  return c.html(
+    adminShiftDetailPage({
+      settings,
+      userName: user.name,
+      shift: detail.shift,
+      summary: detail.summary,
+      movements: detail.movements,
+      invoices: detail.invoices,
+    })
+  );
+});
+
+app.get('/staff/history', requirePageRole('staff', 'admin'), async (c) => {
+  const settings = c.get('settings');
+  const user = c.get('user')!;
+  const q = (c.req.query('q') ?? '').trim().slice(0, 40);
+  const onlyVoided = c.req.query('voided') === '1';
+
+  const where = ['i.registered_by = ?'];
+  const binds: Array<string | number> = [user.uid];
+  if (q) {
+    const latin = toLatinDigits(q);
+    const onlyDigits = /^\d{1,12}$/.test(latin);
+    where.push(
+      onlyDigits
+        ? '(u.name LIKE ? OR u.phone LIKE ? OR CAST(i.id AS TEXT) = ? OR i.items LIKE ?)'
+        : '(u.name LIKE ? OR u.phone LIKE ? OR i.items LIKE ?)'
+    );
+    binds.push(`%${q}%`, `%${latin}%`);
+    if (onlyDigits) binds.push(latin);
+    binds.push(`%${q}%`);
+  }
+  if (onlyVoided) where.push('i.voided_at IS NOT NULL');
+
+  const { results } = await c.env.DB.prepare(
+    `SELECT i.*, u.name AS customer_name, u.phone AS customer_phone, s.name AS registered_name
+     FROM invoices i
+     JOIN users u ON u.id = i.user_id
+     LEFT JOIN users s ON s.id = i.registered_by
+     WHERE ${where.join(' AND ')}
+     ORDER BY i.id DESC
+     LIMIT 100`
+  )
+    .bind(...binds)
+    .all<InvoiceRowWithCustomer>();
+
+  const summaryRow = await c.env.DB.prepare(
+    `SELECT COUNT(*) AS c, COALESCE(SUM(amount), 0) AS s
+     FROM invoices WHERE voided_at IS NULL AND registered_by = ?`
+  )
+    .bind(user.uid)
+    .first<{ c: number; s: number }>();
+
+  return c.html(
+    staffHistoryPage(
+      settings,
+      { name: user.name },
+      results ?? [],
+      {
+        count: summaryRow?.c ?? 0,
+        total: summaryRow?.s ?? 0,
+      },
+      { q, onlyVoided }
+    )
+  );
+});
+
+/* ==========================================================================
+ *  صفحات محافظت‌شده — ادمین
+ * ========================================================================== */
+
+app.get('/admin', requirePageRole('admin'), async (c) => {
+  const settings = c.get('settings');
+  const user = c.get('user')!;
+  const tz = resolveTimeZone(c.env);
+  const day = zonedDayRange(tz);
+  const month = jalaliMonthRange(tz);
+  const thirtyDaysAgo = utcStamp(Date.now() - 30 * 86_400_000);
+
+  const [stats, jobRuns, openShifts] = await Promise.all([
+    getDashboardStats(
+      c.env.DB,
+      settings,
+      day.start,
+      day.end,
+      month.start,
+      thirtyDaysAgo,
+      zonedDaySeries(tz, 7)
+    ),
+    getJobRuns(c.env),
+    listOpenShifts(c.env.DB),
+  ]);
+
+  // هشدار امنیتی: اگر رمز پیش‌فرض مستندات هنوز استفاده می‌شود، به مدیر اطلاع بده
+  const credentialRow = await c.env.DB.prepare(
+    'SELECT password_hash FROM users WHERE id = ? LIMIT 1'
+  )
+    .bind(user.uid)
+    .first<{ password_hash: string | null }>();
+  const defaultPassword = DEFAULT_PASSWORD_HASHES.includes(credentialRow?.password_hash ?? '');
+
+  const hasWeatherKey = !!(c.env.OPENWEATHER_API_KEY || settings.weather_api_key);
+  const weather = hasWeatherKey
+    ? await fetchWeather(c.env, settings)
+    : {
+        ok: false,
+        city: settings.cafe_city,
+        temp: 0,
+        conditionId: 0,
+        description: '',
+        label: '',
+        advice: '',
+        emoji: '',
+        error: 'کلید API هواشناسی تنظیم نشده است',
+      };
+
+  return c.html(
+    adminDashboardPage({
+      settings,
+      userName: user.name,
+      stats,
+      weather,
+      jobRuns,
+      monthLabel: month.label,
+      todayLabel: `${jalaliWeekday(day.dateISO)} ${formatJalali(day.dateISO)}`,
+      defaultPassword,
+      openShifts,
+    })
+  );
+});
+
+app.get('/admin/customers', requirePageRole('admin'), async (c) => {
+  const settings = c.get('settings');
+  const user = c.get('user')!;
+
+  const page = toPositiveInt(c.req.query('page'), 1) || 1;
+  const tier = c.req.query('tier') ?? '';
+  const statusParam = c.req.query('status') ?? '';
+  const status =
+    statusParam === 'sleeping' || statusParam === 'active' || statusParam === 'no_visit'
+      ? statusParam
+      : undefined;
+  const sortParam = c.req.query('sort') ?? '';
+  const sort =
+    sortParam === 'points' || sortParam === 'created' || sortParam === 'name'
+      ? sortParam
+      : undefined;
+
+  const result = await listCustomers(c.env.DB, {
+    q: c.req.query('q') ?? '',
+    tier,
+    status,
+    sort,
+    page,
+    pageSize: 20,
+    graceDays: settings.churn_grace_days,
+    minVisits: settings.churn_min_visits,
+  });
+
+  return c.html(
+    adminCustomersPage({
+      settings,
+      userName: user.name,
+      customers: result.items,
+      total: result.total,
+      page: result.page,
+      pageSize: result.pageSize,
+      params: {
+        q: c.req.query('q') ?? '',
+        tier,
+        status,
+        sort,
+        page,
+      },
+    })
+  );
+});
+
+app.get('/admin/customers/:id', requirePageRole('admin'), async (c) => {
+  const settings = c.get('settings');
+  const user = c.get('user')!;
+  const id = toPositiveInt(c.req.param('id'), 0);
+
+  if (!id) {
+    return c.html(errorPage(404, 'شناسه مشتری نامعتبر است.', settings.cafe_name), 404);
+  }
+
+  const detail = await getCustomerDetail(c.env.DB, id);
+  if (!detail.user) {
+    return c.html(errorPage(404, 'مشتری مورد نظر یافت نشد.', settings.cafe_name), 404);
+  }
+
+  return c.html(
+    adminCustomerDetailPage({
+      settings,
+      userName: user.name,
+      user: detail.user,
+      invoices: detail.invoices,
+      coupons: detail.coupons,
+      referrer: detail.referrer,
+      referrals: detail.referrals,
+      totalSpent: detail.totalSpent,
+      visitCount: detail.visitCount,
+    })
+  );
+});
+
+app.get('/admin/invoices', requirePageRole('admin'), async (c) => {
+  const settings = c.get('settings');
+  const user = c.get('user')!;
+  const page = toPositiveInt(c.req.query('page'), 1) || 1;
+  const tz = resolveTimeZone(c.env);
+
+  const statusParam = c.req.query('status') ?? 'all';
+  const status = statusParam === 'valid' || statusParam === 'voided' ? statusParam : 'all';
+  const paymentFilter = (c.req.query('payment') ?? '').slice(0, 20);
+  const staffFilter = toPositiveInt(c.req.query('staff'), 0) || undefined;
+
+  const result = await listInvoices(c.env.DB, {
+    q: c.req.query('q') ?? '',
+    from: c.req.query('from') ?? '',
+    to: c.req.query('to') ?? '',
+    page,
+    pageSize: 25,
+    timeZone: tz,
+    status,
+    paymentMethod: paymentFilter,
+    staffId: staffFilter,
+  });
+
+  const staffOptions = await c.env.DB.prepare(
+    `SELECT id, name FROM users WHERE role IN ('staff','admin') ORDER BY name ASC`
+  ).all<{ id: number; name: string }>();
+
+  return c.html(
+    adminInvoicesPage({
+      settings,
+      userName: user.name,
+      invoices: result.items,
+      total: result.total,
+      sum: result.sum,
+      discount: result.discount,
+      voidedCount: result.voidedCount,
+      paymentTotals: result.paymentTotals,
+      staffOptions: staffOptions.results ?? [],
+      page: result.page,
+      pageSize: result.pageSize,
+      filters: {
+        q: c.req.query('q') ?? '',
+        from: c.req.query('from') ?? '',
+        to: c.req.query('to') ?? '',
+        status,
+        payment: paymentFilter,
+        staff: staffFilter,
+      },
+    })
+  );
+});
+
+app.get('/admin/settings', requirePageRole('admin'), async (c) => {
+  const settings = c.get('settings');
+  const user = c.get('user')!;
+  const menu = await loadMenuItems(c.env);
+  const tz = resolveTimeZone(c.env);
+  const day = zonedDayRange(tz);
+
+  const smsRow = await c.env.DB.prepare(
+    `SELECT
+       COALESCE(SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END), 0) AS sent,
+       COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) AS failed
+     FROM sms_logs WHERE sent_at >= ? AND sent_at < ?`
+  )
+    .bind(day.start, day.end)
+    .first<{ sent: number; failed: number }>();
+
+  return c.html(
+    adminSettingsPage({
+      settings,
+      userName: user.name,
+      menu,
+      smsToday: { sent: smsRow?.sent ?? 0, failed: smsRow?.failed ?? 0 },
+    })
+  );
+});
+
+app.get('/admin/staff', requirePageRole('admin'), async (c) => {
+  const settings = c.get('settings');
+  const user = c.get('user')!;
+  const staff = await listStaff(c.env.DB);
+
+  return c.html(
+    adminStaffPage({
+      settings,
+      userName: user.name,
+      currentUserId: user.uid,
+      staff,
+    })
+  );
+});
+
+app.get('/admin/sms', requirePageRole('admin'), async (c) => {
+  const settings = c.get('settings');
+  const user = c.get('user')!;
+  const page = toPositiveInt(c.req.query('page'), 1) || 1;
+  const type = c.req.query('type') ?? '';
+  const status = c.req.query('status') ?? '';
+
+  const result = await listSmsLogs(c.env.DB, { type, status, page, pageSize: 30 });
+
+  const tz = resolveTimeZone(c.env);
+  const day = zonedDayRange(tz);
+  const statsRow = await c.env.DB.prepare(
+    `SELECT
+       COALESCE(SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END), 0) AS sent,
+       COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) AS failed
+     FROM sms_logs WHERE sent_at >= ? AND sent_at < ?`
+  )
+    .bind(day.start, day.end)
+    .first<{ sent: number; failed: number }>();
+
+  return c.html(
+    adminSmsPage({
+      settings,
+      userName: user.name,
+      logs: result.items,
+      total: result.total,
+      page: result.page,
+      pageSize: result.pageSize,
+      filters: { type, status },
+      stats: { sentToday: statsRow?.sent ?? 0, failedToday: statsRow?.failed ?? 0 },
+    })
+  );
+});
+
+app.get('/admin/coupons', requirePageRole('admin'), async (c) => {
+  const settings = c.get('settings');
+  const user = c.get('user')!;
+  const page = toPositiveInt(c.req.query('page'), 1) || 1;
+  const status = c.req.query('status') ?? '';
+
+  const result = await listCoupons(c.env.DB, { page, pageSize: 25, status });
+
+  return c.html(
+    adminCouponsPage({
+      settings,
+      userName: user.name,
+      coupons: result.items,
+      total: result.total,
+      page: result.page,
+      pageSize: result.pageSize,
+      status,
+    })
+  );
+});
+
+app.get('/admin/reports', requirePageRole('admin'), async (c) => {
+  const settings = c.get('settings');
+  const user = c.get('user')!;
+  const data = await getReportsData(c.env.DB, settings, resolveTimeZone(c.env));
+
+  return c.html(adminReportsPage({ settings, userName: user.name, data }));
+});
+
+app.get('/admin/reports/export.csv', requirePageRole('admin'), async (c) => {
+  const settings = c.get('settings');
+  const data = await getReportsData(c.env.DB, settings, resolveTimeZone(c.env));
+  const filename = `reports-${todayISO(resolveTimeZone(c.env))}.csv`;
+
+  return new Response(reportsCsv(data), {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Cache-Control': 'no-store',
+    },
+  });
+});
+
+app.get('/admin/logs', requirePageRole('admin'), async (c) => {
+  const settings = c.get('settings');
+  const user = c.get('user')!;
+  const page = toPositiveInt(c.req.query('page'), 1) || 1;
+  const action = String(c.req.query('action') ?? '').slice(0, 60);
+  const q = String(c.req.query('q') ?? '').slice(0, 60);
+
+  const result = await listAdminLogs(c.env.DB, { page, pageSize: 50, action, q });
+
+  return c.html(
+    adminLogsPage({
+      settings,
+      userName: user.name,
+      logs: result.items,
+      total: result.total,
+      page: result.page,
+      pageSize: result.pageSize,
+      action,
+      q,
+    })
+  );
+});
+
+app.get('/admin/logs/export.csv', requirePageRole('admin'), async (c) => {
+  const rows = await exportAdminLogs(c.env.DB);
+  const filename = `admin-logs-${todayISO(resolveTimeZone(c.env))}.csv`;
+
+  return new Response(adminLogsCsv(rows), {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Cache-Control': 'no-store',
+    },
+  });
+});
+
+app.get('/admin/export/customers.csv', requirePageRole('admin'), async (c) => {
+  // یک کوئری، بدون حلقه‌ی صفحه‌بندی: روی پلن رایگان سقف ۵۰ کوئری در هر اجرا داریم
+  // و نسخه‌ی قبلی هم به همین دلیل حداکثر ۲۰۰۰ مشتری را (بی‌صدا) خروجی می‌داد.
+  const all = await exportCustomers(c.env.DB);
+  const csv = customersCsv(all);
+  const filename = `customers-${todayISO()}.csv`;
+
+  return new Response(csv, {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Cache-Control': 'no-store',
+    },
+  });
+});
+
+/* ==========================================================================
+ *  API — احراز هویت
+ * ========================================================================== */
+
+async function handleStaffLogin(c: Context<AppEnv>) {
+  const native = c.req.path === '/login';
+  let next = '';
+  let phone = '';
+  function reject(message: string, status: 400 | 401 | 403 | 429 | 500 | 503, code: string) {
+    return native
+      ? c.html(loginPage(c.get('settings'), next, false, '', { message, phone }), status)
+      : fail(c, message, status, code);
+  }
+  const secret = assertJwtSecret(c.env);
+  if (!secret) {
+    return reject('کلید JWT تنظیم نشده است. با دستور «wrangler secret put JWT_SECRET» آن را تنظیم کنید.', 500, 'NO_SECRET');
+  }
+
+  let body: Record<string, unknown>;
+  try {
+    body = (native ? await c.req.parseBody() : await c.req.json()) as Record<string, unknown>;
+  } catch {
+    return reject('داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
+  }
+
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return reject('داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
+
+  if (typeof body.phone !== 'string' || typeof body.password !== 'string') return reject('شماره موبایل و رمز عبور نامعتبر است.', 400, 'INVALID_INPUT');
+  next = typeof body.next === 'string' ? body.next.slice(0, 200) : '';
+  phone = normalizePhone(body.phone);
+  const password = String(body.password ?? '');
+
+  if (!/^09\d{9}$/.test(phone) || password.length < 1) {
+    return reject('شماره موبایل و رمز عبور را وارد کنید.', 400, 'INVALID_INPUT');
+  }
+  if (password.length > 200) {
+    return reject('رمز عبور نامعتبر است.', 400, 'INVALID_INPUT');
+  }
+
+  const rateKey = `login:${clientKey(c)}:${phone}`;
+  const rate = checkRateLimit(rateKey, 8, 15 * 60_000);
+  if (!rate.allowed) {
+    c.header('Retry-After', String(rate.retryAfter));
+    return reject('تلاش‌های ناموفق زیاد بوده است. ۱۵ دقیقه بعد دوباره تلاش کنید.', 429, 'RATE_LIMITED');
+  }
+
+  // شماره با هر قالبی که ذخیره شده باشد پیدا می‌شود (+98 / 0098 / بدون صفر)
+  let user;
+  try { user = await findUserByPhoneLoose(c.env.DB, phone); }
+  catch (error) {
+    console.error('AUTH_LOGIN_DATABASE_UNAVAILABLE', error);
+    c.header('Retry-After', '5');
+    return reject('خواندن حساب از دیتابیس ممکن نیست. کمی بعد دوباره تلاش کنید؛ اگر ادامه داشت مدیر باید اتصال و ارتقای دیتابیس را بررسی کند.', 503, 'AUTH_DATABASE_UNAVAILABLE');
+  }
+
+  // ترتیب بررسی مهم است: اول رمز، بعد وضعیت حساب.
+  // این‌طور هیچ‌کس بدون دانستن رمز نمی‌فهمد حساب «غیرفعال» یا «بدون رمز» است.
+  const passwordOk = await verifyPassword(password, user?.password_hash ?? null);
+  if (!user || !passwordOk) {
+    await logLoginFailure(c, phone, user ? 'wrong_password' : 'unknown_phone');
+    return reject('شماره موبایل یا رمز عبور اشتباه است.', 401, 'INVALID_CREDENTIALS');
+  }
+  if (user.role !== 'staff' && user.role !== 'admin') {
+    await logLoginFailure(c, phone, 'not_staff');
+    return reject(
+      'این حساب مشتری است؛ از صفحهٔ «باشگاه من» با کد پیامکی وارد شوید.',
+      403,
+      'WRONG_PORTAL'
+    );
+  }
+  if (user.is_active !== 1) {
+    await logLoginFailure(c, phone, 'inactive');
+    return reject('حساب شما غیرفعال شده است. با مدیر تماس بگیرید.', 403, 'ACCOUNT_DISABLED');
+  }
+
+  const verifiedHash = user.password_hash;
+  try { user = await ensureSessionVersion(c.env.DB, user); }
+  catch (error) {
+    console.error('AUTH_SESSION_SCHEMA_UNAVAILABLE', error);
+    return reject('ساخت نشست امن ممکن نشد. مدیر باید دسترسی و ساختار دیتابیس را بررسی کند.', 503, 'AUTH_SCHEMA_UNAVAILABLE');
+  }
+  if (!user || user.is_active !== 1 || (user.role !== 'staff' && user.role !== 'admin') || user.password_hash !== verifiedHash) {
+    return reject('اطلاعات حساب تغییر کرده است. لطفاً دوباره وارد شوید.', 401, 'CREDENTIALS_CHANGED');
+  }
+  resetRateLimit(rateKey);
+
+  const ttl = sessionTtl(c.env);
+  const token = await createToken(secret, user, ttl);
+  setSessionCookie(c, token, isSecureRequest(c), ttl);
+
+  if (native) return c.redirect('/auth/complete?uid=' + user.id + '&next=' + encodeURIComponent(loginDestination(next, user.role)), 303);
+
+  return ok(c, {
+    userId: user.id,
+    name: user.name,
+    role: user.role,
+    redirect: homeForRole(user.role),
+    expiresIn: ttl,
+    /** برای تشخیص سریع مشکل کوکی در سمت مرورگر */
+    cookieName: 'cc_session',
+    secureCookie: isSecureRequest(c),
+  });
+}
+app.post('/api/auth/login', handleStaffLogin);
+app.post('/login', handleStaffLogin);
+
+// Verify on a real browser navigation, not an AJAX success message or a client timer.
+app.get('/auth/complete', (c) => {
+  if (c.get('sessionLookupFailed')) {
+    c.header('Retry-After', '5');
+    return c.html(loginPage(c.get('settings'), '', false, '', { message: 'خواندن نشست از دیتابیس موقتاً ممکن نیست. کمی بعد دوباره تلاش کنید.' }), 503);
+  }
+  const user = c.get('user');
+  const expectedUid = c.req.query('uid');
+  if (!user || (expectedUid !== undefined && expectedUid !== String(user.uid))) return c.html(loginPage(c.get('settings'), '', false, '', {
+    message: 'نشست معتبر دریافت نشد. ورود را از همین صفحه انجام دهید. اگر تکرار شد، مجاز بودن کوکی این سایت و نشانی دامنه را بررسی کنید.',
+  }), 401);
+  return c.redirect(loginDestination(c.req.query('next') ?? '', user.role), 303);
+});
+
+/**
+ * وضعیت نشست فعلی برای کلاینت‌های API؛ فرم ورود به این probe وابسته نیست.
+ * نشست از JWT و وضعیت فعلی حساب در دیتابیس بررسی می‌شود. عدم تأیید، به‌تنهایی علت مشکل
+ * مرورگر را مشخص نمی‌کند؛ خطای موقت DB نیز جداگانه با 503 اعلام می‌شود.
+ */
+app.get('/api/auth/session', (c) => {
+  if (c.get('sessionLookupFailed')) return fail(c, 'بررسی ورود موقتاً در دسترس نیست؛ دوباره تلاش کنید.', 503, 'SESSION_UNAVAILABLE');
+  return ok(c, sessionInfo(c.get('user') ?? null));
+});
+
+/** خروج کامل با انتقال به صفحهٔ ورود (برای لینک «پاک کردن نشست») */
+app.get('/logout', (c) => {
+  clearSessionCookie(c, isSecureRequest(c));
+  return c.redirect('/login?e=loggedout', 303);
+});
+
+app.post('/api/auth/register', async (c) => {
+  const settings = c.get('settings');
+
+  // سقف سخاوتمندانه‌تر: ثبت‌نام‌های حضوری در کافه معمولاً از یک IP مشترک انجام می‌شوند
+  const rate = checkRateLimit(`register:${clientKey(c)}`, 20, 10 * 60_000);
+  if (!rate.allowed) {
+    c.header('Retry-After', String(rate.retryAfter));
+    return fail(c, 'تعداد ثبت‌نام‌ها زیاد است. کمی بعد تلاش کنید.', 429, 'RATE_LIMITED');
+  }
+
+  let body: Record<string, unknown>;
+  try {
+    body = (await c.req.json()) as Record<string, unknown>;
+  } catch {
+    return fail(c, 'داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
+  }
+
+  const name = String(body.name ?? '')
+    .replace(/[<>]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 60);
+  const phone = normalizePhone(String(body.phone ?? ''));
+  const birthDate = String(body.birth_date ?? '').slice(0, 10);
+  const referral = String(body.referral ?? '').trim().slice(0, 30);
+  // رضایت پیامکی: فقط اگر صریحاً false/0 بفرستند غیرفعال می‌شود
+  const smsOptIn = body.sms_opt_in === false || body.sms_opt_in === 0 ? 0 : 1;
+
+  if (name.length < 2) {
+    return fail(c, 'نام و نام خانوادگی را کامل وارد کنید.', 400, 'INVALID_NAME');
+  }
+  if (!/^09\d{9}$/.test(phone)) {
+    return fail(c, 'شماره موبایل باید با ۰۹ شروع شده و ۱۱ رقم باشد.', 400, 'INVALID_PHONE');
+  }
+  if (!isValidBirthDate(birthDate)) {
+    return fail(c, 'تاریخ تولد نامعتبر است.', 400, 'INVALID_BIRTH_DATE');
+  }
+
+  const result = await registerCustomer(c.env, settings, {
+    name,
+    phone,
+    birth_date: birthDate,
+    referral: referral || null,
+    sms_opt_in: smsOptIn,
+  });
+
+  if (result.ok === false) {
+    const status = result.code === 'PHONE_EXISTS' ? 409 : result.code === 'INVALID_REFERRAL' ? 400 : 500;
+    return fail(c, result.error, status, result.code);
+  }
+
+  return ok(
+    c,
+    {
+      name: result.user.name,
+      phone: result.user.phone,
+      points: result.user.points,
+      tier: result.user.tier,
+      referralCode: result.referralCode,
+      referrerName: result.referrerName,
+    },
+    201
+  );
+});
+
+app.post('/api/auth/logout', (c) => {
+  clearSessionCookie(c, isSecureRequest(c));
+  return ok(c, { loggedOut: true });
+});
+
+app.get('/api/auth/logout', (c) => {
+  clearSessionCookie(c, isSecureRequest(c));
+  return c.redirect('/login', 302);
+});
+
+
+/* ==========================================================================
+ *  مشتری — ورود با کد یک‌بارمصرف و باشگاه من
+ * ========================================================================== */
+
+app.get('/me/login', (c) => {
+  const settings = c.get('settings');
+  // Keep customer sign-in reachable even when the existing panel has an error.
+  return c.html(
+    customerLoginPage(settings, {
+      expired: c.req.query('expired') === '1',
+      disabled: settings.otp_login_enabled !== 1,
+    })
+  );
+});
+
+app.get('/me', async (c) => {
+  const settings = c.get('settings');
+  const user = c.get('user');
+
+  if (!user) {
+    return c.redirect('/me/login', 302);
+  }
+  if (user.role !== 'customer') {
+    return c.redirect(homeForRole(user.role), 302);
+  }
+
+  const data = await getCustomerPanelData(c.env.DB, user.uid, settings);
+  if (!data) {
+    clearSessionCookie(c, isSecureRequest(c));
+    return c.redirect('/me/login?expired=1', 302);
+  }
+
+  return c.html(customerPanelPage(settings, data));
+});
+
+app.post('/api/auth/otp/request', async (c) => {
+  const settings = c.get('settings');
+
+  let body: Record<string, unknown>;
+  try {
+    body = (await c.req.json()) as Record<string, unknown>;
+  } catch {
+    return fail(c, 'داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
+  }
+
+  const phone = normalizePhone(String(body.phone ?? ''));
+  if (!/^09\d{9}$/.test(phone)) {
+    return fail(c, 'شماره موبایل نامعتبر است.', 400, 'INVALID_PHONE');
+  }
+
+  const result = await requestOtpCode(c.env, settings, phone, clientKey(c));
+  if (result.ok === false) {
+    if (result.retryAfter) c.header('Retry-After', String(result.retryAfter));
+    return fail(c, result.error, result.code === 'RATE_LIMITED' ? 429 : 400, result.code);
+  }
+
+  return ok(c, { sent: result.sent, queued: result.queued ?? false, ttl: result.ttl });
+});
+
+app.post('/api/auth/otp/verify', async (c) => {
+  const secret = assertJwtSecret(c.env);
+  if (!secret) return fail(c, 'پیکربندی سرور کامل نیست (JWT_SECRET).', 500, 'NO_SECRET');
+
+  let body: Record<string, unknown>;
+  try {
+    body = (await c.req.json()) as Record<string, unknown>;
+  } catch {
+    return fail(c, 'داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
+  }
+
+  const phone = normalizePhone(String(body.phone ?? ''));
+  const code = String(body.code ?? '').replace(/[۰-۹]/g, (d) => String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)));
+
+  if (!/^09\d{9}$/.test(phone)) {
+    return fail(c, 'شماره موبایل نامعتبر است.', 400, 'INVALID_PHONE');
+  }
+
+  const limited = checkRateLimit(`otp-verify:${clientKey(c)}`, 15, 10 * 60_000);
+  if (!limited.allowed) {
+    c.header('Retry-After', String(limited.retryAfter));
+    return fail(c, 'تعداد تلاش‌ها زیاد است؛ کمی بعد دوباره امتحان کنید.', 429, 'RATE_LIMITED');
+  }
+
+  const result = await verifyOtpCode(c.env, phone, code);
+  if (result.ok === false) {
+    return fail(c, result.error, 400, result.code);
+  }
+
+  const user = await getActiveUser(c.env.DB, result.userId);
+  if (!user) return fail(c, 'این حساب در دسترس نیست.', 403, 'ACCOUNT_DISABLED');
+
+  resetRateLimit(`otp-verify:${clientKey(c)}`);
+
+  const ttl = customerSessionTtl(c.env);
+  const token = await createToken(secret, user, ttl);
+  setSessionCookie(c, token, isSecureRequest(c), ttl);
+
+  return ok(c, { redirect: '/me', name: user.name });
+});
+
+app.post('/api/me/redeem', requireApiRole('customer'), async (c) => {
+  const user = c.get('user')!;
+  const settings = c.get('settings');
+
+  const result = await redeemPointsForCoupon(c.env, settings, user.uid);
+  if (result.ok === false) {
+    const status = result.code === 'NOT_FOUND' ? 404 : 400;
+    return fail(c, result.error, status, result.code);
+  }
+
+  return ok(c, {
+    code: result.code,
+    value: result.value,
+    expiresAt: result.expiresAt,
+    pointsLeft: result.pointsLeft,
+  });
+});
+
+app.post('/api/me/sms-opt-in', requireApiRole('customer'), async (c) => {
+  const user = c.get('user')!;
+
+  let body: Record<string, unknown>;
+  try {
+    body = (await c.req.json()) as Record<string, unknown>;
+  } catch {
+    return fail(c, 'داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
+  }
+
+  const optIn = body.optIn === 1 || body.optIn === true ? 1 : 0;
+  await c.env.DB.prepare(
+    "UPDATE users SET sms_opt_in = ? WHERE id = ? AND role = 'customer'"
+  )
+    .bind(optIn, user.uid)
+    .run();
+
+  return ok(c, { smsOptIn: optIn });
+});
+
+app.get('/api/auth/me', async (c) => {
+  if (c.get('sessionLookupFailed')) return fail(c, 'خواندن نشست موقتاً ممکن نیست.', 503, 'SESSION_UNAVAILABLE');
+  const user = c.get('user');
+  if (!user) return ok(c, { authenticated: false, user: null });
+
+  const dbUser = await getActiveUser(c.env.DB, user.uid);
+  if (!dbUser) return ok(c, { authenticated: false, user: null });
+
+  return ok(c, {
+    authenticated: true,
+    user: {
+      id: dbUser.id,
+      name: dbUser.name,
+      phone: dbUser.phone,
+      role: dbUser.role,
+    },
+  });
+});
+
+/* ==========================================================================
+ *  API — کارمند
+ * ========================================================================== */
+
+app.get('/api/staff/customer', requireApiRole('staff', 'admin'), async (c) => {
+  const settings = c.get('settings');
+  const phone = normalizePhone(c.req.query('phone') ?? '');
+
+  if (!/^09\d{9}$/.test(phone)) {
+    return fail(c, 'شماره موبایل نامعتبر است.', 400, 'INVALID_PHONE');
+  }
+
+  const user = await findUserByPhone(c.env.DB, phone);
+  if (!user || user.role !== 'customer') {
+    return ok(c, { found: false, customer: null });
+  }
+
+  const visitsRow = await c.env.DB.prepare(
+    'SELECT COUNT(*) AS c FROM invoices WHERE user_id = ? AND voided_at IS NULL'
+  )
+    .bind(user.id)
+    .first<{ c: number }>();
+  const status = customerActivityStatus(
+    { ...user, visits: visitsRow?.c ?? 0 },
+    settings.churn_grace_days,
+    settings.churn_min_visits
+  );
+
+  const { results: coupons } = await c.env.DB.prepare(
+    `SELECT code, kind, value FROM coupons
+     WHERE is_active = 1
+       AND (user_id IS NULL OR user_id = ?)
+       AND used_count < max_uses
+       AND (expires_at IS NULL OR expires_at >= datetime('now'))
+     ORDER BY id DESC LIMIT 5`
+  )
+    .bind(user.id)
+    .all<{ code: string; kind: string; value: number }>();
+
+  const visitEarnedToday = await hasVisitPointsToday(
+    c.env.DB,
+    user.id,
+    resolveTimeZone(c.env)
+  );
+
+  return ok(c, {
+    found: true,
+    customer: customerSummaryForApi(user, status, coupons ?? [], {
+      visitEarnedToday,
+      pointsMode: settings.points_mode,
+      visitPoints: settings.visit_points,
+      visitMinAmount: settings.visit_min_amount,
+    }),
+  });
+});
+
+app.get('/api/staff/coupons/check', requireApiRole('staff', 'admin'), async (c) => {
+  const userId = toPositiveInt(c.req.query('userId'), 0);
+  const subtotal = toPositiveInt(c.req.query('subtotal'), 0);
+  const code = (c.req.query('code') ?? '').trim();
+
+  if (!userId || subtotal <= 0) {
+    return ok(c, { valid: false, discount: 0, error: 'مبلغ یا مشتری نامعتبر است.' });
+  }
+
+  const result = await evaluateCoupon(c.env.DB, code, userId, subtotal);
+  if (result.ok === false) {
+    return ok(c, { valid: false, discount: 0, error: result.error });
+  }
+
+  return ok(c, {
+    valid: true,
+    discount: result.discount,
+    code: result.coupon.code,
+    kind: result.coupon.kind,
+    value: result.coupon.value,
+  });
+});
+
+app.post('/api/staff/invoices', requireApiRole('staff', 'admin'), async (c) => {
+  const settings = c.get('settings');
+  const user = c.get('user')!;
+
+  let body: Record<string, unknown>;
+  try {
+    body = (await c.req.json()) as Record<string, unknown>;
+  } catch {
+    return fail(c, 'داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
+  }
+
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return fail(c, 'فاکتور نامعتبر است.', 400, 'BAD_JSON');
+
+  const userId = toPositiveInt(body.userId, 0);
+  if (!userId) return fail(c, 'مشتری را انتخاب کنید.', 400, 'INVALID_USER');
+
+  const items = Array.isArray(body.items) ? (body.items as InvoiceItem[]) : [];
+  if (items.length > 50) return fail(c, 'تعداد آیتم‌ها بیش از حد مجاز است.', 400, 'TOO_MANY_ITEMS');
+
+  // اعتبارسنجی سخت‌گیرانهٔ آیتم‌ها: قیمت منفی، تعداد صفر و نام خالی پذیرفته نمی‌شود
+  for (const item of items) {
+    const price = Number(item?.price);
+    const qty = Number(item?.qty);
+    if (!Number.isSafeInteger(price) || price < 0 || price > 1_000_000_000) {
+      return fail(c, 'قیمت یکی از آیتم‌ها نامعتبر است.', 400, 'INVALID_ITEM');
+    }
+    if (!Number.isSafeInteger(qty) || qty <= 0 || qty > 99) {
+      return fail(c, 'تعداد یکی از آیتم‌ها نامعتبر است.', 400, 'INVALID_ITEM');
+    }
+  }
+
+  const amountRaw = body.amount === null || body.amount === undefined ? null : Number(body.amount);
+  const couponCode = body.couponCode ? String(body.couponCode).trim().slice(0, 30) : null;
+
+  const clientRequestId = body.clientRequestId
+    ? String(body.clientRequestId).slice(0, 64)
+    : null;
+
+  // پرداخت: فقط مبالغ عددی نامنفی پذیرفته می‌شوند
+  let payment: { cash?: number; card?: number; online?: number } | null = null;
+  if (body.payment && typeof body.payment === 'object') {
+    const raw = body.payment as Record<string, unknown>;
+    const toAmount = (value: unknown): number | undefined => {
+      if (value === undefined || value === null || value === '') return undefined;
+      const n = Number(value);
+      if (!Number.isFinite(n) || n < 0) return Number.NaN;
+      return Math.floor(n);
+    };
+    const cash = toAmount(raw.cash);
+    const card = toAmount(raw.card);
+    const online = toAmount(raw.online);
+    if ([cash, card, online].some((value) => value !== undefined && Number.isNaN(value))) {
+      return fail(c, 'مبلغ پرداختی نامعتبر است.', 400, 'INVALID_PAYMENT');
+    }
+    // فقط وقتی حداقل یک مبلغ واقعاً فرستاده شده باشد، پرداخت اعمال می‌شود؛
+    // ارسال شیء خالی نباید فاکتور معتبر را «پرداخت ناقص» کند.
+    const hasAny = 'cash' in raw || 'card' in raw || 'online' in raw;
+    if (hasAny) {
+      payment = {
+        cash: cash ?? 0,
+        card: card ?? 0,
+        online: online ?? 0,
+      };
+    }
+  }
+
+  // شیفت بازِ همین کاربر: برای انتساب فاکتور و کنترل صندوق
+  const openShift = await getOpenShift(c.env.DB, user.uid);
+  if (settings.require_shift === 1 && !openShift && (payment?.cash ?? 0) > 0) {
+    return fail(
+      c,
+      'صندوق بسته است. برای ثبت پرداخت نقدی اول صندوق را با مبلغ اولیه باز کنید.',
+      409,
+      'SHIFT_REQUIRED'
+    );
+  }
+
+  const result = await recordInvoice(c.env, settings, {
+    userId,
+    items,
+    amount: amountRaw === null || !Number.isFinite(amountRaw) ? null : Math.floor(amountRaw),
+    couponCode,
+    registeredBy: user.uid,
+    clientRequestId,
+    payment,
+    shiftId: openShift?.id ?? null,
+  });
+
+  if (result.ok === false) {
+    const status = result.code === 'USER_NOT_FOUND' ? 404 : 400;
+    return fail(c, result.error, status, result.code);
+  }
+
+  await notifyAdminInvoice(c.env, result.invoiceId);
+  return ok(c, result, 201);
+});
+
+app.get('/api/staff/invoices/today', requireApiRole('staff', 'admin'), async (c) => {
+  const user = c.get('user')!;
+  const tz = resolveTimeZone(c.env);
+  const day = zonedDayRange(tz);
+
+  const { results } = await c.env.DB.prepare(
+    `SELECT i.id, i.amount, i.created_at, u.name AS customer_name
+     FROM invoices i JOIN users u ON u.id = i.user_id
+     WHERE i.voided_at IS NULL AND i.registered_by = ? AND i.created_at >= ? AND i.created_at < ?
+     ORDER BY i.id DESC LIMIT 50`
+  )
+    .bind(user.uid, day.start, day.end)
+    .all<{ id: number; amount: number; created_at: string; customer_name: string }>();
+
+  return ok(c, { invoices: results ?? [] });
+});
+
+/* ==========================================================================
+ *  API — ادمین
+ * ========================================================================== */
+
+app.get('/api/admin/stats', requireApiRole('admin'), async (c) => {
+  const settings = c.get('settings');
+  const tz = resolveTimeZone(c.env);
+  const day = zonedDayRange(tz);
+  const month = jalaliMonthRange(tz);
+
+  const stats = await getDashboardStats(
+    c.env.DB,
+    settings,
+    day.start,
+    day.end,
+    month.start,
+    utcStamp(Date.now() - 30 * 86_400_000),
+    zonedDaySeries(tz, 7)
+  );
+
+  return ok(c, stats);
+});
+
+app.post('/api/admin/customers', requireApiRole('admin'), async (c) => {
+  const settings = c.get('settings');
+
+  let body: Record<string, unknown>;
+  try {
+    body = (await c.req.json()) as Record<string, unknown>;
+  } catch {
+    return fail(c, 'داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
+  }
+
+  const name = String(body.name ?? '').replace(/[<>]/g, '').trim().slice(0, 60);
+  const phone = normalizePhone(String(body.phone ?? ''));
+  const birthDate = String(body.birth_date ?? '').slice(0, 10);
+  const referral = String(body.referral ?? '').trim().slice(0, 30);
+
+  if (name.length < 2) return fail(c, 'نام را کامل وارد کنید.', 400, 'INVALID_NAME');
+  if (!/^09\d{9}$/.test(phone)) return fail(c, 'شماره موبایل نامعتبر است.', 400, 'INVALID_PHONE');
+  if (!isValidBirthDate(birthDate)) return fail(c, 'تاریخ تولد نامعتبر است.', 400, 'INVALID_BIRTH_DATE');
+
+  const result = await registerCustomer(c.env, settings, {
+    name,
+    phone,
+    birth_date: birthDate,
+    referral: referral || null,
+    sms_opt_in: body.sms_opt_in === false || body.sms_opt_in === 0 ? 0 : 1,
+  });
+
+  if (result.ok === false) {
+    return fail(c, result.error, result.code === 'PHONE_EXISTS' ? 409 : 400, result.code);
+  }
+
+  return ok(c, { id: result.user.id, name: result.user.name, referralCode: result.referralCode }, 201);
+});
+
+app.put('/api/admin/customers/:id', requireApiRole('admin'), async (c) => {
+  const id = toPositiveInt(c.req.param('id'), 0);
+  if (!id) return fail(c, 'شناسه نامعتبر است.', 400, 'INVALID_ID');
+
+  let body: Record<string, unknown>;
+  try {
+    body = (await c.req.json()) as Record<string, unknown>;
+  } catch {
+    return fail(c, 'داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
+  }
+
+  const user = await findUserById(c.env.DB, id);
+  if (!user)
+    return fail(c, 'مشتری یافت نشد.', 404, 'NOT_FOUND');
+  // این مسیر فقط برای مشتری است؛ حساب پرسنل/ادمین نباید از اینجا ویرایش شود.
+  if (user.role !== 'customer')
+    return fail(c, 'این کاربر مشتری نیست.', 400, 'NOT_CUSTOMER');
+
+  const name = String(body.name ?? '').replace(/[<>]/g, '').trim().slice(0, 60);
+  const phone = normalizePhone(String(body.phone ?? ''));
+  const birthDate = String(body.birth_date ?? '').slice(0, 10);
+
+  if (name.length < 2) return fail(c, 'نام را کامل وارد کنید.', 400, 'INVALID_NAME');
+  if (!/^09\d{9}$/.test(phone)) return fail(c, 'شماره موبایل نامعتبر است.', 400, 'INVALID_PHONE');
+  if (!isValidBirthDate(birthDate)) return fail(c, 'تاریخ تولد نامعتبر است.', 400, 'INVALID_BIRTH_DATE');
+
+  if (phone !== user.phone) {
+    const duplicate = await findUserByPhone(c.env.DB, phone);
+    if (duplicate && duplicate.id !== id) {
+      return fail(c, 'این شماره موبایل قبلاً برای کاربر دیگری ثبت شده است.', 409, 'PHONE_EXISTS');
+    }
+  }
+
+  await c.env.DB.prepare('UPDATE users SET name = ?, phone = ?, birth_date = ? WHERE id = ?')
+    .bind(name, phone, birthDate, id)
+    .run();
+
+  return ok(c, { updated: true });
+});
+
+app.post('/api/admin/customers/:id/points', requireApiRole('admin'), async (c) => {
+  const settings = c.get('settings');
+  const id = toPositiveInt(c.req.param('id'), 0);
+  if (!id) return fail(c, 'شناسه نامعتبر است.', 400, 'INVALID_ID');
+
+  let body: Record<string, unknown>;
+  try {
+    body = (await c.req.json()) as Record<string, unknown>;
+  } catch {
+    return fail(c, 'داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
+  }
+
+  const delta = Math.trunc(Number(body.delta));
+  if (!Number.isFinite(delta) || delta === 0) {
+    return fail(c, 'مقدار تغییر امتیاز نامعتبر است.', 400, 'INVALID_DELTA');
+  }
+  if (Math.abs(delta) > 1_000_000) {
+    return fail(c, 'مقدار تغییر امتیاز بیش از حد مجاز است.', 400, 'INVALID_DELTA');
+  }
+
+  const result = await adjustPoints(c.env.DB, settings, id, delta);
+  if (result.ok === false) {
+    if (result.code === 'NOT_CUSTOMER') {
+      return fail(c, result.error, 400, 'NOT_CUSTOMER');
+    }
+    return fail(c, result.error, 404, 'NOT_FOUND');
+  }
+
+  await audit(c, 'points_adjust', {
+    targetType: 'customer',
+    targetId: id,
+    details: `${delta > 0 ? '+' : ''}${delta} امتیاز → موجودی ${result.points}`,
+  });
+
+  return ok(c, { points: result.points, tier: result.tier });
+});
+
+app.post('/api/admin/customers/:id/deactivate', requireApiRole('admin'), async (c) => {
+  const id = toPositiveInt(c.req.param('id'), 0);
+  if (!id) return fail(c, 'شناسه نامعتبر است.', 400, 'INVALID_ID');
+
+  const result = await c.env.DB.prepare(
+    `UPDATE users SET is_active = 0 WHERE id = ? AND role = 'customer'`
+  )
+    .bind(id)
+    .run();
+  if (!result.meta?.changes) return fail(c, 'مشتری یافت نشد.', 404, 'NOT_FOUND');
+  await audit(c, 'customer_update', { targetType: 'customer', targetId: id, details: 'حساب مشتری غیرفعال شد.' });
+  return ok(c, { isActive: false });
+});
+
+app.post('/api/admin/customers/:id/activate', requireApiRole('admin'), async (c) => {
+  const id = toPositiveInt(c.req.param('id'), 0);
+  if (!id) return fail(c, 'شناسه نامعتبر است.', 400, 'INVALID_ID');
+
+  const result = await c.env.DB.prepare(
+    `UPDATE users SET is_active = 1 WHERE id = ? AND role = 'customer'`
+  )
+    .bind(id)
+    .run();
+  if (!result.meta?.changes) return fail(c, 'مشتری یافت نشد.', 404, 'NOT_FOUND');
+  await audit(c, 'customer_update', { targetType: 'customer', targetId: id, details: 'حساب مشتری فعال شد.' });
+  return ok(c, { isActive: true });
+});
+
+/* ---------------------------------------------------------------- شیفت‌ها */
+
+app.get('/api/staff/shift', requireApiRole('staff', 'admin'), async (c) => {
+  const user = c.get('user')!;
+  const shift = await getOpenShift(c.env.DB, user.uid);
+  if (!shift) return ok(c, { open: false, shift: null, summary: null });
+
+  const summary = await getShiftSummary(c.env.DB, shift);
+  return ok(c, { open: true, shift, summary });
+});
+
+app.post('/api/staff/shift/open', requireApiRole('staff', 'admin'), async (c) => {
+  const user = c.get('user')!;
+  let body: Record<string, unknown> = {};
+  try {
+    body = (await c.req.json()) as Record<string, unknown>;
+  } catch {
+    // بدنهٔ خالی یعنی موجودی اولیه صفر
+  }
+
+  const openingCash = Number(body.openingCash ?? 0);
+  if (!Number.isFinite(openingCash) || openingCash < 0 || openingCash > 5_000_000_000) {
+    return fail(c, 'مبلغ اولیهٔ صندوق نامعتبر است.', 400, 'INVALID_AMOUNT');
+  }
+
+  const result = await openShift(c.env, {
+    staffId: user.uid,
+    staffName: user.name,
+    openingCash,
+  });
+
+  if (result.ok === false) {
+    return fail(c, result.error, result.code === 'ALREADY_OPEN' ? 409 : 400, result.code);
+  }
+
+  await audit(c, 'shift_open', {
+    targetType: 'shift',
+    targetId: result.shift.id,
+    details: `صندوق با موجودی ${openingCash} تومان باز شد.`,
+  });
+
+  return ok(c, { shift: result.shift });
+});
+
+app.post('/api/staff/shift/movements', requireApiRole('staff', 'admin'), async (c) => {
+  const user = c.get('user')!;
+  let body: Record<string, unknown> = {};
+  try {
+    body = (await c.req.json()) as Record<string, unknown>;
+  } catch {
+    return fail(c, 'داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
+  }
+
+  const kind = body.kind === 'out' ? 'out' : body.kind === 'in' ? 'in' : null;
+  if (!kind) return fail(c, 'نوع گردش نقد نامعتبر است.', 400, 'INVALID_KIND');
+
+  const amount = Number(body.amount);
+  if (!Number.isFinite(amount) || amount <= 0 || amount > 5_000_000_000) {
+    return fail(c, 'مبلغ گردش نقد نامعتبر است.', 400, 'INVALID_AMOUNT');
+  }
+
+  const shift = await getOpenShift(c.env.DB, user.uid);
+  if (!shift) return fail(c, 'صندوق باز ندارید. اول صندوق را باز کنید.', 409, 'SHIFT_CLOSED');
+
+  const result = await addCashMovement(c.env, {
+    shiftId: shift.id,
+    kind,
+    amount: Math.floor(amount),
+    reason: String(body.note ?? body.reason ?? '').slice(0, 120),
+    actorId: user.uid,
+  });
+
+  if (result.ok === false) {
+    return fail(c, result.error, result.code === 'SHIFT_CLOSED' ? 409 : 400, result.code);
+  }
+
+  await audit(c, kind === 'in' ? 'cash_in' : 'cash_out', {
+    targetType: 'shift',
+    targetId: shift.id,
+    details: `${kind === 'in' ? 'ورود' : 'خروج'} نقد ${Math.floor(amount)} تومان — ${String(body.note ?? '').slice(0, 80)}`,
+  });
+
+  return ok(c, { summary: result.summary });
+});
+
+app.post('/api/staff/shift/close', requireApiRole('staff', 'admin'), async (c) => {
+  const user = c.get('user')!;
+  let body: Record<string, unknown> = {};
+  try {
+    body = (await c.req.json()) as Record<string, unknown>;
+  } catch {
+    return fail(c, 'داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
+  }
+
+  const shift = await getOpenShift(c.env.DB, user.uid);
+  if (!shift) return fail(c, 'صندوق باز ندارید.', 409, 'ALREADY_CLOSED');
+
+  const countedCash = Number(body.countedCash);
+  if (!Number.isFinite(countedCash) || countedCash < 0 || countedCash > 5_000_000_000) {
+    return fail(c, 'مبلغ شمارش‌شده نامعتبر است.', 400, 'INVALID_AMOUNT');
+  }
+
+  const result = await closeShift(c.env, {
+    shiftId: shift.id,
+    countedCash: Math.floor(countedCash),
+    notes: String(body.note ?? '').slice(0, 200),
+    closedBy: user.uid,
+    closedByName: user.name,
+    allowOtherStaff: user.role === 'admin',
+  });
+
+  if (result.ok === false) {
+    const status = result.code === 'NOT_FOUND' ? 404 : 409;
+    return fail(c, result.error, status, result.code);
+  }
+
+  await audit(c, 'shift_close', {
+    targetType: 'shift',
+    targetId: shift.id,
+    details: `صندوق بسته شد؛ شمارش ${Math.floor(countedCash)}، مورد انتظار ${result.summary.expectedCash}، اختلاف ${result.summary.difference ?? 0}.`,
+  });
+
+  return ok(c, { shift: result.shift, summary: result.summary });
+});
+
+app.get('/api/admin/shifts', requireApiRole('admin'), async (c) => {
+  const result = await listShifts(c.env.DB, {
+    page: toPositiveInt(c.req.query('page'), 1) || 1,
+    pageSize: toPositiveInt(c.req.query('pageSize'), 20) || 20,
+    status: c.req.query('status') ?? undefined,
+    staffId: toPositiveInt(c.req.query('staff'), 0) || undefined,
+    from: c.req.query('from') ?? '',
+    to: c.req.query('to') ?? '',
+  });
+  return ok(c, result);
+});
+
+app.get('/api/admin/shifts/:id', requireApiRole('admin'), async (c) => {
+  const id = toPositiveInt(c.req.param('id'), 0);
+  if (!id) return fail(c, 'شناسه شیفت نامعتبر است.', 400, 'INVALID_ID');
+  const detail = await getShiftDetail(c.env.DB, id);
+  if (!detail) return fail(c, 'شیفت یافت نشد.', 404, 'NOT_FOUND');
+  return ok(c, detail);
+});
+
+app.get('/api/admin/invoices/:id', requireApiRole('admin'), async (c) => {
+  const id = toPositiveInt(c.req.param('id'), 0);
+  if (!id) return fail(c, 'شناسه فاکتور نامعتبر است.', 400, 'INVALID_ID');
+
+  const invoice = await c.env.DB.prepare(
+    `SELECT i.*, u.name AS customer_name, u.phone AS customer_phone, s.name AS staff_name
+     FROM invoices i
+     JOIN users u ON u.id = i.user_id
+     LEFT JOIN users s ON s.id = i.registered_by
+     WHERE i.id = ? LIMIT 1`
+  )
+    .bind(id)
+    .first<Record<string, unknown>>();
+
+  if (!invoice) return fail(c, 'فاکتور یافت نشد.', 404, 'NOT_FOUND');
+  return ok(c, invoice);
+});
+
+/**
+ * اصلاح فاکتور (فقط مدیر) — الگوی استاندارد صندوق‌ها:
+ *   ۱) فاکتور اصلاحیِ تازه ثبت می‌شود (با پیوند به فاکتور اصلی)
+ *   ۲) فاکتور اصلی با دلیل باطل می‌شود
+ *   ۳) اگر مرحلهٔ ۲ شکست بخورد، فاکتور تازه خودکار باطل می‌شود تا هیچ‌وقت
+ *      دو فاکتور معتبر برای یک خرید باقی نماند.
+ */
+app.post('/api/admin/invoices/:id/correct', requireApiRole('admin'), async (c) => {
+  const user = c.get('user')!;
+  const settings = c.get('settings');
+  const id = toPositiveInt(c.req.param('id'), 0);
+  if (!id) return fail(c, 'شناسه فاکتور نامعتبر است.', 400, 'INVALID_ID');
+
+  let body: Record<string, unknown>;
+  try {
+    body = (await c.req.json()) as Record<string, unknown>;
+  } catch {
+    return fail(c, 'داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
+  }
+
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return fail(c, 'داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
+  const reason = String(body.reason ?? '').trim().slice(0, 160);
+  if (reason.length < 3) {
+    return fail(c, 'دلیل اصلاح را بنویسید (حداقل ۳ نویسه).', 400, 'REASON_REQUIRED');
+  }
+
+  const original = await c.env.DB.prepare('SELECT * FROM invoices WHERE id = ? LIMIT 1')
+    .bind(id)
+    .first<InvoiceRow>();
+  if (!original) return fail(c, 'فاکتور یافت نشد.', 404, 'NOT_FOUND');
+  if (original.voided_at) {
+    return fail(c, 'این فاکتور قبلاً باطل شده و قابل اصلاح نیست.', 409, 'ALREADY_VOID');
+  }
+
+  // آیتم‌های جدید
+  const rawItems = Array.isArray(body.items) ? (body.items as Array<Record<string, unknown>>) : [];
+  if (rawItems.length === 0) return fail(c, 'حداقل یک آیتم لازم است.', 400, 'INVALID_ITEMS');
+  if (rawItems.length > 50) return fail(c, 'تعداد آیتم‌ها بیش از حد مجاز است.', 400, 'TOO_MANY_ITEMS');
+
+  const items: InvoiceItem[] = [];
+  for (const raw of rawItems) {
+    const name = String(raw?.name ?? '').trim().slice(0, 60);
+    const qty = Number(raw?.qty);
+    const price = Number(raw?.price);
+    if (!name) return fail(c, 'نام آیتم خالی است.', 400, 'INVALID_ITEMS');
+    if (!Number.isSafeInteger(qty) || qty <= 0 || qty > 99) {
+      return fail(c, 'تعداد یکی از آیتم‌ها نامعتبر است.', 400, 'INVALID_ITEMS');
+    }
+    if (!Number.isSafeInteger(price) || price < 0 || price > 1_000_000_000) {
+      return fail(c, 'قیمت یکی از آیتم‌ها نامعتبر است.', 400, 'INVALID_ITEMS');
+    }
+    items.push({ name, qty, price });
+  }
+
+  const subtotal = items.reduce((sum, item) => sum + item.price * item.qty, 0);
+  const discountRaw = body.discount === undefined ? 0 : Number(body.discount);
+  if (!Number.isFinite(discountRaw) || discountRaw < 0) {
+    return fail(c, 'مبلغ تخفیف نامعتبر است.', 400, 'INVALID_DISCOUNT');
+  }
+  const discount = Math.floor(discountRaw);
+  const newAmount = subtotal - discount;
+  if (newAmount <= 0) {
+    return fail(c, 'مبلغ نهایی فاکتور باید بیشتر از صفر باشد.', 400, 'INVALID_AMOUNT');
+  }
+
+  // پرداخت: اگر فرستاده نشود و مبلغ عوض نشده باشد، پرداخت قبلی حفظ می‌شود
+  let payment: { cash?: number; card?: number; online?: number } | null = null;
+  if (body.payment && typeof body.payment === 'object') {
+    const raw = body.payment as Record<string, unknown>;
+    const toAmount = (value: unknown): number | undefined => {
+      if (value === undefined || value === null || value === '') return undefined;
+      const n = Number(value);
+      return Number.isFinite(n) && n >= 0 ? Math.floor(n) : Number.NaN;
+    };
+    const cash = toAmount(raw.cash);
+    const card = toAmount(raw.card);
+    const online = toAmount(raw.online);
+    if ([cash, card, online].some((value) => value !== undefined && Number.isNaN(value))) {
+      return fail(c, 'مبلغ پرداختی نامعتبر است.', 400, 'INVALID_PAYMENT');
+    }
+    payment = { cash: cash ?? 0, card: card ?? 0, online: online ?? 0 };
+  } else if (newAmount === original.amount && original.payment_method) {
+    payment = { cash: original.paid_cash, card: original.paid_card, online: original.paid_online };
+  } else {
+    return fail(
+      c,
+      'مبلغ فاکتور تغییر کرده است؛ مبالغ پرداخت جدید را هم وارد کنید.',
+      400,
+      'PAYMENT_REQUIRED'
+    );
+  }
+
+  const openShift = await getOpenShift(c.env.DB, user.uid);
+  const allowClosedShift = body.allowClosedShift === true;
+
+  // ۱) ثبت فاکتور اصلاحی
+  const created = await recordInvoice(c.env, settings, {
+    userId: original.user_id,
+    items,
+    amount: null,
+    couponCode: null,
+    registeredBy: user.uid,
+    clientRequestId: body.clientRequestId
+      ? String(body.clientRequestId).slice(0, 64)
+      : `fix-${id}-${Date.now()}`,
+    payment,
+    shiftId: openShift?.id ?? null,
+    replacesInvoiceId: original.id,
+    deferReceipt: true,
+    manualDiscount: discount,
+  });
+
+  if (created.ok === false) {
+    return fail(c, created.error, 400, created.code);
+  }
+
+  if (created.duplicate) return fail(c, 'این شناسه درخواست قبلاً استفاده شده است؛ نتیجه اصلاح را در تاریخچه بررسی کنید.', 409, 'REQUEST_ID_CONFLICT');
+
+  // ۲) باطل کردن فاکتور اصلی
+  const voided = await voidInvoice(c.env, settings, id, user.uid, {
+    reason: `اصلاح: جایگزین با فاکتور #${created.invoiceId} — ${reason}`,
+    allowClosedShift,
+    replacementInvoiceId: created.invoiceId,
+  });
+
+  if (voided.ok === false) {
+    // ۳) جبران: فاکتور تازه باطل می‌شود تا وضعیت مالی مبهم نماند
+    const rollback = await voidInvoice(c.env, settings, created.invoiceId, user.uid, {
+      reason: 'ابطال خودکار: اصلاح فاکتور اصلی انجام نشد',
+      allowClosedShift: true,
+    });
+    return fail(
+      c,
+      `${voided.error}${rollback.ok ? ' فاکتور اصلاحی هم برگشت داده شد.' : ' فاکتور اصلاحی دستی بررسی شود.'}`,
+      409,
+      voided.code
+    );
+  }
+
+  const receipt = await sendInvoiceReceipt(c.env, settings, created.invoiceId);
+  if (receipt) { created.pointsEarned = receipt.pointsEarned; created.totalPoints = receipt.totalPoints; }
+
+  await audit(c, 'invoice_correct', {
+    targetType: 'invoice',
+    targetId: id,
+    details: `فاکتور #${id} (${formatNumberFa(original.amount)} تومان) با فاکتور #${created.invoiceId} (${formatNumberFa(
+      created.amount
+    )} تومان) اصلاح شد. امتیاز قبلی: ${original.points_earned}؛ امتیاز جدید: ${created.pointsEarned}. پرداخت اصلاح‌شده: نقد ${created.paidCash ?? 0}، کارت ${created.paidCard ?? 0}، آنلاین ${created.paidOnline ?? 0} تومان؛ باقیمانده ${created.change ?? 0} تومان. دلیل: ${reason}`,
+  });
+
+  return ok(c, {
+    corrected: true,
+    newInvoiceId: created.invoiceId,
+    amount: created.amount,
+    discount: created.discount,
+    replaces: id,
+    pointsEarned: created.pointsEarned,
+    totalPoints: created.totalPoints,
+  });
+});
+
+app.post('/api/admin/invoices/:id/void', requireApiRole('admin'), async (c) => {
+  const user = c.get('user')!;
+  const settings = c.get('settings');
+  const id = toPositiveInt(c.req.param('id'), 0);
+  if (!id) return fail(c, 'شناسه فاکتور نامعتبر است.', 400, 'INVALID_ID');
+
+  let body: Record<string, unknown> = {};
+  try {
+    body = (await c.req.json()) as Record<string, unknown>;
+  } catch {
+    // بدنهٔ خالی مجاز نیست چون دلیل الزامی است
+  }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return fail(c, 'داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
+  const reason = body.reason === undefined || body.reason === null ? '' : String(body.reason).trim().slice(0, 200);
+  if (reason.length < 3) {
+    return fail(c, 'دلیل ابطال الزامی است (حداقل ۳ نویسه).', 400, 'REASON_REQUIRED');
+  }
+
+  const result = await voidInvoice(c.env, settings, id, user.uid, {
+    reason,
+    allowClosedShift: body.allowClosedShift === true && user.role === 'admin',
+  });
+  if (result.ok === false) {
+    const status = result.code === 'NOT_FOUND' ? 404 : 409;
+    return fail(c, result.error, status, result.code);
+  }
+
+  await audit(c, 'invoice_void', {
+    targetType: 'invoice',
+    targetId: id,
+    details: `فاکتور ${result.customerName} با مبلغ ${formatNumberFa(result.amount)} تومان باطل شد؛ ${result.pointsReversed} امتیاز برگشت خورد. دلیل: ${reason}`,
+  });
+
+  return ok(c, {
+    voided: true,
+    pointsReversed: result.pointsReversed,
+    customerId: result.customerId,
+    customerName: result.customerName,
+  });
+});
+
+app.delete('/api/admin/customers/:id', requireApiRole('admin'), async (c) => {
+  const id = toPositiveInt(c.req.param('id'), 0);
+  if (!id) return fail(c, 'شناسه نامعتبر است.', 400, 'INVALID_ID');
+
+  const user = await findUserById(c.env.DB, id);
+  if (!user || user.role !== 'customer') {
+    return fail(c, 'مشتری یافت نشد.', 404, 'NOT_FOUND');
+  }
+
+  // فاکتورها، کدهای تخفیف و لاگ‌های پیامک طبق کلیدهای خارجی مدیریت می‌شوند
+  await c.env.DB.prepare("DELETE FROM users WHERE id = ? AND role = 'customer'")
+    .bind(id)
+    .run();
+
+  await audit(c, 'customer_delete', {
+    targetType: 'customer',
+    targetId: id,
+    details: `مشتری «${user.name}» با شماره ${user.phone} حذف شد.`,
+  });
+
+  return ok(c, { deleted: true, id });
+});
+
+app.post('/api/admin/sms/test', requireApiRole('admin'), async (c) => {
+  const settings = c.get('settings');
+
+  let body: Record<string, unknown>;
+  try {
+    body = (await c.req.json()) as Record<string, unknown>;
+  } catch {
+    return fail(c, 'داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
+  }
+
+  const phone = normalizePhone(String(body.phone ?? ''));
+  if (!/^09\d{9}$/.test(phone)) {
+    return fail(c, 'شماره موبایل نامعتبر است.', 400, 'INVALID_PHONE');
+  }
+
+  const result = await sendSms(c.env, settings, {
+    userId: null,
+    phone,
+    type: 'admin',
+    message: `پیامک آزمایشی از باشگاه ${settings.cafe_name} ☕\nاگر این پیام را دریافت کردید، تنظیمات sms.ir درست است.`,
+  });
+
+  if (result.status === 'pending') return ok(c, { status: 'pending', message: 'پیام آزمایشی در صف ارسال جایگزین برای ادمین قرار گرفت.' }, 202);
+  if (result.status === 'sent') {
+    return ok(c, { status: result.status, message: 'پیامک آزمایشی ارسال شد.' });
+  }
+
+  return fail(
+    c,
+    result.error || 'ارسال پیامک آزمایشی ناموفق بود.',
+    400,
+    'SMS_FAILED'
+  );
+});
+
+app.get('/admin/export/backup.json', requirePageRole('admin'), async (c) => {
+  if (c.req.query('scope') === 'upgrade') {
+    try {
+      const snapshot = await upgradeBackup(c.env.DB);
+      const receipt = await backupReceipt(c.env.JWT_SECRET, c.get('user')!.uid);
+      return new Response(snapshot, { headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Content-Disposition': 'attachment; filename="cafe-club-private-upgrade-backup.json"',
+        'X-Upgrade-Receipt': receipt, 'Cache-Control': 'no-store',
+        'CDN-Cache-Control': 'no-store', 'Cloudflare-CDN-Cache-Control': 'no-store', 'Vary': 'Cookie',
+      } });
+    } catch (error) {
+      console.error('UPGRADE_BACKUP_FAILED', error);
+      return fail(c, 'پشتیبان کامل ساخته نشد؛ ارتقا آغاز نمی‌شود. برای دیتابیس بزرگ یا غیرمعمول از D1 Export/Time Travel استفاده کنید.', 503, 'BACKUP_FAILED');
+    }
+  }
+  // خروجی معمول اطلاعات مشتریان بدون کلیدها؛ با پشتیبان خصوصی ارتقا متفاوت است.
+  const [usersRes, invoicesRes, couponsRes, settingsRes, smsRes] = await Promise.all([
+    c.env.DB.prepare(
+      `SELECT id, name, phone, birth_date, points, lifetime_points, tier, referred_by,
+              referral_code, last_visit_date, avg_visit_interval, role, is_active,
+              first_purchase_at, referral_rewarded, sms_opt_in, created_at
+       FROM users ORDER BY id ASC`
+    ).all<Record<string, unknown>>(),
+    c.env.DB.prepare('SELECT * FROM invoices ORDER BY id ASC LIMIT 50000').all<Record<string, unknown>>(),
+    c.env.DB.prepare('SELECT * FROM coupons ORDER BY id ASC').all<Record<string, unknown>>(),
+    c.env.DB.prepare('SELECT key, value FROM settings').all<{ key: string; value: string }>(),
+    c.env.DB.prepare(
+      'SELECT id, user_id, type, status, sent_at FROM sms_logs ORDER BY id DESC LIMIT 20000'
+    ).all<Record<string, unknown>>(),
+  ]);
+
+  const blocked = new Set(['sms_api_key', 'weather_api_key', 'sms_fallback_config']);
+  const settings: Record<string, unknown> = {};
+  for (const row of settingsRes.results ?? []) {
+    if (blocked.has(row.key)) continue;
+    settings[row.key] = safeJsonParse<unknown>(row.value, row.value);
+  }
+
+  const backup = {
+    app: 'cafe-club',
+    version: 1,
+    generated_at: new Date().toISOString(),
+    counts: {
+      users: usersRes.results?.length ?? 0,
+      invoices: invoicesRes.results?.length ?? 0,
+      coupons: couponsRes.results?.length ?? 0,
+      sms_logs: smsRes.results?.length ?? 0,
+    },
+    users: usersRes.results ?? [],
+    invoices: invoicesRes.results ?? [],
+    coupons: couponsRes.results ?? [],
+    sms_logs: smsRes.results ?? [],
+    settings,
+  };
+
+  const date = todayISO(resolveTimeZone(c.env));
+  return new Response(JSON.stringify(backup, null, 2), {
+    status: 200,
+    headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Content-Disposition': `attachment; filename="cafe-club-backup-${date}.json"`,
+      'Cache-Control': 'no-store',
+    },
+  });
+});
+
+app.get('/admin/fallback', requirePageRole('admin'), async (c) => {
+  return c.html(adminFallbackPage(c.get('settings'), c.get('user')!.name));
+});
+app.get('/api/admin/fallback', requireApiRole('admin'), async (c) => {
+  const config = await loadFallbackConfig(c.env);
+  return ok(c, { ...safeFallbackConfig(c.env, config), primaryActive: smsPanelActive(c.env, c.get('settings')) });
+});
+app.put('/api/admin/fallback', requireApiRole('admin'), async (c) => {
+  let body: unknown;
+  try { body = await c.req.json(); } catch { return fail(c, 'JSON نامعتبر است.', 400, 'BAD_JSON'); }
+  try { await saveFallbackConfig(c.env, body); }
+  catch (e) { return fail(c, e instanceof Error ? e.message : 'ذخیره ناموفق بود.', 400, 'INVALID_FALLBACK_CONFIG'); }
+  await audit(c, 'fallback_settings_update', { targetType: 'settings', details: 'تنظیمات مسیر جایگزین پیامک تغییر کرد (بدون ثبت توکن).' });
+  return ok(c, { saved: true });
+});
+app.post('/api/admin/fallback/test', requireApiRole('admin'), async (c) => {
+  const { dbRateLimit } = await import('./lib/otp');
+  const limit = await dbRateLimit(c.env.DB, 'fallback:test:' + c.get('user')!.uid, 3, 60);
+  if (!limit || !limit.allowed) return fail(c, 'حداکثر ۳ تست در دقیقه.', 429, 'RATE_LIMITED');
+  let body: Record<string, unknown>;
+  try { body = await c.req.json(); } catch { return fail(c, 'JSON نامعتبر است.', 400, 'BAD_JSON'); }
+  if (!body || typeof body !== 'object' || (body.channel !== 'telegram' && body.channel !== 'bale')) return fail(c, 'کانال نامعتبر است.', 400, 'INVALID_CHANNEL');
+  const user = await findUserById(c.env.DB, c.get('user')!.uid);
+  if (!user) return fail(c, 'کاربر یافت نشد.', 404, 'NOT_FOUND');
+  try {
+    const ids = await enqueueFallback(c.env, { phone: user!.phone, userId: user!.id, type: 'admin',
+      message: 'تست اتصال ارسال جایگزین؛ این پیام به مشترک ارسال نشده است.' }, 'test', body.channel);
+    if (!ids.length) return fail(c, 'صف پر است؛ بعداً تلاش کنید.', 503, 'QUEUE_FULL');
+    await audit(c, 'fallback_test', { targetType: 'settings', details: 'تست مسیر جایگزین در صف قرار گرفت.' });
+    return ok(c, { ids, message: 'تست در صف قرار گرفت؛ نتیجه را در تاریخچه بررسی کنید.' }, 202);
+  } catch { return fail(c, 'مقصد، توکن و کلید رمزنگاری ذخیره‌شده را بررسی کنید.', 400, 'FALLBACK_CONFIG_ERROR'); }
+});
+app.post('/api/admin/fallback/:id/retry', requireApiRole('admin'), async (c) => {
+  const { dbRateLimit } = await import('./lib/otp');
+  const limit = await dbRateLimit(c.env.DB, 'fallback:retry:' + c.get('user')!.uid, 10, 60);
+  if (!limit?.allowed) return fail(c, 'حداکثر ۱۰ تلاش مجدد در دقیقه.', 429, 'RATE_LIMITED');
+  let body: Record<string, unknown>;
+  try { body = await c.req.json(); } catch { return fail(c, 'JSON نامعتبر است.', 400, 'BAD_JSON'); }
+  const id = c.req.param('id');
+  if (!/^[a-zA-Z0-9-]{1,100}$/.test(id)) return fail(c, 'شناسه نامعتبر است.', 400, 'INVALID_ID');
+  let previous: Awaited<ReturnType<typeof retryFallbackJob>>;
+  try { previous = await retryFallbackJob(c.env, id, body?.confirmDuplicateRisk === true); }
+  catch (e) {
+    const code = e instanceof Error ? e.message : '';
+    const messages: Record<string,string> = { NOT_FOUND:'پیام پیدا نشد.', OTP_NO_REPLAY:'کد ورود قابل ارسال مجدد نیست؛ مشتری باید کد تازه درخواست کند.',
+      NOT_RETRYABLE:'پیام در صف، ارسال‌شده یا منقضی است؛ دوباره ارسال نشد.', CONFIRM_DUPLICATE_RISK:'ممکن است پیام قبلاً رسیده باشد؛ تأیید خطر تکرار لازم است.',
+      CONFIG_CHANGED:'مسیر یا مقصد خاموش/تغییر کرده است؛ تنظیمات را بررسی کنید.', INVALID_TOKEN:'توکن معتبر نیست.' };
+    return fail(c, messages[code] ?? 'کلید و تنظیمات مقصد را بررسی کنید.', code === 'NOT_FOUND' ? 404 : 409, messages[code] ? code : 'CONFIG_ERROR');
+  }
+  await audit(c, 'fallback_retry', { targetType:'message', targetId:id, details:`تلاش مجدد آگاهانه مدیر (بدون تغییر مالی). نوبت قبلی: ${previous.previousAttempts} تلاش؛ نتیجه: ${(previous.previousError ?? 'نامشخص').slice(0,200)}؛ پذیرش خطر تکرار: ${body?.confirmDuplicateRisk === true ? 'بله' : 'خیر'}.` });
+  return ok(c, { message:'دوباره در صف قرار گرفت؛ نتیجه در تاریخچه مشخص می‌شود.' }, 202);
+});
+app.get('/api/admin/fallback/history', requireApiRole('admin'), async (c) => {
+  const page = Math.min(10000, Math.max(1, toPositiveInt(c.req.query('page'), 1)));
+  return ok(c, await fallbackHistory(c.env, page, c.req.query('status') ?? '', c.req.query('channel') ?? ''));
+});
+
+app.get('/api/admin/settings', requireApiRole('admin'), async (c) => {
+  const settings = c.get('settings');
+  const menu = await loadMenuItems(c.env);
+  // کلیدهای حساس هرگز از API برنمی‌گردند؛ فقط وجودشان اعلام می‌شود.
+  const { sms_api_key, weather_api_key, ...safeSettings } = settings;
+  return ok(c, {
+    settings: {
+      ...safeSettings,
+      has_sms_api_key: sms_api_key.trim().length > 0,
+      has_weather_api_key: weather_api_key.trim().length > 0,
+    },
+    menu,
+  });
+});
+
+app.put('/api/admin/settings', requireApiRole('admin'), async (c) => {
+  let body: Record<string, unknown>;
+  try {
+    body = (await c.req.json()) as Record<string, unknown>;
+  } catch {
+    return fail(c, 'داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
+  }
+
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return fail(c, 'تنظیمات نامعتبر است.', 400, 'BAD_JSON');
+  if (body.points_mode !== undefined && !['amount', 'visit', 'invoice'].includes(String(body.points_mode)))
+    return fail(c, 'روش امتیازدهی نامعتبر است.', 400, 'INVALID_POINTS_POLICY');
+  for (const [key, min, max] of [['invoice_points',0,100000], ['visit_points',1,100000], ['visit_min_amount',0,100000000], ['currency_unit',1,10000000], ['points_per_currency',1,1000]] as const) {
+    if (body[key] !== undefined && (typeof body[key] !== 'number' || !Number.isSafeInteger(body[key]) || Number(body[key]) < min || Number(body[key]) > max))
+      return fail(c, 'مقادیر سیاست امتیازدهی باید عدد صحیح در محدوده مجاز باشند.', 400, 'INVALID_POINTS_POLICY');
+  }
+  if (body.menu_items !== undefined && !Array.isArray(body.menu_items)) return fail(c, 'فهرست منو نامعتبر است.', 400, 'INVALID_MENU');
+  if (Array.isArray(body.menu_items) && body.menu_items.some(item => !item || typeof item !== 'object' || typeof item.name !== 'string' || !item.name.replace(/[<>]/g, '').trim() || item.name.length > 60 || !Number.isSafeInteger(item.price) || item.price < 0 || item.price > 1_000_000_000 || (item.category !== undefined && (typeof item.category !== 'string' || item.category.length > 30)))) return fail(c, 'نام، قیمت یا دسته یکی از آیتم‌های منو نامعتبر است؛ هیچ تغییری ذخیره نشد.', 400, 'INVALID_MENU');
+  if (Array.isArray(body.menu_items) && body.menu_items.length > 1000) return fail(c, 'حداکثر ۱۰۰۰ آیتم منو مجاز است؛ هیچ آیتمی حذف نشد.', 400, 'INVALID_MENU');
+  const updates: Record<string, unknown> = {};
+  const stage = (key: string, value: unknown) => { updates[key] = value; };
+  try {
+    if (body.cafe_name !== undefined) {
+      stage('cafe_name', String(body.cafe_name).trim().slice(0, 60) || 'کافه');
+    }
+    if (body.cafe_city !== undefined) {
+      stage('cafe_city', String(body.cafe_city).trim().slice(0, 60) || 'تهران');
+    }
+    if (body.currency_unit !== undefined) {
+      stage('currency_unit', toIntInRange(body.currency_unit, 1, 10_000_000, 1000));
+    }
+    if (body.points_mode !== undefined) {
+      stage('points_mode', body.points_mode);
+    }
+    if (body.points_per_currency !== undefined) {
+      stage('points_per_currency', toIntInRange(body.points_per_currency, 1, 1000, 1));
+    }
+    if (body.invoice_points !== undefined) stage('invoice_points', body.invoice_points);
+    if (body.visit_points !== undefined) {
+      stage('visit_points', toIntInRange(body.visit_points, 1, 100_000, 15));
+    }
+    if (body.visit_min_amount !== undefined) {
+      stage('visit_min_amount', toIntInRange(body.visit_min_amount, 0, 100_000_000, 30_000));
+    }
+    if (body.redeem_enabled !== undefined) {
+      stage('redeem_enabled', body.redeem_enabled ? 1 : 0);
+    }
+    if (body.redeem_points !== undefined) {
+      stage('redeem_points', toIntInRange(body.redeem_points, 1, 10_000_000, 200));
+    }
+    if (body.redeem_value !== undefined) {
+      stage('redeem_value', toIntInRange(body.redeem_value, 1000, 100_000_000, 20_000));
+    }
+    if (body.redeem_expiry_days !== undefined) {
+      stage('redeem_expiry_days', toIntInRange(body.redeem_expiry_days, 1, 365, 30));
+    }
+    if (body.otp_login_enabled !== undefined) {
+      stage('otp_login_enabled', body.otp_login_enabled ? 1 : 0);
+    }
+    if (body.require_shift !== undefined) {
+      stage('require_shift', body.require_shift ? 1 : 0);
+    }
+    if (body.referral_reward_points !== undefined) {
+      stage('referral_reward_points', toIntInRange(body.referral_reward_points, 0, 1_000_000, 50));
+    }
+    if (body.churn_grace_days !== undefined) {
+      stage('churn_grace_days', toIntInRange(body.churn_grace_days, 0, 60, 2));
+    }
+    if (body.churn_min_visits !== undefined) {
+      stage('churn_min_visits', toIntInRange(body.churn_min_visits, 1, 100, 3));
+    }
+    if (body.birthday_coupon_percent !== undefined) {
+      stage('birthday_coupon_percent', toIntInRange(body.birthday_coupon_percent, 1, 100, 15));
+    }
+
+    if (body.tiers && typeof body.tiers === 'object') {
+      const tiers = body.tiers as Record<string, unknown>;
+      const silver = toIntInRange(tiers.silver, 1, 100_000_000, 500);
+      const gold = toIntInRange(tiers.gold, 2, 100_000_000, 2000);
+      const vip = toIntInRange(tiers.vip, 3, 100_000_000, 5000);
+      if (!(silver < gold && gold < vip)) {
+        return fail(c, 'آستانه‌های سطح باید صعودی باشند (نقره‌ای < طلایی < الماسی).', 400, 'INVALID_TIERS');
+      }
+      stage('tiers', { silver, gold, vip });
+    }
+
+    if (body.sms_enabled !== undefined) {
+      if (![0, 1].includes(body.sms_enabled as number)) return fail(c, 'وضعیت پنل نامعتبر است.', 400, 'INVALID_SMS_ENABLED');
+      stage('sms_enabled', body.sms_enabled);
+    }
+    if (body.sms_provider !== undefined) {
+      stage('sms_provider', coerceSmsProvider(body.sms_provider));
+    }
+    // کلیدها فقط وقتی مقدار جدید دارند بازنویسی می‌شوند؛ رشته‌ی خالی یعنی «تغییری نده».
+    // برای حذف آگاهانه، پرچم clear_* را بفرستید.
+    if (body.clear_sms_api_key === true) {
+      stage('sms_api_key', '');
+    } else if (body.sms_api_key !== undefined) {
+      const nextKey = String(body.sms_api_key).trim().slice(0, 300);
+      if (nextKey) stage('sms_api_key', nextKey);
+    }
+    if (body.sms_sender !== undefined) {
+      stage('sms_sender', String(body.sms_sender).trim().slice(0, 30));
+    }
+    if (body.clear_weather_api_key === true) {
+      stage('weather_api_key', '');
+    } else if (body.weather_api_key !== undefined) {
+      const nextWeatherKey = String(body.weather_api_key).trim().slice(0, 200);
+      if (nextWeatherKey) stage('weather_api_key', nextWeatherKey);
+    }
+
+    if (body.sms_templates && typeof body.sms_templates === 'object') {
+      const templates = body.sms_templates as Record<string, unknown>;
+      const keys = ['welcome', 'invoice', 'birthday', 'churn', 'weather', 'otp', 'redeem'] as const;
+      const current = c.get('settings').sms_templates;
+      const next: Record<string, string> = { ...current };
+      for (const key of keys) {
+        if (templates[key] !== undefined) {
+          next[key] = String(templates[key]).slice(0, 1000);
+        }
+      }
+      stage('sms_templates', next);
+    }
+
+    if (Array.isArray(body.menu_items)) {
+      const menu = (body.menu_items as Array<Record<string, unknown>>)
+        .slice(0, 1000)
+        .map((item) => ({
+          name: String(item.name ?? '').replace(/[<>]/g, '').trim().slice(0, 60),
+          price: toIntInRange(item.price, 0, 1_000_000_000, 0),
+          category: String(item.category ?? '').replace(/[<>]/g, '').trim().slice(0, 30),
+        }))
+        .filter((item) => item.name.length > 0);
+      if (menu.length === 0) {
+        return fail(c, 'حداقل یک آیتم در منو لازم است.', 400, 'INVALID_MENU');
+      }
+      stage('menu_items', menu);
+    }
+
+    await saveSettings(c.env, updates);
+    await audit(c, 'settings_update', {
+      targetType: 'settings',
+      details: 'تنظیمات باشگاه به‌روزرسانی شد.' + (body.points_mode !== undefined || body.invoice_points !== undefined || body.visit_points !== undefined || body.currency_unit !== undefined || body.points_per_currency !== undefined ? ` سیاست امتیاز: ${body.points_mode ?? c.get('settings').points_mode}؛ ثابت فاکتور: ${body.invoice_points ?? c.get('settings').invoice_points}؛ روزانه: ${body.visit_points ?? c.get('settings').visit_points}؛ هر ${body.currency_unit ?? c.get('settings').currency_unit} تومان: ${body.points_per_currency ?? c.get('settings').points_per_currency} امتیاز.` : ''),
+    });
+
+    return ok(c, { saved: true });
+  } catch (error) {
+    console.error('settings update failed:', error);
+    return fail(c, 'خطا در ذخیره تنظیمات.', 500, 'DB_ERROR');
+  }
+});
+
+app.post('/api/admin/jobs/:job', requireApiRole('admin'), async (c) => {
+  const job = c.req.param('job');
+  if (!isJobName(job)) {
+    return fail(c, 'جاب مورد نظر وجود ندارد.', 404, 'UNKNOWN_JOB');
+  }
+
+  const settings = await loadSettings(c.env, true);
+  const result = await runJobByName(c.env, settings, job, true);
+  return ok(c, result);
+});
+
+app.post('/api/admin/test-sms', requireApiRole('admin'), async (c) => {
+  const settings = c.get('settings');
+  const user = c.get('user')!;
+  const dbUser = await findUserById(c.env.DB, user.uid);
+  if (!dbUser) return fail(c, 'کاربر یافت نشد.', 404, 'NOT_FOUND');
+
+  const message = renderSms(settings, 'invoice', {
+    name: dbUser.name,
+    amount: formatNumberFa(125000),
+    points: toPersianDigits(125),
+    total_points: toPersianDigits(1250),
+    tier: 'طلایی',
+    discount: '۰',
+    code: 'TEST',
+  });
+
+  const result = await sendSms(c.env, settings, {
+    userId: dbUser.id,
+    phone: dbUser.phone,
+    type: 'admin',
+    message: `[پیامک آزمایشی]\n${message}`,
+  });
+
+  return ok(c, {
+    status: result.status,
+    message:
+      result.status === 'pending' ? 'پیام در صف ارسال جایگزین برای ادمین قرار گرفت؛ هنوز به مشترک ارسال نشده است.' : result.status === 'sent'
+        ? `پیامک آزمایشی برای ${dbUser.phone} ارسال شد${
+            settings.sms_provider === 'console' ? ' (حالت آزمایشی: فقط در لاگ ثبت شد)' : ''
+          }.`
+        : `ارسال ناموفق بود: ${result.error ?? 'خطای نامشخص'}`,
+  });
+});
+
+app.get('/api/admin/sms/credit', requireApiRole('admin'), async (c) => {
+  const settings = c.get('settings');
+  const result = await fetchSmsCredit(c.env, settings);
+
+  if (!result.ok) {
+    return ok(c, { ok: false, message: result.error ?? 'دریافت اعتبار ناموفق بود.' });
+  }
+
+  return ok(c, {
+    ok: true,
+    credit: result.credit ?? 0,
+    message: `اعتبار باقی‌مانده sms.ir: ${toPersianDigits(result.credit ?? 0)} تومان`,
+  });
+});
+
+app.get('/api/admin/weather', requireApiRole('admin'), async (c) => {
+  const settings = c.get('settings');
+  const weather = await fetchWeather(c.env, settings);
+  return ok(c, {
+    ok: weather.ok,
+    message: weather.ok
+      ? `${weather.city}: ${weatherSummary(weather)} — ${weather.advice}`
+      : `دریافت آب‌وهوا ناموفق بود: ${weather.error ?? 'خطای نامشخص'}`,
+    weather,
+  });
+});
+
+/* ---------------------------- مدیریت کارمندان ---------------------------- */
+
+app.get('/api/admin/staff', requireApiRole('admin'), async (c) => {
+  const staff = await listStaff(c.env.DB);
+  return ok(c, { staff });
+});
+
+app.post('/api/admin/staff', requireApiRole('admin'), async (c) => {
+  let body: Record<string, unknown>;
+  try {
+    body = (await c.req.json()) as Record<string, unknown>;
+  } catch {
+    return fail(c, 'داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
+  }
+
+  const name = String(body.name ?? '').replace(/[<>]/g, '').trim().slice(0, 60);
+  const phone = normalizePhone(String(body.phone ?? ''));
+  const role = body.role === 'admin' ? 'admin' : 'staff';
+  const password = String(body.password ?? '');
+
+  if (name.length < 2) return fail(c, 'نام را کامل وارد کنید.', 400, 'INVALID_NAME');
+  if (!/^09\d{9}$/.test(phone)) return fail(c, 'شماره موبایل نامعتبر است.', 400, 'INVALID_PHONE');
+  if (password.length < 8 || password.length > 72) {
+    return fail(c, 'رمز عبور باید بین ۸ تا ۷۲ کاراکتر باشد.', 400, 'INVALID_PASSWORD');
+  }
+
+  const exists = await findUserByPhone(c.env.DB, phone);
+  if (exists) return fail(c, 'این شماره موبایل قبلاً ثبت شده است.', 409, 'PHONE_EXISTS');
+
+  const passwordHash = await hashPassword(password);
+  const referralCode = generateCouponCode('REF');
+
+  const result = await c.env.DB.prepare(
+    `INSERT INTO users (name, phone, role, is_active, password_hash, referral_code)
+     VALUES (?, ?, ?, 1, ?, ?)`
+  )
+    .bind(name, phone, role, passwordHash, referralCode)
+    .run();
+
+  return ok(
+    c,
+    {
+      id: Number(result.meta?.last_row_id ?? 0),
+      name,
+      phone,
+      role,
+    },
+    201
+  );
+});
+
+app.put('/api/admin/staff/:id', requireApiRole('admin'), async (c) => {
+  const id = toPositiveInt(c.req.param('id'), 0);
+  const currentUser = c.get('user')!;
+  if (!id) return fail(c, 'شناسه نامعتبر است.', 400, 'INVALID_ID');
+
+  let body: Record<string, unknown>;
+  try {
+    body = (await c.req.json()) as Record<string, unknown>;
+  } catch {
+    return fail(c, 'داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
+  }
+
+  const target = await findUserById(c.env.DB, id);
+  if (!target || (target.role !== 'staff' && target.role !== 'admin')) {
+    return fail(c, 'کاربر یافت نشد.', 404, 'NOT_FOUND');
+  }
+
+  if (body.is_active !== undefined) {
+    const nextActive = Number(body.is_active) === 1 ? 1 : 0;
+    if (id === currentUser.uid && nextActive === 0) {
+      return fail(c, 'نمی‌توانید حساب خودتان را غیرفعال کنید.', 400, 'SELF_DISABLE');
+    }
+    if (nextActive === 0 && target.role === 'admin') {
+      const adminCount = await c.env.DB.prepare(
+        `SELECT COUNT(*) AS c FROM users WHERE role = 'admin' AND is_active = 1`
+      ).first<{ c: number }>();
+      if ((adminCount?.c ?? 0) <= 1) {
+        return fail(c, 'حداقل یک ادمین فعال باید باقی بماند.', 400, 'LAST_ADMIN');
+      }
+    }
+    await c.env.DB.prepare('UPDATE users SET is_active = ? WHERE id = ?').bind(nextActive, id).run();
+  }
+
+  if (body.role !== undefined) {
+    const nextRole: Role = body.role === 'admin' ? 'admin' : 'staff';
+    if (id === currentUser.uid && nextRole !== 'admin') {
+      return fail(c, 'نمی‌توانید نقش خودتان را تغییر دهید.', 400, 'SELF_ROLE');
+    }
+    await c.env.DB.prepare('UPDATE users SET role = ? WHERE id = ?').bind(nextRole, id).run();
+  }
+
+  return ok(c, { updated: true });
+});
+
+app.post('/api/admin/staff/:id/password', requireApiRole('admin'), async (c) => {
+  const id = toPositiveInt(c.req.param('id'), 0);
+  if (!id) return fail(c, 'شناسه نامعتبر است.', 400, 'INVALID_ID');
+
+  const target = await findUserById(c.env.DB, id);
+  if (!target || (target.role !== 'staff' && target.role !== 'admin')) {
+    return fail(c, 'کاربر یافت نشد.', 404, 'NOT_FOUND');
+  }
+
+  const newPassword = generateReadablePassword(12);
+  const passwordHash = await hashPassword(newPassword);
+
+  // ریست رمز باید نشست فعلی آن کاربر را هم ببندد
+  await c.env.DB.prepare(
+    'UPDATE users SET password_hash = ?, token_version = token_version + 1 WHERE id = ?'
+  )
+    .bind(passwordHash, id)
+    .run();
+
+  await audit(c, 'staff_password_reset', {
+    targetType: 'user',
+    targetId: id,
+    details: `رمز عبور «${target.name}» بازنشانی شد و نشست‌های قبلی او باطل شد.`,
+  });
+
+  return ok(c, { password: newPassword });
+});
+
+app.delete('/api/admin/staff/:id', requireApiRole('admin'), async (c) => {
+  const id = toPositiveInt(c.req.param('id'), 0);
+  const currentUser = c.get('user')!;
+  if (!id) return fail(c, 'شناسه نامعتبر است.', 400, 'INVALID_ID');
+  if (id === currentUser.uid) return fail(c, 'نمی‌توانید حساب خودتان را حذف کنید.', 400, 'SELF_DELETE');
+
+  const target = await findUserById(c.env.DB, id);
+  if (!target || (target.role !== 'staff' && target.role !== 'admin')) {
+    return fail(c, 'کاربر یافت نشد.', 404, 'NOT_FOUND');
+  }
+
+  if (target.role === 'admin') {
+    const adminCount = await c.env.DB.prepare(
+      `SELECT COUNT(*) AS c FROM users WHERE role = 'admin' AND is_active = 1`
+    ).first<{ c: number }>();
+    if ((adminCount?.c ?? 0) <= 1) {
+      return fail(c, 'حداقل یک ادمین فعال باید باقی بماند.', 400, 'LAST_ADMIN');
+    }
+  }
+
+  await c.env.DB.prepare('DELETE FROM users WHERE id = ?').bind(id).run();
+  await audit(c, 'staff_delete', { targetType: 'user', targetId: id, details: `کاربر «${target.name}» حذف شد.` });
+  return ok(c, { deleted: true });
+});
+
+app.post('/api/admin/me/password', requireApiRole('admin', 'staff'), async (c) => {
+  const user = c.get('user')!;
+
+  let body: Record<string, unknown>;
+  try {
+    body = (await c.req.json()) as Record<string, unknown>;
+  } catch {
+    return fail(c, 'داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
+  }
+
+  const current = String(body.current ?? '');
+  const next = String(body.next ?? '');
+
+  if (next.length < 8 || next.length > 72) {
+    return fail(c, 'رمز جدید باید بین ۸ تا ۷۲ کاراکتر باشد.', 400, 'INVALID_PASSWORD');
+  }
+
+  const dbUser = await findUserById(c.env.DB, user.uid);
+  if (!dbUser || !dbUser.password_hash) {
+    return fail(c, 'کاربر یافت نشد.', 404, 'NOT_FOUND');
+  }
+
+  const valid = await verifyPassword(current, dbUser.password_hash);
+  if (!valid) return fail(c, 'رمز فعلی اشتباه است.', 401, 'INVALID_PASSWORD');
+
+  if (next === current) {
+    return fail(c, 'رمز جدید باید با رمز فعلی متفاوت باشد.', 400, 'SAME_PASSWORD');
+  }
+
+  const passwordHash = await hashPassword(next);
+
+  // افزایش token_version همهٔ نشست‌های قبلی (مثلاً کوکی دزدیده‌شده) را باطل می‌کند
+  const updated = await c.env.DB.prepare(
+    'UPDATE users SET password_hash = ?, token_version = token_version + 1 WHERE id = ? RETURNING token_version'
+  )
+    .bind(passwordHash, dbUser.id)
+    .first<{ token_version: number }>();
+
+  // نشست جاری با توکن تازه ادامه می‌یابد تا کاربر وسط کار بیرون نیفتد
+  const secret = assertJwtSecret(c.env);
+  if (secret && updated) {
+    const ttl = sessionTtl(c.env);
+    const fresh = await createToken(secret, { ...dbUser, token_version: updated.token_version }, ttl);
+    setSessionCookie(c, fresh, isSecureRequest(c), ttl);
+  }
+
+  await audit(c, 'password_change', {
+    targetType: 'user',
+    targetId: dbUser.id,
+    details: 'رمز عبور خودِ کاربر تغییر کرد؛ همهٔ نشست‌های قبلی باطل شد.',
+  });
+
+  return ok(c, { changed: true, sessionsRevoked: true });
+});
+
+/* ------------------------------ کدهای تخفیف ------------------------------ */
+
+app.post('/api/admin/coupons', requireApiRole('admin'), async (c) => {
+  let body: Record<string, unknown>;
+  try {
+    body = (await c.req.json()) as Record<string, unknown>;
+  } catch {
+    return fail(c, 'داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
+  }
+
+  const kind = body.kind === 'amount' ? 'amount' : 'percent';
+  const value = Math.trunc(Number(body.value));
+  const days = toIntInRange(body.days, 1, 365, 30);
+  const maxUses = toIntInRange(body.maxUses, 1, 1000, 1);
+  const userId = body.userId ? toPositiveInt(body.userId, 0) : null;
+  const reason = String(body.reason ?? 'manual').slice(0, 30);
+
+  if (!Number.isFinite(value) || value <= 0) {
+    return fail(c, 'مقدار تخفیف نامعتبر است.', 400, 'INVALID_VALUE');
+  }
+  if (kind === 'percent' && value > 100) {
+    return fail(c, 'درصد تخفیف نمی‌تواند بیش از ۱۰۰ باشد.', 400, 'INVALID_VALUE');
+  }
+  if (kind === 'amount' && value > 1_000_000_000) {
+    return fail(c, 'مبلغ تخفیف بیش از حد مجاز است.', 400, 'INVALID_VALUE');
+  }
+  if (userId) {
+    const target = await findUserById(c.env.DB, userId);
+    if (!target) return fail(c, 'مشتری یافت نشد.', 404, 'NOT_FOUND');
+  }
+
+  const coupon = await createCoupon(c.env.DB, {
+    userId,
+    kind,
+    value,
+    reason,
+    expiresAt: utcStamp(Date.now() + days * 86_400_000),
+    maxUses,
+  });
+
+  if (!coupon) return fail(c, 'خطا در ساخت کد تخفیف.', 500, 'DB_ERROR');
+
+  return ok(c, { id: coupon.id, code: coupon.code, value: coupon.value, kind: coupon.kind }, 201);
+});
+
+app.delete('/api/admin/coupons/:id', requireApiRole('admin'), async (c) => {
+  const id = toPositiveInt(c.req.param('id'), 0);
+  if (!id) return fail(c, 'شناسه نامعتبر است.', 400, 'INVALID_ID');
+
+  await c.env.DB.prepare('UPDATE coupons SET is_active = 0 WHERE id = ?').bind(id).run();
+  return ok(c, { deactivated: true });
+});
+
+/* ------------------------------ سلامت سرویس ------------------------------ */
+
+app.get('/api/health', async (c) => {
+  const row = await c.env.DB.prepare('SELECT COUNT(*) AS c FROM users').first<{ c: number }>();
+  return ok(c, { status: 'ok', database: 'connected', build: APP_BUILD,
+    users: row?.c ?? 0, time: new Date().toISOString() });
+});
+
+/* ==========================================================================
+ *  مدیریت خطا
+ * ========================================================================== */
+
+app.notFound((c) => {
+  if (c.req.path.startsWith('/api/')) {
+    return c.json({ ok: false, error: 'مسیر مورد نظر یافت نشد.' }, 404);
+  }
+  const settings = c.get('settings');
+  return c.html(
+    errorPage(404, 'نشانی وارد شده وجود ندارد. ممکن است لینک اشتباه باشد.', settings?.cafe_name ?? 'باشگاه مشتریان'),
+    404
+  );
+});
+
+app.onError((error, c) => {
+  const requestId = crypto.randomUUID();
+  const schema = isSchemaError(error);
+  if (schema && c.env.DB) invalidateSchemaCache(c.env.DB);
+  console.error('APP_REQUEST_FAILED', { requestId, path: c.req.path, method: c.req.method, error });
+  c.header('X-Request-ID', requestId);
+  c.header('Cache-Control', 'no-store');
+  const conflict = c.req.path === '/api/admin/system/schema' && /UNIQUE constraint failed/i.test(String(error));
+  const status = schema ? 503 : conflict ? 409 : 500;
+  const message = conflict ? 'وجود دادهٔ تکراری مانع ساخت ایندکس امن شد. هیچ رکوردی حذف نشده؛ سوابق باید توسط مدیر بررسی شوند.' : schema
+    ? 'ساختار دیتابیس با نسخهٔ برنامه هم‌تراز نیست. مدیر باید از بخش بررسی و ارتقای دیتابیس اقدام کند.'
+    : 'پردازش درخواست در سرور متوقف شد. شناسهٔ پیگیری را برای بررسی لاگ نگه دارید.';
+  if (c.req.path.startsWith('/api/')) return c.json({ ok: false, error: message,
+    code: schema ? 'SCHEMA_UPGRADE_REQUIRED' : conflict ? 'SCHEMA_DATA_CONFLICT' : 'INTERNAL_ERROR', requestId }, status);
+  return c.html(errorPage(status, message, c.get('settings')?.cafe_name ?? 'باشگاه مشتریان', {
+    requestId, recovery: c.get('user')?.role === 'admin',
+  }), status);
+});
+
+/* ==========================================================================
+ *  ابزارهای محلی
+ * ========================================================================== */
+
+type InvoiceRowWithCustomer = InvoiceRow & {
+  customer_name: string;
+  customer_phone: string;
+  registered_name: string | null;
+};
+
+function generateReadablePassword(length: number): string {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+  const bytes = new Uint8Array(Math.max(8, Math.min(32, length)));
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes)
+    .map((b) => alphabet[b % alphabet.length])
+    .join('');
+}
+
+/* ==========================================================================
+ *  جاب‌های Cron
+ * ========================================================================== */
+
+async function scheduled(
+  controller: ScheduledController,
+  env: Bindings,
+  ctx: ExecutionContext
+): Promise<void> {
+  if (!(await schemaStatus(env.DB)).ready) { console.warn('CRON_PAUSED_SCHEMA_UPGRADE_REQUIRED'); return; }
+  if (controller.cron === '* * * * *') {
+    const hourBoundary = new Date(controller.scheduledTime).getUTCMinutes() === 0;
+    ctx.waitUntil((hourBoundary ? processFallbackQueue(env, true) : drainFallbackQueue(env)).catch(() => console.error('fallback cron failed')));
+    if (!hourBoundary) return;
+  }
+  const settings = await loadSettings(env, true);
+  console.log(`[cron] triggered: ${controller.cron}`);
+
+  ctx.waitUntil(
+    (async () => {
+      try {
+        const results = await dispatchCron(env, settings, controller.cron === '* * * * *' ? '0 * * * *' : controller.cron);
+        for (const result of results) {
+          console.log(`[cron] ${result.job} ok=${result.ok} sent=${result.sent} :: ${result.message}`);
+        }
+      } catch (error) {
+        console.error('[cron] failed:', error);
+      }
+    })()
+  );
+}
+
+/* ==========================================================================
+ *  خروجی Worker
+ * ========================================================================== */
+
+export default {
+  async fetch(request, env, ctx) {
+    const response = await app.fetch(request, env, ctx);
+    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method) || (request.method === 'GET' && new URL(request.url).pathname === '/api/admin/fallback/history' && response.status === 200)) {
+      ctx.waitUntil((async () => { if ((await schemaStatus(env.DB)).ready) await processFallbackQueue(env); })().catch(() => console.error('fallback dispatcher failed')));
+    }
+    return response;
+  },
+  scheduled,
+} satisfies ExportedHandler<Bindings>;

@@ -1,0 +1,13 @@
+node_modules/
+.wrangler/
+.dev.vars
+dist/
+.DS_Store
+*.log
+single-file/
+
+backup-*.sql
+
+.cache/
+
+cafe-club-private-upgrade-backup*.json
