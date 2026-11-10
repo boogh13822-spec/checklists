@@ -650,6 +650,7 @@ const NAV_ITEMS = {
     { href: '/admin/reports', label: 'گزارش‌ها', icon: 'chart', key: 'reports' },
     { href: '/admin/sms', label: 'پیامک‌ها', icon: 'chat', key: 'sms' },
     { href: '/admin/logs', label: 'اقدامات مدیران', icon: 'clock', key: 'logs' },
+    { href: '/admin/system', label: 'بررسی دیتابیس', icon: 'shield', key: 'system' },
   ],
   staff: [
     { href: '/staff', label: 'ثبت فاکتور', icon: 'receipt', key: 'invoice' },
@@ -947,14 +948,19 @@ export function jsonForScript(value: unknown): string {
 }
 
 /** کارت خطا/۴۰۴ */
-export function errorPage(status: number, message: string, cafeName: string): string {
+export function errorPage(status: number, message: string, cafeName: string, options: { requestId?: string; recovery?: boolean } = {}): string {
+  const heading = status === 404 ? 'صفحه‌ای که دنبالش بودید پیدا نشد'
+    : status === 503 ? 'سرویس نیاز به بررسی دارد'
+    : status === 401 ? 'ورود معتبر لازم است' : 'خطای پردازش درخواست';
   return publicShell({
     title: `خطای ${status}`,
     cafeName,
     body: `<div class="max-w-xl mx-auto px-4 py-24 text-center">
       <div class="text-7xl font-black gold-text mb-4">${status}</div>
-      <h1 class="text-xl font-bold mb-2">صفحه‌ای که دنبالش بودید پیدا نشد</h1>
+      <h1 class="text-xl font-bold mb-2">${heading}</h1>
       <p class="text-sm text-cream/50 leading-7 mb-8">${escapeHtml(message)}</p>
+      ${options.requestId ? `<p class="text-xs mb-6" dir="ltr">شناسهٔ پیگیری: ${escapeHtml(options.requestId)}</p>` : ''}
+      ${options.recovery ? '<a href="/admin/system" class="btn btn-primary mb-4">بررسی و ارتقای دیتابیس</a>' : ''}
       <div class="flex items-center justify-center gap-3">
         <a href="/" class="btn btn-primary">${icon('home', 'w-4 h-4')} بازگشت به خانه</a>
         <a href="/login" class="btn btn-ghost">ورود کارمندان</a>

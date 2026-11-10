@@ -1388,10 +1388,21 @@ export function adminInvoicesPage(input: {
     var correctModal = $('#correct-modal');
     var correctInvoice = null;
 
+    function correctNumber(value) {
+      var text = String(value == null ? '' : value)
+        .replace(/[۰-۹]/g, function(d){ return String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)); })
+        .replace(/[٠-٩]/g, function(d){ return String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)); })
+        .replace(/[\\s,٬]/g, '');
+      if (!text) return 0;
+      if (!/^[0-9]+$/.test(text)) return NaN;
+      var n = Number(text);
+      return Number.isSafeInteger(n) ? n : NaN;
+    }
+
     function moneyInput(el) {
       el.addEventListener('input', function () {
-        var digits = this.value.replace(/[^0-9]/g, '');
-        this.value = digits ? moneyFa(Number(digits)) : '';
+        var n = correctNumber(this.value);
+        if (Number.isFinite(n)) this.value = this.value.trim() ? moneyFa(n) : '';
         recalcCorrect();
       });
     }
@@ -1404,8 +1415,8 @@ export function adminInvoicesPage(input: {
       return correctRows().map(function (row) {
         return {
           name: row.querySelector('[data-f="name"]').value.trim(),
-          qty: Number(row.querySelector('[data-f="qty"]').value.replace(/[^0-9]/g, '')) || 0,
-          price: Number(row.querySelector('[data-f="price"]').value.replace(/[^0-9]/g, '')) || 0
+          qty: correctNumber(row.querySelector('[data-f="qty"]').value),
+          price: correctNumber(row.querySelector('[data-f="price"]').value)
         };
       });
     }
@@ -1413,18 +1424,18 @@ export function adminInvoicesPage(input: {
     function recalcCorrect() {
       var items = readCorrectItems();
       var subtotal = items.reduce(function (sum, item) { return sum + item.price * item.qty; }, 0);
-      var discount = Number($('#correct-discount').value.replace(/[^0-9]/g, '')) || 0;
+      var discount = correctNumber($('#correct-discount').value);
       var total = Math.max(0, subtotal - discount);
 
-      $('#correct-subtotal').textContent = moneyFa(subtotal) + ' تومان';
-      $('#correct-total').textContent = moneyFa(total) + ' تومان';
+      $('#correct-subtotal').textContent = Number.isFinite(subtotal) ? moneyFa(subtotal) + ' تومان' : 'عدد نامعتبر';
+      $('#correct-total').textContent = Number.isFinite(total) ? moneyFa(total) + ' تومان' : 'عدد نامعتبر';
 
       var paid = ['#correct-cash', '#correct-card', '#correct-online'].reduce(function (sum, sel) {
-        return sum + (Number($(sel).value.replace(/[^0-9]/g, '')) || 0);
+        return sum + (correctNumber($(sel).value));
       }, 0);
       var gap = paid - total;
       var gapEl = $('#correct-gap');
-      gapEl.textContent = (gap > 0 ? '+' : '') + moneyFa(gap) + ' تومان';
+      gapEl.textContent = Number.isFinite(gap) ? (gap > 0 ? '+' : '') + moneyFa(gap) + ' تومان' : 'عدد نامعتبر';
       gapEl.className = 'font-bold ' + (gap === 0 ? 'text-emerald-300' : gap > 0 ? 'text-sky-300' : 'text-rose-300');
     }
 
@@ -1434,7 +1445,7 @@ export function adminInvoicesPage(input: {
       row.className = 'grid grid-cols-[1fr_64px_96px_28px] gap-1.5 items-center';
       row.innerHTML =
         '<input data-f="name" class="field !py-1.5 text-[11.5px]" placeholder="نام آیتم" maxlength="60" value="' + escapeHtml(item.name || '') + '" />' +
-        '<input data-f="qty" class="field !py-1.5 text-[11.5px] text-center" inputmode="numeric" dir="ltr" placeholder="۱" value="' + (item.qty || 1) + '" />' +
+        '<input data-f="qty" class="field !py-1.5 text-[11.5px] text-center" inputmode="numeric" dir="ltr" placeholder="۱" value="' + escapeHtml(String(item.qty || 1)) + '" />' +
         '<input data-f="price" class="field !py-1.5 text-[11.5px] text-left" inputmode="numeric" dir="ltr" placeholder="قیمت" value="' + (item.price ? moneyFa(item.price) : '') + '" />' +
         '<button type="button" class="btn btn-ghost btn-sm !px-1.5" data-remove-row title="حذف">' + '✕' + '</button>';
 
@@ -1446,8 +1457,8 @@ export function adminInvoicesPage(input: {
         input.addEventListener('input', recalcCorrect);
       });
       row.querySelector('[data-f="price"]').addEventListener('blur', function () {
-        var digits = this.value.replace(/[^0-9]/g, '');
-        this.value = digits ? moneyFa(Number(digits)) : '';
+        var n = correctNumber(this.value);
+        if (Number.isFinite(n)) this.value = this.value.trim() ? moneyFa(n) : '';
         recalcCorrect();
       });
       $('#correct-rows').appendChild(row);
@@ -1471,7 +1482,7 @@ export function adminInvoicesPage(input: {
       var items = [];
       try { items = JSON.parse(correctInvoice.items || '[]'); } catch (e) { items = []; }
       if (!Array.isArray(items) || items.length === 0) {
-        items = [{ name: 'فاکتور دستی', qty: 1, price: correctInvoice.amount }];
+        items = [{ name: 'فاکتور دستی', qty: 1, price: Number(correctInvoice.amount) + Number(correctInvoice.discount || 0) }];
       }
       items.forEach(function (item) {
         addCorrectRow({ name: item.name, qty: item.qty, price: item.price });
@@ -1491,7 +1502,7 @@ export function adminInvoicesPage(input: {
     });
 
     $('#correct-add-row').addEventListener('click', function () { addCorrectRow({ name: '', qty: 1, price: 0 }); });
-    ['#correct-discount', '#correct-cash', '#correct-card', '#correct-online'].forEach(moneyInput);
+    ['#correct-discount', '#correct-cash', '#correct-card', '#correct-online'].forEach(function(selector){ moneyInput($(selector)); });
 
     function closeCorrect() {
       correctModal.classList.add('hidden');
@@ -1503,7 +1514,7 @@ export function adminInvoicesPage(input: {
 
     $('#correct-confirm').addEventListener('click', async function () {
       if (!correctInvoice) return;
-      var items = readCorrectItems().filter(function (item) { return item.name && item.qty > 0; });
+      var items = readCorrectItems();
       var reason = $('#correct-reason').value.trim();
       var errorEl = $('#correct-error');
 
@@ -1512,16 +1523,17 @@ export function adminInvoicesPage(input: {
         errorEl.classList.remove('hidden');
       };
 
-      if (items.length === 0) return fail('حداقل یک آیتم با تعداد معتبر لازم است.');
+      if (!items.length || items.length > 50 || items.some(function(item){ return !item.name || item.name.length > 60 || !Number.isSafeInteger(item.qty) || item.qty < 1 || item.qty > 99 || !Number.isSafeInteger(item.price) || item.price < 0 || item.price > 1000000000; })) return fail('نام، تعداد یا قیمت اقلام نامعتبر است؛ ردیف نامعتبر را اصلاح یا حذف کنید.');
       if (reason.length < 3) return fail('دلیل اصلاح را بنویسید (حداقل ۳ نویسه).');
 
       var total = items.reduce(function (sum, item) { return sum + item.price * item.qty; }, 0) -
-        (Number($('#correct-discount').value.replace(/[^0-9]/g, '')) || 0);
-      if (total <= 0) return fail('مبلغ نهایی باید بیشتر از صفر باشد.');
+        (correctNumber($('#correct-discount').value));
+      if (!Number.isSafeInteger(total) || total <= 0) return fail('مبلغ نهایی یا تخفیف نامعتبر است.');
 
-      var cash = Number($('#correct-cash').value.replace(/[^0-9]/g, '')) || 0;
-      var card = Number($('#correct-card').value.replace(/[^0-9]/g, '')) || 0;
-      var online = Number($('#correct-online').value.replace(/[^0-9]/g, '')) || 0;
+      var cash = correctNumber($('#correct-cash').value);
+      var card = correctNumber($('#correct-card').value);
+      var online = correctNumber($('#correct-online').value);
+      if ([cash, card, online].some(function(n){ return !Number.isSafeInteger(n) || n < 0; })) return fail('مبلغ پرداختی نامعتبر است.');
       if (cash + card + online < total) return fail('مبلغ پرداختی کمتر از مبلغ فاکتور است.');
 
       errorEl.classList.add('hidden');
@@ -1532,7 +1544,7 @@ export function adminInvoicesPage(input: {
           method: 'POST',
           body: {
             items: items,
-            discount: Number($('#correct-discount').value.replace(/[^0-9]/g, '')) || 0,
+            discount: correctNumber($('#correct-discount').value),
             payment: { cash: cash, card: card, online: online },
             reason: reason
           }

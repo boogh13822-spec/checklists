@@ -115,6 +115,11 @@ apply "CREATE INDEX IF NOT EXISTS idx_admin_logs_action ON admin_logs(action)" \
   "ایندکس نوع گزارش اقدامات"
 
 # --- ۲) ستون‌های جدید users ---------------------------------------------------
+apply "ALTER TABLE users ADD COLUMN referral_code TEXT" \
+  "ستون referral_code (سازگاری نسخه‌های قدیمی)"
+apply "CREATE UNIQUE INDEX IF NOT EXISTS ux_users_referral_code ON users(referral_code) WHERE referral_code IS NOT NULL" \
+  "یکتایی کد معرف بدون دستکاری سوابق تکراری"
+
 apply "ALTER TABLE users ADD COLUMN lifetime_points INTEGER NOT NULL DEFAULT 0" \
   "ستون lifetime_points (مبنای سطح)"
 

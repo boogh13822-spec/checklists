@@ -9,6 +9,8 @@
 import { drainFallbackQueue, retryFallbackJob, enqueueFallback, fallbackHistory, loadFallbackConfig, processFallbackQueue, safeFallbackConfig, saveFallbackConfig, smsPanelActive } from './lib/fallback';
 import { adminFallbackPage } from './ui/fallback';
 import { Hono } from 'hono';
+import { maintenancePage } from './ui/maintenance';
+import { schemaStatus, applySchemaSteps, upgradeBackup, backupReceipt, verifyBackupReceipt, invalidateSchemaCache, isSchemaError, SCHEMA_VERSION } from './lib/schema';
 import { bodyLimit } from 'hono/body-limit';
 import { notifyAdminAction, notifyAdminInvoice } from './lib/admin-notifications';
 
@@ -133,7 +135,7 @@ import { adminLogsCsv, adminLogsPage, adminReportsPage, reportsCsv } from './ui/
  * ========================================================================== */
 
 const app = new Hono<AppEnv>();
-const APP_BUILD = 'auth-native-v3';
+const APP_BUILD = SCHEMA_VERSION;
 
 /**
  * منطقه‌ی زمانی از متغیر محیطی TZ_NAME (پیش‌فرض Asia/Tehran).
@@ -315,6 +317,7 @@ app.use('/login', sameOriginWrite);
 const loginBodyLimit = bodyLimit({ maxSize: 16 * 1024, onError: (c) => fail(c, 'حجم فرم ورود بیش از حد مجاز است.', 413, 'BODY_TOO_LARGE') });
 app.use('/login', loginBodyLimit);
 app.use('/api/auth/login', loginBodyLimit);
+app.use('/api/admin/system/schema', loginBodyLimit);
 
 /* --------------------------------------------------------------------------
  *  محدودسازی نرخ عمومی API
@@ -332,16 +335,51 @@ app.use('/api/*', async (c, next) => {
   await next();
 });
 
+/** Business writes and dashboards must not run against a partially upgraded DB. */
+app.use('*', async (c, next) => {
+  const path = c.req.path;
+  const recovery = path === '/admin/system' || path === '/api/admin/system/schema' || path === '/admin/export/backup.json';
+  const auth = ['/api/auth/login', '/api/auth/logout', '/api/auth/session', '/api/auth/me', '/me/login'].includes(path);
+  const business = /^(?:\/admin(?:\/|$)|\/staff(?:\/|$)|\/me(?:\/|$)|\/api\/)/.test(path);
+  const publicWrite = ['/api/auth/register','/api/auth/otp/request','/api/auth/otp/verify'].includes(path);
+  if (recovery || auth || path === '/api/health' || !business || (!c.get('user') && !publicWrite)) return next();
+  const status = await schemaStatus(c.env.DB);
+  if (!status.ready) {
+    if (path.startsWith('/api/')) return fail(c, 'ساختار دیتابیس نیاز به ارتقا دارد. مدیر از بخش بررسی دیتابیس اقدام کند.', 503, 'SCHEMA_UPGRADE_REQUIRED');
+    if (c.get('user')?.role === 'admin') return c.redirect('/admin/system', 303);
+    return c.html(errorPage(503, 'ساختار دیتابیس باید توسط مدیر به‌روزرسانی شود. هیچ اطلاعاتی حذف نشده است.', c.get('settings').cafe_name), 503);
+  }
+  await next();
+});
+
+app.get('/admin/system', requirePageRole('admin'), async (c) => {
+  return c.html(maintenancePage(c.get('settings'), await schemaStatus(c.env.DB, true)));
+});
+app.get('/api/admin/system/schema', requireApiRole('admin'), async (c) => {
+  const status = await schemaStatus(c.env.DB, true);
+  return ok(c, { ready: status.ready, remaining: status.pending.length, missing: status.pending.map(p => p.key), blocked: status.blocked });
+});
+app.post('/api/admin/system/schema', requireApiRole('admin'), async (c) => {
+  let body: Record<string, unknown>;
+  try { body = await c.req.json(); } catch { return fail(c, 'درخواست نامعتبر است.', 400, 'BAD_JSON'); }
+  if (!body || body.confirmBackup !== true || !await verifyBackupReceipt(c.env.JWT_SECRET, c.get('user')!.uid, body.receipt)) {
+    return fail(c, 'ابتدا پشتیبان را از همین صفحه دریافت و ذخیره کنید؛ تأیید آن ۱۵ دقیقه معتبر است.', 409, 'BACKUP_REQUIRED');
+  }
+  const before = await schemaStatus(c.env.DB, true);
+  if (before.blocked.length) {
+    return fail(c, 'اطلاعات پایه یا تاریخی مفقود است؛ ارتقای خودکار امن نیست. Binding و نسخهٔ پشتیبان باید بررسی شوند.', 409, 'MANUAL_REVIEW_REQUIRED');
+  }
+  const status = await applySchemaSteps(c.env.DB, c.get('user')!);
+  return ok(c, { ready: status.ready, remaining: status.pending.length });
+});
+
 /* ==========================================================================
  *  صفحات عمومی
  * ========================================================================== */
 
 app.get('/', (c) => {
   const settings = c.get('settings');
-  const user = c.get('user');
-  if (user) {
-    return c.redirect(homeForRole(user.role), 302);
-  }
+  // Keep public entry reachable even if a previous session leads to a broken panel.
   return c.html(landingPage(settings));
 });
 
@@ -354,8 +392,7 @@ app.get('/register', (c) => {
 
 app.get('/login', (c) => {
   const settings = c.get('settings');
-  const user = c.get('user');
-  if (user) return c.redirect(homeForRole(user.role), 302);
+  // A stored session must not force the user away from the recovery/login form.
   const next = (c.req.query('next') ?? '').slice(0, 200);
   const expired = c.req.query('expired') === '1';
   const notice = (c.req.query('e') ?? '').slice(0, 20);
@@ -1146,10 +1183,6 @@ app.get('/api/auth/logout', (c) => {
   return c.redirect('/login', 302);
 });
 
-app.post('/api/auth/logout', (c) => {
-  clearSessionCookie(c, isSecureRequest(c));
-  return ok(c, { loggedOut: true });
-});
 
 /* ==========================================================================
  *  مشتری — ورود با کد یک‌بارمصرف و باشگاه من
@@ -1157,9 +1190,7 @@ app.post('/api/auth/logout', (c) => {
 
 app.get('/me/login', (c) => {
   const settings = c.get('settings');
-  const user = c.get('user');
-  if (user) return c.redirect(homeForRole(user.role), 302);
-
+  // Keep customer sign-in reachable even when the existing panel has an error.
   return c.html(
     customerLoginPage(settings, {
       expired: c.req.query('expired') === '1',
@@ -2089,7 +2120,22 @@ app.post('/api/admin/sms/test', requireApiRole('admin'), async (c) => {
 });
 
 app.get('/admin/export/backup.json', requirePageRole('admin'), async (c) => {
-  // خروجی پشتیبان کامل (بدون هیچ کلید یا رمزی)
+  if (c.req.query('scope') === 'upgrade') {
+    try {
+      const snapshot = await upgradeBackup(c.env.DB);
+      const receipt = await backupReceipt(c.env.JWT_SECRET, c.get('user')!.uid);
+      return new Response(snapshot, { headers: {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Content-Disposition': 'attachment; filename="cafe-club-private-upgrade-backup.json"',
+        'X-Upgrade-Receipt': receipt, 'Cache-Control': 'no-store',
+        'CDN-Cache-Control': 'no-store', 'Cloudflare-CDN-Cache-Control': 'no-store', 'Vary': 'Cookie',
+      } });
+    } catch (error) {
+      console.error('UPGRADE_BACKUP_FAILED', error);
+      return fail(c, 'پشتیبان کامل ساخته نشد؛ ارتقا آغاز نمی‌شود. برای دیتابیس بزرگ یا غیرمعمول از D1 Export/Time Travel استفاده کنید.', 503, 'BACKUP_FAILED');
+    }
+  }
+  // خروجی معمول اطلاعات مشتریان بدون کلیدها؛ با پشتیبان خصوصی ارتقا متفاوت است.
   const [usersRes, invoicesRes, couponsRes, settingsRes, smsRes] = await Promise.all([
     c.env.DB.prepare(
       `SELECT id, name, phone, birth_date, points, lifetime_points, tier, referred_by,
@@ -2694,25 +2740,9 @@ app.delete('/api/admin/coupons/:id', requireApiRole('admin'), async (c) => {
 /* ------------------------------ سلامت سرویس ------------------------------ */
 
 app.get('/api/health', async (c) => {
-  try {
-    const row = await c.env.DB.prepare('SELECT COUNT(*) AS c FROM users').first<{ c: number }>();
-    return ok(c, {
-      status: 'ok',
-      database: 'connected',
-      build: APP_BUILD,
-      users: row?.c ?? 0,
-      time: new Date().toISOString(),
-    });
-  } catch (error) {
-    return c.json(
-      {
-        ok: false,
-        error: 'اتصال به دیتابیس برقرار نیست. آیا schema.sql اجرا شده است؟',
-        detail: error instanceof Error ? error.message : String(error),
-      },
-      500
-    );
-  }
+  const row = await c.env.DB.prepare('SELECT COUNT(*) AS c FROM users').first<{ c: number }>();
+  return ok(c, { status: 'ok', database: 'connected', build: APP_BUILD,
+    users: row?.c ?? 0, time: new Date().toISOString() });
 });
 
 /* ==========================================================================
@@ -2731,23 +2761,22 @@ app.notFound((c) => {
 });
 
 app.onError((error, c) => {
-  console.error('Unhandled error:', error);
-
-  if (c.req.path.startsWith('/api/')) {
-    return c.json(
-      {
-        ok: false,
-        error: 'خطای داخلی سرور. لطفاً دوباره تلاش کنید.',
-      },
-      500
-    );
-  }
-
-  const settings = c.get('settings');
-  return c.html(
-    errorPage(500, 'خطای غیرمنتظره‌ای رخ داد. لطفاً چند لحظه بعد دوباره تلاش کنید.', settings?.cafe_name ?? 'باشگاه مشتریان'),
-    500
-  );
+  const requestId = crypto.randomUUID();
+  const schema = isSchemaError(error);
+  if (schema && c.env.DB) invalidateSchemaCache(c.env.DB);
+  console.error('APP_REQUEST_FAILED', { requestId, path: c.req.path, method: c.req.method, error });
+  c.header('X-Request-ID', requestId);
+  c.header('Cache-Control', 'no-store');
+  const conflict = c.req.path === '/api/admin/system/schema' && /UNIQUE constraint failed/i.test(String(error));
+  const status = schema ? 503 : conflict ? 409 : 500;
+  const message = conflict ? 'وجود دادهٔ تکراری مانع ساخت ایندکس امن شد. هیچ رکوردی حذف نشده؛ سوابق باید توسط مدیر بررسی شوند.' : schema
+    ? 'ساختار دیتابیس با نسخهٔ برنامه هم‌تراز نیست. مدیر باید از بخش بررسی و ارتقای دیتابیس اقدام کند.'
+    : 'پردازش درخواست در سرور متوقف شد. شناسهٔ پیگیری را برای بررسی لاگ نگه دارید.';
+  if (c.req.path.startsWith('/api/')) return c.json({ ok: false, error: message,
+    code: schema ? 'SCHEMA_UPGRADE_REQUIRED' : conflict ? 'SCHEMA_DATA_CONFLICT' : 'INTERNAL_ERROR', requestId }, status);
+  return c.html(errorPage(status, message, c.get('settings')?.cafe_name ?? 'باشگاه مشتریان', {
+    requestId, recovery: c.get('user')?.role === 'admin',
+  }), status);
 });
 
 /* ==========================================================================
@@ -2778,6 +2807,7 @@ async function scheduled(
   env: Bindings,
   ctx: ExecutionContext
 ): Promise<void> {
+  if (!(await schemaStatus(env.DB)).ready) { console.warn('CRON_PAUSED_SCHEMA_UPGRADE_REQUIRED'); return; }
   if (controller.cron === '* * * * *') {
     const hourBoundary = new Date(controller.scheduledTime).getUTCMinutes() === 0;
     ctx.waitUntil((hourBoundary ? processFallbackQueue(env, true) : drainFallbackQueue(env)).catch(() => console.error('fallback cron failed')));
@@ -2808,7 +2838,7 @@ export default {
   async fetch(request, env, ctx) {
     const response = await app.fetch(request, env, ctx);
     if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method) || (request.method === 'GET' && new URL(request.url).pathname === '/api/admin/fallback/history' && response.status === 200)) {
-      ctx.waitUntil(processFallbackQueue(env).catch(() => console.error('fallback dispatcher failed')));
+      ctx.waitUntil((async () => { if ((await schemaStatus(env.DB)).ready) await processFallbackQueue(env); })().catch(() => console.error('fallback dispatcher failed')));
     }
     return response;
   },

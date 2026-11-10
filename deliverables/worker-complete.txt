@@ -3715,7 +3715,8 @@ var NAV_ITEMS = {
     { href: "/admin/coupons", label: "\u06A9\u062F\u0647\u0627\u06CC \u062A\u062E\u0641\u06CC\u0641", icon: "gift", key: "coupons" },
     { href: "/admin/reports", label: "\u06AF\u0632\u0627\u0631\u0634\u200C\u0647\u0627", icon: "chart", key: "reports" },
     { href: "/admin/sms", label: "\u067E\u06CC\u0627\u0645\u06A9\u200C\u0647\u0627", icon: "chat", key: "sms" },
-    { href: "/admin/logs", label: "\u0627\u0642\u062F\u0627\u0645\u0627\u062A \u0645\u062F\u06CC\u0631\u0627\u0646", icon: "clock", key: "logs" }
+    { href: "/admin/logs", label: "\u0627\u0642\u062F\u0627\u0645\u0627\u062A \u0645\u062F\u06CC\u0631\u0627\u0646", icon: "clock", key: "logs" },
+    { href: "/admin/system", label: "\u0628\u0631\u0631\u0633\u06CC \u062F\u06CC\u062A\u0627\u0628\u06CC\u0633", icon: "shield", key: "system" }
   ],
   staff: [
     { href: "/staff", label: "\u062B\u0628\u062A \u0641\u0627\u06A9\u062A\u0648\u0631", icon: "receipt", key: "invoice" },
@@ -3951,14 +3952,17 @@ function emptyState(options) {
 function jsonForScript(value) {
   return JSON.stringify(value ?? null).replace(/</g, "\\u003c").replace(/>/g, "\\u003e").replace(/&/g, "\\u0026").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
 }
-function errorPage(status, message, cafeName) {
+function errorPage(status, message, cafeName, options = {}) {
+  const heading = status === 404 ? "\u0635\u0641\u062D\u0647\u200C\u0627\u06CC \u06A9\u0647 \u062F\u0646\u0628\u0627\u0644\u0634 \u0628\u0648\u062F\u06CC\u062F \u067E\u06CC\u062F\u0627 \u0646\u0634\u062F" : status === 503 ? "\u0633\u0631\u0648\u06CC\u0633 \u0646\u06CC\u0627\u0632 \u0628\u0647 \u0628\u0631\u0631\u0633\u06CC \u062F\u0627\u0631\u062F" : status === 401 ? "\u0648\u0631\u0648\u062F \u0645\u0639\u062A\u0628\u0631 \u0644\u0627\u0632\u0645 \u0627\u0633\u062A" : "\u062E\u0637\u0627\u06CC \u067E\u0631\u062F\u0627\u0632\u0634 \u062F\u0631\u062E\u0648\u0627\u0633\u062A";
   return publicShell({
     title: `\u062E\u0637\u0627\u06CC ${status}`,
     cafeName,
     body: `<div class="max-w-xl mx-auto px-4 py-24 text-center">
       <div class="text-7xl font-black gold-text mb-4">${status}</div>
-      <h1 class="text-xl font-bold mb-2">\u0635\u0641\u062D\u0647\u200C\u0627\u06CC \u06A9\u0647 \u062F\u0646\u0628\u0627\u0644\u0634 \u0628\u0648\u062F\u06CC\u062F \u067E\u06CC\u062F\u0627 \u0646\u0634\u062F</h1>
+      <h1 class="text-xl font-bold mb-2">${heading}</h1>
       <p class="text-sm text-cream/50 leading-7 mb-8">${escapeHtml(message)}</p>
+      ${options.requestId ? `<p class="text-xs mb-6" dir="ltr">\u0634\u0646\u0627\u0633\u0647\u0654 \u067E\u06CC\u06AF\u06CC\u0631\u06CC: ${escapeHtml(options.requestId)}</p>` : ""}
+      ${options.recovery ? '<a href="/admin/system" class="btn btn-primary mb-4">\u0628\u0631\u0631\u0633\u06CC \u0648 \u0627\u0631\u062A\u0642\u0627\u06CC \u062F\u06CC\u062A\u0627\u0628\u06CC\u0633</a>' : ""}
       <div class="flex items-center justify-center gap-3">
         <a href="/" class="btn btn-primary">${icon("home", "w-4 h-4")} \u0628\u0627\u0632\u06AF\u0634\u062A \u0628\u0647 \u062E\u0627\u0646\u0647</a>
         <a href="/login" class="btn btn-ghost">\u0648\u0631\u0648\u062F \u06A9\u0627\u0631\u0645\u0646\u062F\u0627\u0646</a>
@@ -5942,126 +5946,68 @@ var Hono3 = class extends Hono {
   }
 };
 
-// node_modules/hono/dist/middleware/body-limit/index.js
-var ERROR_MESSAGE = "Payload Too Large";
-var bodyLimit = (options) => {
-  const onError = options.onError || (() => {
-    const res = new Response(ERROR_MESSAGE, { status: 413 });
-    throw new HTTPException(413, { res });
-  });
-  const maxSize = options.maxSize;
-  return async function bodyLimit2(c, next) {
-    if (!c.req.raw.body) return next();
-    const hasTransferEncoding = c.req.raw.headers.has("transfer-encoding");
-    if (c.req.raw.headers.has("content-length") && !hasTransferEncoding) return parseInt(c.req.raw.headers.get("content-length") || "0", 10) > maxSize ? onError(c) : next();
-    let size = 0;
-    const chunks = [];
-    const rawReader = c.req.raw.body.getReader();
-    for (; ; ) {
-      const { done, value } = await rawReader.read();
-      if (done) break;
-      size += value.length;
-      if (size > maxSize) return onError(c);
-      chunks.push(value);
-    }
-    const requestInit = {
-      body: new ReadableStream({ start(controller) {
-        for (const chunk of chunks) controller.enqueue(chunk);
-        controller.close();
-      } }),
-      duplex: "half"
-    };
-    c.req.raw = new Request(c.req.raw, requestInit);
-    return next();
-  };
-};
-
-// src/lib/admin-notifications.ts
-init_db();
-init_fallback();
+// src/ui/maintenance.ts
 init_utils();
-var ACTIONS = {
-  invoice_void: "\u0627\u0628\u0637\u0627\u0644 \u0641\u0627\u06A9\u062A\u0648\u0631",
-  invoice_correct: "\u0627\u0635\u0644\u0627\u062D \u0641\u0627\u06A9\u062A\u0648\u0631",
-  points_adjust: "\u062A\u063A\u06CC\u06CC\u0631 \u062F\u0633\u062A\u06CC \u0627\u0645\u062A\u06CC\u0627\u0632",
-  shift_open: "\u0628\u0627\u0632 \u0634\u062F\u0646 \u0635\u0646\u062F\u0648\u0642",
-  shift_close: "\u0628\u0633\u062A\u0646 \u0635\u0646\u062F\u0648\u0642",
-  cash_in: "\u0648\u0631\u0648\u062F \u0646\u0642\u062F \u0628\u0647 \u0635\u0646\u062F\u0648\u0642",
-  cash_out: "\u062E\u0631\u0648\u062C \u0646\u0642\u062F \u0627\u0632 \u0635\u0646\u062F\u0648\u0642",
-  settings_update: "\u062A\u063A\u06CC\u06CC\u0631 \u062A\u0646\u0638\u06CC\u0645\u0627\u062A \u0648 \u0633\u06CC\u0627\u0633\u062A \u0628\u0627\u0634\u06AF\u0627\u0647",
-  customer_update: "\u062A\u063A\u06CC\u06CC\u0631 \u0648\u0636\u0639\u06CC\u062A \u0645\u0634\u062A\u0631\u06CC",
-  customer_delete: "\u062D\u0630\u0641 \u0645\u0634\u062A\u0631\u06CC",
-  staff_password_reset: "\u0628\u0627\u0632\u0646\u0634\u0627\u0646\u06CC \u0631\u0645\u0632 \u06A9\u0627\u0631\u0645\u0646\u062F",
-  staff_delete: "\u062D\u0630\u0641 \u06A9\u0627\u0631\u0645\u0646\u062F",
-  password_change: "\u062A\u063A\u06CC\u06CC\u0631 \u0631\u0645\u0632 \u0639\u0628\u0648\u0631"
-};
-async function reportFailure(env, targetType, targetId, error) {
-  console.error("ADMIN_REPORT_QUEUE_FAILED", targetType, targetId);
-  await logAdminAction(env.DB, {
-    adminId: null,
-    adminName: "\u0633\u06CC\u0633\u062A\u0645",
-    action: "admin_report_failed",
-    targetType,
-    targetId,
-    details: error instanceof Error && error.message === "QUEUE_FULL" ? "\u06AF\u0632\u0627\u0631\u0634 \u0645\u062F\u06CC\u0631\u06CC\u062A \u062F\u0631 \u0635\u0641 \u062B\u0628\u062A \u0646\u0634\u062F: \u0638\u0631\u0641\u06CC\u062A \u0635\u0641 \u067E\u0631 \u0627\u0633\u062A. \u0639\u0645\u0644\u06CC\u0627\u062A \u0627\u0635\u0644\u06CC \u0627\u0646\u062C\u0627\u0645 \u0634\u062F\u0647 \u0627\u0633\u062A." : "\u06AF\u0632\u0627\u0631\u0634 \u0645\u062F\u06CC\u0631\u06CC\u062A \u062F\u0631 \u0635\u0641 \u062B\u0628\u062A \u0646\u0634\u062F: \u062A\u0646\u0638\u06CC\u0645\u0627\u062A\u060C \u06A9\u0644\u06CC\u062F \u0631\u0645\u0632\u0646\u06AF\u0627\u0631\u06CC \u06CC\u0627 \u067E\u0627\u06CC\u06AF\u0627\u0647 \u062F\u0627\u062F\u0647 \u0628\u0631\u0631\u0633\u06CC \u0634\u0648\u062F. \u0639\u0645\u0644\u06CC\u0627\u062A \u0627\u0635\u0644\u06CC \u0627\u0646\u062C\u0627\u0645 \u0634\u062F\u0647 \u0627\u0633\u062A."
-  });
-}
-async function notifyAdminAction(env, log) {
-  const title = ACTIONS[log.action];
-  if (!title) return;
-  try {
-    await enqueueFallback(env, {
-      phone: "",
-      userId: null,
-      type: log.action.startsWith("invoice_") ? "report_invoice" : "report_action",
-      title: `\u06AF\u0632\u0627\u0631\u0634 \u0645\u062F\u06CC\u0631\u06CC\u062A | ${title}`,
-      eventKey: `audit:${log.id}`,
-      message: [
-        `\u0627\u0646\u062C\u0627\u0645\u200C\u062F\u0647\u0646\u062F\u0647: ${log.actor.slice(0, 80)}`,
-        log.targetId != null ? `\u0634\u0646\u0627\u0633\u0647 \u0645\u0631\u062A\u0628\u0637: ${log.targetId}` : "",
-        (log.details ?? "").slice(0, 700),
-        `\u0634\u0646\u0627\u0633\u0647 \u06AF\u0632\u0627\u0631\u0634: ${log.id}`
-      ].filter(Boolean).join("\n")
-    }, "event");
-  } catch (error) {
-    await reportFailure(env, "audit", log.id, error);
-  }
-}
-async function notifyAdminInvoice(env, invoiceId) {
-  try {
-    const config = await loadFallbackConfig(env);
-    if (!config.notifyEnabled || config.notifyInvoices === false) return;
-    const row = await env.DB.prepare(`SELECT i.*,u.name AS customer_name,u.phone,s.name AS staff_name
-      FROM invoices i JOIN users u ON u.id=i.user_id LEFT JOIN users s ON s.id=i.registered_by
-      WHERE i.id=? AND i.voided_at IS NULL`).bind(invoiceId).first();
-    if (!row) return;
-    const parsed = safeJsonParse(row.items, []);
-    const items = Array.isArray(parsed) ? parsed.filter((i) => i && typeof i.name === "string") : [];
-    const lines = (Array.isArray(items) ? items : []).slice(0, 10).map((i) => `\u2022 ${String(i.name).slice(0, 60)} \xD7 ${i.qty} | ${formatNumberFa(i.price * i.qty)} \u062A\u0648\u0645\u0627\u0646`);
-    if (items.length > 10) lines.push(`\u0648 ${formatNumberFa(items.length - 10)} \u0631\u062F\u06CC\u0641 \u062F\u06CC\u06AF\u0631\u061B \u062C\u0632\u0626\u06CC\u0627\u062A \u06A9\u0627\u0645\u0644 \u062F\u0631 \u067E\u0646\u0644.`);
-    const message = [
-      `\u0641\u0627\u06A9\u062A\u0648\u0631 #${row.id} | \u0645\u0634\u062A\u0631\u06CC: ${row.customer_name}`,
-      `\u062B\u0628\u062A\u200C\u06A9\u0646\u0646\u062F\u0647: ${row.staff_name ?? "\u06A9\u0627\u0631\u0628\u0631 \u062D\u0630\u0641\u200C\u0634\u062F\u0647"}`,
-      `\u0632\u0645\u0627\u0646 \u062B\u0628\u062A: ${formatJalaliDateTime(row.created_at)}`,
-      `\u062C\u0645\u0639 \u0627\u0642\u0644\u0627\u0645: ${formatNumberFa(row.subtotal)} \u062A\u0648\u0645\u0627\u0646`,
-      `\u062A\u062E\u0641\u06CC\u0641: ${formatNumberFa(row.discount)} \u062A\u0648\u0645\u0627\u0646`,
-      `\u0645\u0628\u0644\u063A \u0646\u0647\u0627\u06CC\u06CC: ${formatNumberFa(row.amount)} \u062A\u0648\u0645\u0627\u0646`,
-      row.payment_method ? `\u067E\u0631\u062F\u0627\u062E\u062A \u0645\u0624\u062B\u0631: \u0646\u0642\u062F ${formatNumberFa(row.paid_cash)} | \u06A9\u0627\u0631\u062A ${formatNumberFa(row.paid_card)} | \u0622\u0646\u0644\u0627\u06CC\u0646 ${formatNumberFa(row.paid_online)} \u062A\u0648\u0645\u0627\u0646` : "\u0627\u0637\u0644\u0627\u0639\u0627\u062A \u0631\u0648\u0634 \u067E\u0631\u062F\u0627\u062E\u062A \u062B\u0628\u062A \u0646\u0634\u062F\u0647 \u0627\u0633\u062A.",
-      row.change_amount ? `\u0628\u0627\u0642\u06CC\u0645\u0627\u0646\u062F\u0647 \u0628\u0631\u06AF\u0634\u062A\u06CC: ${formatNumberFa(row.change_amount)} \u062A\u0648\u0645\u0627\u0646 (\u0627\u0632 \u0646\u0642\u062F \u0645\u0624\u062B\u0631 \u06A9\u0633\u0631 \u0634\u062F\u0647)` : "",
-      `\u0627\u0645\u062A\u06CC\u0627\u0632 \u0627\u06CC\u0646 \u0641\u0627\u06A9\u062A\u0648\u0631: ${formatNumberFa(row.points_earned)}`,
-      ...lines
-    ].filter(Boolean).join("\n");
-    await enqueueFallback(env, {
-      phone: row.phone,
-      userId: row.user_id,
-      type: "report_invoice",
-      title: "\u06AF\u0632\u0627\u0631\u0634 \u0645\u062F\u06CC\u0631\u06CC\u062A | \u0641\u0627\u06A9\u062A\u0648\u0631 \u062C\u062F\u06CC\u062F",
-      eventKey: `invoice:${row.id}`,
-      message
-    }, "event");
-  } catch (error) {
-    await reportFailure(env, "invoice", invoiceId, error);
-  }
+function maintenancePage(settings, status) {
+  const blocked = status.blocked.length > 0;
+  const body = `<main class="max-w-2xl mx-auto px-4 py-12">
+    <h1 class="text-2xl font-bold mb-4">\u0628\u0631\u0631\u0633\u06CC \u0648 \u0627\u0631\u062A\u0642\u0627\u06CC \u0627\u0645\u0646 \u062F\u06CC\u062A\u0627\u0628\u06CC\u0633</h1>
+    <p class="text-sm leading-7 mb-4">\u0648\u0631\u0648\u062F \u0634\u0645\u0627 \u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A. ${status.ready ? "\u0633\u0627\u062E\u062A\u0627\u0631 \u0645\u0648\u0631\u062F \u0646\u06CC\u0627\u0632 \u0628\u0631\u0646\u0627\u0645\u0647 \u06A9\u0627\u0645\u0644 \u0627\u0633\u062A." : "\u0633\u0627\u062E\u062A\u0627\u0631 \u062F\u06CC\u062A\u0627\u0628\u06CC\u0633 \u0628\u0627 \u06A9\u062F \u062A\u0627\u0632\u0647 \u06A9\u0627\u0645\u0644 \u0647\u0645\u200C\u062A\u0631\u0627\u0632 \u0646\u06CC\u0633\u062A\u061B \u0627\u06CC\u0646 \u0648\u0636\u0639\u06CC\u062A \u0645\u06CC\u200C\u062A\u0648\u0627\u0646\u062F \u0635\u0641\u062D\u0647\u0654 \u067E\u0646\u0644 \u0631\u0627 \u0628\u0627 \u062E\u0637\u0627\u06CC \u06F5\u06F0\u06F0 \u0645\u062A\u0648\u0642\u0641 \u06A9\u0646\u062F."}</p>
+    <p class="text-sm leading-7 mb-4">\u062A\u063A\u06CC\u06CC\u0631\u0647\u0627 \u0641\u0642\u0637 \u0627\u0641\u0632\u0627\u06CC\u0634\u06CC\u200C\u0627\u0646\u062F\u061B \u062D\u0633\u0627\u0628\u060C \u0631\u0645\u0632\u060C \u0641\u0627\u06A9\u062A\u0648\u0631\u060C \u0645\u0648\u062C\u0648\u062F\u06CC \u0627\u0645\u062A\u06CC\u0627\u0632 \u06CC\u0627 \u062A\u0646\u0638\u06CC\u0645\u0627\u062A \u0642\u0628\u0644\u06CC \u062D\u0630\u0641 \u0648 \u0628\u0627\u0632\u0646\u0634\u0627\u0646\u06CC \u0646\u0645\u06CC\u200C\u0634\u0648\u062F. \u062A\u0627 \u062A\u06A9\u0645\u06CC\u0644 \u0633\u0627\u062E\u062A\u0627\u0631\u060C \u062B\u0628\u062A \u0639\u0645\u0644\u06CC\u0627\u062A \u0648 \u0627\u0631\u0633\u0627\u0644 \u0632\u0645\u0627\u0646\u200C\u0628\u0646\u062F\u06CC\u200C\u0634\u062F\u0647 \u0645\u062A\u0648\u0642\u0641 \u0645\u06CC\u200C\u0645\u0627\u0646\u062F. \u0627\u0632 D1 Time Travel \u0646\u06CC\u0632 \u06CC\u06A9 \u0646\u0642\u0637\u0647\u0654 \u0628\u0627\u0632\u06CC\u0627\u0628\u06CC \u0646\u06AF\u0647 \u062F\u0627\u0631\u06CC\u062F.</p>
+    <p class="text-xs leading-6 mb-4">\u0641\u0627\u06CC\u0644 \u067E\u0634\u062A\u06CC\u0628\u0627\u0646 \u062E\u0635\u0648\u0635\u06CC \u0634\u0627\u0645\u0644 \u0647\u0634 \u0631\u0645\u0632\u0647\u0627 \u0648 \u062A\u0646\u0638\u06CC\u0645\u0627\u062A \u0645\u062D\u0631\u0645\u0627\u0646\u0647\u0654 \u0630\u062E\u06CC\u0631\u0647\u200C\u0634\u062F\u0647 \u062F\u0631 DB \u0627\u0633\u062A\u061B \u0622\u0646 \u0631\u0627 \u062F\u0631 \u0686\u062A \u06CC\u0627 \u0628\u0631\u0627\u06CC \u062F\u06CC\u06AF\u0631\u0627\u0646 \u0646\u0641\u0631\u0633\u062A\u06CC\u062F. Secret\u0647\u0627\u06CC \u0645\u062D\u06CC\u0637\u06CC Worker \u062F\u0627\u062E\u0644 \u0641\u0627\u06CC\u0644 \u0646\u06CC\u0633\u062A\u0646\u062F. \u0627\u06CC\u0646 \u062E\u0631\u0648\u062C\u06CC \u062C\u0627\u06CC \u0628\u06A9\u0627\u067E \u0646\u0642\u0637\u0647\u200C\u0627\u06CC D1 \u0631\u0627 \u0646\u0645\u06CC\u200C\u06AF\u06CC\u0631\u062F.</p>
+    <div class="glass rounded-2xl p-5 space-y-4">
+      <p>\u062A\u063A\u06CC\u06CC\u0631\u0647\u0627\u06CC \u0644\u0627\u0632\u0645: <strong id="schema-count">${toPersianDigits(status.pending.length)}</strong></p>
+      ${blocked ? '<p role="alert">\u0628\u0639\u0636\u06CC \u0627\u0637\u0644\u0627\u0639\u0627\u062A \u067E\u0627\u06CC\u0647/\u0633\u062A\u0648\u0646\u200C\u0647\u0627\u06CC \u062A\u0627\u0631\u06CC\u062E\u06CC \u0645\u0648\u062C\u0648\u062F \u0646\u06CC\u0633\u062A\u0646\u062F \u0648 \u0646\u0645\u06CC\u200C\u062A\u0648\u0627\u0646 \u0627\u0645\u0646 \u062D\u062F\u0633\u0634\u0627\u0646 \u0632\u062F. \u0639\u0645\u0644\u06CC\u0627\u062A \u062E\u0648\u062F\u06A9\u0627\u0631 \u0645\u062A\u0648\u0642\u0641 \u0627\u0633\u062A\u061B Binding \u062F\u06CC\u062A\u0627\u0628\u06CC\u0633 \u0648 \u0646\u0633\u062E\u0647\u0654 \u067E\u0634\u062A\u06CC\u0628\u0627\u0646 \u0628\u0627\u06CC\u062F \u0628\u0631\u0631\u0633\u06CC \u0634\u0648\u0646\u062F.</p>' : ""}
+      <details><summary>\u062C\u0632\u0626\u06CC\u0627\u062A \u0633\u0627\u062E\u062A\u0627\u0631</summary><ul class="text-xs leading-7" dir="ltr">${status.pending.map((s) => "<li>" + escapeHtml(s.key) + "</li>").join("")}</ul></details>
+      <button id="schema-backup" type="button" class="btn btn-ghost">\u06F1. \u062F\u0631\u06CC\u0627\u0641\u062A \u067E\u0634\u062A\u06CC\u0628\u0627\u0646 \u062E\u0635\u0648\u0635\u06CC \u062F\u06CC\u062A\u0627\u0628\u06CC\u0633</button>
+      <label class="flex items-start gap-2 text-sm leading-7"><input id="schema-consent" type="checkbox" disabled />\u0641\u0627\u06CC\u0644 \u067E\u0634\u062A\u06CC\u0628\u0627\u0646 \u0631\u0627 \u0630\u062E\u06CC\u0631\u0647 \u06A9\u0631\u062F\u0647\u200C\u0627\u0645\u061B \u0628\u0627 \u0627\u0631\u062A\u0642\u0627\u06CC \u0627\u0641\u0632\u0627\u06CC\u0634\u06CC \u0645\u0648\u0627\u0641\u0642\u0645.</label>
+      <button id="schema-upgrade" type="button" class="btn btn-primary" disabled>\u06F2. \u062A\u06A9\u0645\u06CC\u0644 \u0633\u0627\u062E\u062A\u0627\u0631 \u062F\u06CC\u062A\u0627\u0628\u06CC\u0633</button>
+      <p id="schema-message" role="status" aria-live="polite" class="text-sm leading-7"></p>
+      <a id="schema-dashboard" class="btn btn-ghost" href="/admin">\u0631\u0641\u062A\u0646 \u0628\u0647 \u067E\u0646\u0644</a>
+      <a class="btn btn-ghost" href="/login">\u0628\u0627\u0632\u06AF\u0634\u062A \u0628\u0647 \u0641\u0631\u0645 \u0648\u0631\u0648\u062F</a>
+      <noscript><p>\u0628\u0631\u0627\u06CC \u062F\u0631\u06CC\u0627\u0641\u062A \u067E\u0634\u062A\u06CC\u0628\u0627\u0646 \u0648 \u0627\u0631\u062A\u0642\u0627 \u0627\u0632 \u0627\u06CC\u0646 \u0635\u0641\u062D\u0647\u060C JavaScript \u0644\u0627\u0632\u0645 \u0627\u0633\u062A. \u0648\u0631\u0648\u062F \u0645\u0639\u0645\u0648\u0644\u06CC \u0628\u062F\u0648\u0646 JavaScript \u06A9\u0627\u0631 \u0645\u06CC\u200C\u06A9\u0646\u062F. \u0631\u0627\u0647 \u062F\u06CC\u06AF\u0631\u060C \u0628\u06A9\u0627\u067E D1 \u0648 \u0627\u062C\u0631\u0627\u06CC \u0627\u0633\u06A9\u0631\u06CC\u067E\u062A migrate \u067E\u0631\u0648\u0698\u0647 \u062A\u0648\u0633\u0637 \u0645\u062F\u06CC\u0631 \u0627\u0633\u062A.</p></noscript>
+    </div>
+  </main>`;
+  const scripts = `(function(){
+    var receipt = '', running = false, blocked = ${JSON.stringify(blocked)}, ready = ${JSON.stringify(status.ready)};
+    var backup = document.getElementById('schema-backup'), consent = document.getElementById('schema-consent');
+    var upgrade = document.getElementById('schema-upgrade'), message = document.getElementById('schema-message');
+    function controls(){ upgrade.disabled = running || blocked || ready || !receipt || !consent.checked; backup.disabled = running; }
+    consent.addEventListener('change', controls);
+    backup.addEventListener('click', async function(){
+      running = true; controls(); message.textContent = '\u062F\u0631 \u062D\u0627\u0644 \u0633\u0627\u062E\u062A \u067E\u0634\u062A\u06CC\u0628\u0627\u0646\u2026';
+      try {
+        var r = await fetch('/admin/export/backup.json?scope=upgrade', {credentials:'same-origin', cache:'no-store', redirect:'error'});
+        if (!r.ok) { var error = await r.json(); throw new Error(error.error || '\u062F\u0631\u06CC\u0627\u0641\u062A \u067E\u0634\u062A\u06CC\u0628\u0627\u0646 \u0646\u0627\u0645\u0648\u0641\u0642 \u0628\u0648\u062F.'); }
+        var token = r.headers.get('X-Upgrade-Receipt');
+        if (!token) throw new Error('\u062A\u0623\u06CC\u06CC\u062F \u067E\u0634\u062A\u06CC\u0628\u0627\u0646 \u062F\u0631\u06CC\u0627\u0641\u062A \u0646\u0634\u062F.');
+        var blob = await r.blob(), url = URL.createObjectURL(blob), a = document.createElement('a');
+        a.href = url; a.download = 'cafe-club-private-upgrade-backup.json'; document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(function(){ URL.revokeObjectURL(url); }, 60000);
+        receipt = token; consent.disabled = false;
+        message.textContent = '\u0641\u0627\u06CC\u0644 \u0631\u0627 \u062F\u0631 \u0645\u062D\u0644 \u0627\u0645\u0646 \u0630\u062E\u06CC\u0631\u0647 \u06A9\u0646\u06CC\u062F\u061B \u0633\u067E\u0633 \u062A\u0623\u06CC\u06CC\u062F \u06A9\u0646\u06CC\u062F \u0648 \u062F\u06A9\u0645\u0647\u0654 \u062A\u06A9\u0645\u06CC\u0644 \u0633\u0627\u062E\u062A\u0627\u0631 \u0631\u0627 \u0628\u0632\u0646\u06CC\u062F.';
+      } catch(e) { message.textContent = e.message || '\u0627\u0631\u062A\u0628\u0627\u0637 \u0628\u0631\u0642\u0631\u0627\u0631 \u0646\u0634\u062F\u061B \u062F\u0648\u0628\u0627\u0631\u0647 \u062A\u0644\u0627\u0634 \u06A9\u0646\u06CC\u062F.'; }
+      finally { running = false; controls(); }
+    });
+    upgrade.addEventListener('click', async function(){
+      if (running || !receipt || !consent.checked) return;
+      running = true; controls();
+      try {
+        for(var n = 0; n < 80; n++) {
+          message.textContent = '\u062F\u0631 \u062D\u0627\u0644 \u0627\u0631\u062A\u0642\u0627\u06CC \u0645\u0631\u062D\u0644\u0647\u200C\u0627\u06CC\u061B \u0644\u0637\u0641\u0627\u064B \u0635\u0641\u062D\u0647 \u0631\u0627 \u0646\u0628\u0646\u062F\u06CC\u062F\u2026';
+          var r = await fetch('/api/admin/system/schema', { method:'POST', credentials:'same-origin', cache:'no-store', redirect:'error',
+            headers:{'Content-Type':'application/json'}, body:JSON.stringify({receipt:receipt,confirmBackup:true}) });
+          var out = await r.json(); if (!r.ok || !out.ok) throw new Error(out.error || '\u0627\u0631\u062A\u0642\u0627 \u0645\u062A\u0648\u0642\u0641 \u0634\u062F.');
+          document.getElementById('schema-count').textContent = String(out.data.remaining).replace(/[0-9]/g,function(d){return '\u06F0\u06F1\u06F2\u06F3\u06F4\u06F5\u06F6\u06F7\u06F8\u06F9'[Number(d)];});
+          if(out.data.ready){ ready = true; message.textContent = '\u0633\u0627\u062E\u062A\u0627\u0631 \u062A\u06A9\u0645\u06CC\u0644 \u0634\u062F\u061B \u0627\u06A9\u0646\u0648\u0646 \u0648\u0627\u0631\u062F \u067E\u0646\u0644 \u0634\u0648\u06CC\u062F.'; return; }
+        }
+        throw new Error('\u0628\u0631\u0627\u06CC \u0627\u062F\u0627\u0645\u0647\u060C \u062F\u0648\u0628\u0627\u0631\u0647 \u062F\u06A9\u0645\u0647\u0654 \u062A\u06A9\u0645\u06CC\u0644 \u0633\u0627\u062E\u062A\u0627\u0631 \u0631\u0627 \u0628\u0632\u0646\u06CC\u062F.');
+      } catch(e) { message.textContent = e.message || '\u0627\u0631\u062A\u0628\u0627\u0637 \u0642\u0637\u0639 \u0634\u062F\u061B \u0627\u062F\u0627\u0645\u0647\u0654 \u0627\u0631\u062A\u0642\u0627 \u0631\u0627 \u062F\u0648\u0628\u0627\u0631\u0647 \u0628\u0632\u0646\u06CC\u062F.'; }
+      finally { running = false; controls(); }
+    });
+    controls();
+  })();`;
+  return publicShell({ title: "\u0627\u0631\u062A\u0642\u0627\u06CC \u0627\u0645\u0646 \u062F\u06CC\u062A\u0627\u0628\u06CC\u0633", body, scripts, cafeName: settings.cafe_name });
 }
 
 // node_modules/hono/dist/utils/jwt/jwa.js
@@ -6618,6 +6564,984 @@ var verifyWithJwks2 = Jwt.verifyWithJwks;
 var verify2 = Jwt.verify;
 var decode2 = Jwt.decode;
 var sign2 = Jwt.sign;
+
+// src/lib/schema-manifest.ts
+var SCHEMA_TABLES = [
+  {
+    "name": "users",
+    "sql": "CREATE TABLE IF NOT EXISTS users (\n  id                 INTEGER PRIMARY KEY AUTOINCREMENT,\n  name               TEXT    NOT NULL,\n  phone              TEXT    NOT NULL UNIQUE,\n  birth_date         TEXT,                                   \n  points             INTEGER NOT NULL DEFAULT 0,             \n  lifetime_points    INTEGER NOT NULL DEFAULT 0,             \n  tier               TEXT    NOT NULL DEFAULT 'bronze',       \n  referred_by        INTEGER,                                \n  referral_code      TEXT    UNIQUE,                         \n  last_visit_date    TEXT,                                   \n  avg_visit_interval REAL    NOT NULL DEFAULT 0,             \n  role               TEXT    NOT NULL DEFAULT 'customer',     \n  password_hash      TEXT,                                   \n  is_active          INTEGER NOT NULL DEFAULT 1,\n  first_purchase_at  TEXT,                                   \n  referral_rewarded  INTEGER NOT NULL DEFAULT 0,\n  last_churn_sms_at  TEXT,\n  sms_opt_in         INTEGER NOT NULL DEFAULT 1,              \n  token_version      INTEGER NOT NULL DEFAULT 0,              \n  created_at         TEXT    NOT NULL DEFAULT (datetime('now')),\n  FOREIGN KEY (referred_by) REFERENCES users (id) ON DELETE SET NULL\n);",
+    "columns": [
+      {
+        "name": "id",
+        "definition": "INTEGER PRIMARY KEY AUTOINCREMENT"
+      },
+      {
+        "name": "name",
+        "definition": "TEXT    NOT NULL"
+      },
+      {
+        "name": "phone",
+        "definition": "TEXT    NOT NULL UNIQUE"
+      },
+      {
+        "name": "birth_date",
+        "definition": "TEXT"
+      },
+      {
+        "name": "points",
+        "definition": "INTEGER NOT NULL DEFAULT 0"
+      },
+      {
+        "name": "lifetime_points",
+        "definition": "INTEGER NOT NULL DEFAULT 0"
+      },
+      {
+        "name": "tier",
+        "definition": "TEXT    NOT NULL DEFAULT 'bronze'"
+      },
+      {
+        "name": "referred_by",
+        "definition": "INTEGER"
+      },
+      {
+        "name": "referral_code",
+        "definition": "TEXT    UNIQUE"
+      },
+      {
+        "name": "last_visit_date",
+        "definition": "TEXT"
+      },
+      {
+        "name": "avg_visit_interval",
+        "definition": "REAL    NOT NULL DEFAULT 0"
+      },
+      {
+        "name": "role",
+        "definition": "TEXT    NOT NULL DEFAULT 'customer'"
+      },
+      {
+        "name": "password_hash",
+        "definition": "TEXT"
+      },
+      {
+        "name": "is_active",
+        "definition": "INTEGER NOT NULL DEFAULT 1"
+      },
+      {
+        "name": "first_purchase_at",
+        "definition": "TEXT"
+      },
+      {
+        "name": "referral_rewarded",
+        "definition": "INTEGER NOT NULL DEFAULT 0"
+      },
+      {
+        "name": "last_churn_sms_at",
+        "definition": "TEXT"
+      },
+      {
+        "name": "sms_opt_in",
+        "definition": "INTEGER NOT NULL DEFAULT 1"
+      },
+      {
+        "name": "token_version",
+        "definition": "INTEGER NOT NULL DEFAULT 0"
+      },
+      {
+        "name": "created_at",
+        "definition": "TEXT    NOT NULL DEFAULT (datetime('now'))"
+      }
+    ]
+  },
+  {
+    "name": "invoices",
+    "sql": "CREATE TABLE IF NOT EXISTS invoices (\n  id            INTEGER PRIMARY KEY AUTOINCREMENT,\n  user_id       INTEGER NOT NULL,\n  amount        INTEGER NOT NULL,                            \n  items         TEXT    NOT NULL DEFAULT '[]',               \n  subtotal      INTEGER NOT NULL DEFAULT 0,                  \n  discount      INTEGER NOT NULL DEFAULT 0,                  \n  coupon_code   TEXT,                                        \n  points_earned INTEGER NOT NULL DEFAULT 0,\n  visit_day     TEXT,                                        \n  client_request_id TEXT,                                    \n  voided_at     TEXT,                                        \n  voided_by     INTEGER,\n  void_reason   TEXT,                                        \n  payment_method TEXT,                                       \n  paid_cash     INTEGER NOT NULL DEFAULT 0,                  \n  paid_card     INTEGER NOT NULL DEFAULT 0,                  \n  paid_online   INTEGER NOT NULL DEFAULT 0,                  \n  change_amount INTEGER NOT NULL DEFAULT 0,                  \n  shift_id      INTEGER,                                     \n  replaces_invoice_id INTEGER,                               \n  created_at    TEXT    NOT NULL DEFAULT (datetime('now')),\n  registered_by INTEGER,\n  FOREIGN KEY (user_id)       REFERENCES users (id) ON DELETE CASCADE,\n  FOREIGN KEY (registered_by) REFERENCES users (id) ON DELETE SET NULL\n);",
+    "columns": [
+      {
+        "name": "id",
+        "definition": "INTEGER PRIMARY KEY AUTOINCREMENT"
+      },
+      {
+        "name": "user_id",
+        "definition": "INTEGER NOT NULL"
+      },
+      {
+        "name": "amount",
+        "definition": "INTEGER NOT NULL"
+      },
+      {
+        "name": "items",
+        "definition": "TEXT    NOT NULL DEFAULT '[]'"
+      },
+      {
+        "name": "subtotal",
+        "definition": "INTEGER NOT NULL DEFAULT 0"
+      },
+      {
+        "name": "discount",
+        "definition": "INTEGER NOT NULL DEFAULT 0"
+      },
+      {
+        "name": "coupon_code",
+        "definition": "TEXT"
+      },
+      {
+        "name": "points_earned",
+        "definition": "INTEGER NOT NULL DEFAULT 0"
+      },
+      {
+        "name": "visit_day",
+        "definition": "TEXT"
+      },
+      {
+        "name": "client_request_id",
+        "definition": "TEXT"
+      },
+      {
+        "name": "voided_at",
+        "definition": "TEXT"
+      },
+      {
+        "name": "voided_by",
+        "definition": "INTEGER"
+      },
+      {
+        "name": "void_reason",
+        "definition": "TEXT"
+      },
+      {
+        "name": "payment_method",
+        "definition": "TEXT"
+      },
+      {
+        "name": "paid_cash",
+        "definition": "INTEGER NOT NULL DEFAULT 0"
+      },
+      {
+        "name": "paid_card",
+        "definition": "INTEGER NOT NULL DEFAULT 0"
+      },
+      {
+        "name": "paid_online",
+        "definition": "INTEGER NOT NULL DEFAULT 0"
+      },
+      {
+        "name": "change_amount",
+        "definition": "INTEGER NOT NULL DEFAULT 0"
+      },
+      {
+        "name": "shift_id",
+        "definition": "INTEGER"
+      },
+      {
+        "name": "replaces_invoice_id",
+        "definition": "INTEGER"
+      },
+      {
+        "name": "created_at",
+        "definition": "TEXT    NOT NULL DEFAULT (datetime('now'))"
+      },
+      {
+        "name": "registered_by",
+        "definition": "INTEGER"
+      }
+    ]
+  },
+  {
+    "name": "settings",
+    "sql": "CREATE TABLE IF NOT EXISTS settings (\n  key   TEXT PRIMARY KEY,\n  value TEXT NOT NULL\n);",
+    "columns": [
+      {
+        "name": "key",
+        "definition": "TEXT PRIMARY KEY"
+      },
+      {
+        "name": "value",
+        "definition": "TEXT NOT NULL"
+      }
+    ]
+  },
+  {
+    "name": "sms_logs",
+    "sql": "CREATE TABLE IF NOT EXISTS sms_logs (\n  id              INTEGER PRIMARY KEY AUTOINCREMENT,\n  user_id         INTEGER,\n  type            TEXT    NOT NULL,   \n  status          TEXT    NOT NULL,   \n  message         TEXT,\n  provider_id     TEXT,\n  error           TEXT,\n  sent_at         TEXT    NOT NULL DEFAULT (datetime('now')),\n  FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE SET NULL\n);",
+    "columns": [
+      {
+        "name": "id",
+        "definition": "INTEGER PRIMARY KEY AUTOINCREMENT"
+      },
+      {
+        "name": "user_id",
+        "definition": "INTEGER"
+      },
+      {
+        "name": "type",
+        "definition": "TEXT    NOT NULL"
+      },
+      {
+        "name": "status",
+        "definition": "TEXT    NOT NULL"
+      },
+      {
+        "name": "message",
+        "definition": "TEXT"
+      },
+      {
+        "name": "provider_id",
+        "definition": "TEXT"
+      },
+      {
+        "name": "error",
+        "definition": "TEXT"
+      },
+      {
+        "name": "sent_at",
+        "definition": "TEXT    NOT NULL DEFAULT (datetime('now'))"
+      }
+    ]
+  },
+  {
+    "name": "coupons",
+    "sql": "CREATE TABLE IF NOT EXISTS coupons (\n  id          INTEGER PRIMARY KEY AUTOINCREMENT,\n  code        TEXT    NOT NULL UNIQUE,\n  user_id     INTEGER,\n  kind        TEXT    NOT NULL DEFAULT 'percent',            \n  value       INTEGER NOT NULL DEFAULT 0,\n  reason      TEXT    NOT NULL DEFAULT 'birthday',\n  max_uses    INTEGER NOT NULL DEFAULT 1,\n  used_count  INTEGER NOT NULL DEFAULT 0,\n  expires_at  TEXT,\n  is_active   INTEGER NOT NULL DEFAULT 1,\n  created_at  TEXT    NOT NULL DEFAULT (datetime('now')),\n  FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE\n);",
+    "columns": [
+      {
+        "name": "id",
+        "definition": "INTEGER PRIMARY KEY AUTOINCREMENT"
+      },
+      {
+        "name": "code",
+        "definition": "TEXT    NOT NULL UNIQUE"
+      },
+      {
+        "name": "user_id",
+        "definition": "INTEGER"
+      },
+      {
+        "name": "kind",
+        "definition": "TEXT    NOT NULL DEFAULT 'percent'"
+      },
+      {
+        "name": "value",
+        "definition": "INTEGER NOT NULL DEFAULT 0"
+      },
+      {
+        "name": "reason",
+        "definition": "TEXT    NOT NULL DEFAULT 'birthday'"
+      },
+      {
+        "name": "max_uses",
+        "definition": "INTEGER NOT NULL DEFAULT 1"
+      },
+      {
+        "name": "used_count",
+        "definition": "INTEGER NOT NULL DEFAULT 0"
+      },
+      {
+        "name": "expires_at",
+        "definition": "TEXT"
+      },
+      {
+        "name": "is_active",
+        "definition": "INTEGER NOT NULL DEFAULT 1"
+      },
+      {
+        "name": "created_at",
+        "definition": "TEXT    NOT NULL DEFAULT (datetime('now'))"
+      }
+    ]
+  },
+  {
+    "name": "otp_codes",
+    "sql": "CREATE TABLE IF NOT EXISTS otp_codes (\n  id          INTEGER PRIMARY KEY AUTOINCREMENT,\n  phone       TEXT    NOT NULL,\n  code_hash   TEXT    NOT NULL,\n  expires_at  TEXT    NOT NULL,\n  attempts    INTEGER NOT NULL DEFAULT 0,\n  used_at     TEXT,\n  created_at  TEXT    NOT NULL DEFAULT (datetime('now'))\n);",
+    "columns": [
+      {
+        "name": "id",
+        "definition": "INTEGER PRIMARY KEY AUTOINCREMENT"
+      },
+      {
+        "name": "phone",
+        "definition": "TEXT    NOT NULL"
+      },
+      {
+        "name": "code_hash",
+        "definition": "TEXT    NOT NULL"
+      },
+      {
+        "name": "expires_at",
+        "definition": "TEXT    NOT NULL"
+      },
+      {
+        "name": "attempts",
+        "definition": "INTEGER NOT NULL DEFAULT 0"
+      },
+      {
+        "name": "used_at",
+        "definition": "TEXT"
+      },
+      {
+        "name": "created_at",
+        "definition": "TEXT    NOT NULL DEFAULT (datetime('now'))"
+      }
+    ]
+  },
+  {
+    "name": "rate_limits",
+    "sql": "CREATE TABLE IF NOT EXISTS rate_limits (\n  key       TEXT PRIMARY KEY,\n  count     INTEGER NOT NULL DEFAULT 0,\n  reset_at  TEXT    NOT NULL\n);",
+    "columns": [
+      {
+        "name": "key",
+        "definition": "TEXT PRIMARY KEY"
+      },
+      {
+        "name": "count",
+        "definition": "INTEGER NOT NULL DEFAULT 0"
+      },
+      {
+        "name": "reset_at",
+        "definition": "TEXT    NOT NULL"
+      }
+    ]
+  },
+  {
+    "name": "shifts",
+    "sql": "CREATE TABLE IF NOT EXISTS shifts (\n  id                INTEGER PRIMARY KEY AUTOINCREMENT,\n  staff_id          INTEGER,\n  staff_name        TEXT    NOT NULL,\n  opened_at         TEXT    NOT NULL DEFAULT (datetime('now')),\n  closed_at         TEXT,\n  opening_cash      INTEGER NOT NULL DEFAULT 0,   \n  counted_cash      INTEGER,                      \n  expected_cash     INTEGER,                      \n  difference        INTEGER,                      \n  status            TEXT    NOT NULL DEFAULT 'open', \n  closed_by         INTEGER,\n  closed_by_name    TEXT,\n  notes             TEXT,\n  invoice_count     INTEGER NOT NULL DEFAULT 0,   \n  cash_sales        INTEGER NOT NULL DEFAULT 0,\n  card_sales        INTEGER NOT NULL DEFAULT 0,\n  online_sales      INTEGER NOT NULL DEFAULT 0,\n  total_sales       INTEGER NOT NULL DEFAULT 0,\n  void_count        INTEGER NOT NULL DEFAULT 0,\n  FOREIGN KEY (staff_id)  REFERENCES users (id) ON DELETE SET NULL,\n  FOREIGN KEY (closed_by) REFERENCES users (id) ON DELETE SET NULL\n);",
+    "columns": [
+      {
+        "name": "id",
+        "definition": "INTEGER PRIMARY KEY AUTOINCREMENT"
+      },
+      {
+        "name": "staff_id",
+        "definition": "INTEGER"
+      },
+      {
+        "name": "staff_name",
+        "definition": "TEXT    NOT NULL"
+      },
+      {
+        "name": "opened_at",
+        "definition": "TEXT    NOT NULL DEFAULT (datetime('now'))"
+      },
+      {
+        "name": "closed_at",
+        "definition": "TEXT"
+      },
+      {
+        "name": "opening_cash",
+        "definition": "INTEGER NOT NULL DEFAULT 0"
+      },
+      {
+        "name": "counted_cash",
+        "definition": "INTEGER"
+      },
+      {
+        "name": "expected_cash",
+        "definition": "INTEGER"
+      },
+      {
+        "name": "difference",
+        "definition": "INTEGER"
+      },
+      {
+        "name": "status",
+        "definition": "TEXT    NOT NULL DEFAULT 'open'"
+      },
+      {
+        "name": "closed_by",
+        "definition": "INTEGER"
+      },
+      {
+        "name": "closed_by_name",
+        "definition": "TEXT"
+      },
+      {
+        "name": "notes",
+        "definition": "TEXT"
+      },
+      {
+        "name": "invoice_count",
+        "definition": "INTEGER NOT NULL DEFAULT 0"
+      },
+      {
+        "name": "cash_sales",
+        "definition": "INTEGER NOT NULL DEFAULT 0"
+      },
+      {
+        "name": "card_sales",
+        "definition": "INTEGER NOT NULL DEFAULT 0"
+      },
+      {
+        "name": "online_sales",
+        "definition": "INTEGER NOT NULL DEFAULT 0"
+      },
+      {
+        "name": "total_sales",
+        "definition": "INTEGER NOT NULL DEFAULT 0"
+      },
+      {
+        "name": "void_count",
+        "definition": "INTEGER NOT NULL DEFAULT 0"
+      }
+    ]
+  },
+  {
+    "name": "cash_movements",
+    "sql": "CREATE TABLE IF NOT EXISTS cash_movements (\n  id         INTEGER PRIMARY KEY AUTOINCREMENT,\n  shift_id   INTEGER NOT NULL,\n  kind       TEXT    NOT NULL,                    \n  amount     INTEGER NOT NULL,\n  reason     TEXT,\n  created_at TEXT    NOT NULL DEFAULT (datetime('now')),\n  created_by INTEGER,\n  FOREIGN KEY (shift_id) REFERENCES shifts (id) ON DELETE CASCADE\n);",
+    "columns": [
+      {
+        "name": "id",
+        "definition": "INTEGER PRIMARY KEY AUTOINCREMENT"
+      },
+      {
+        "name": "shift_id",
+        "definition": "INTEGER NOT NULL"
+      },
+      {
+        "name": "kind",
+        "definition": "TEXT    NOT NULL"
+      },
+      {
+        "name": "amount",
+        "definition": "INTEGER NOT NULL"
+      },
+      {
+        "name": "reason",
+        "definition": "TEXT"
+      },
+      {
+        "name": "created_at",
+        "definition": "TEXT    NOT NULL DEFAULT (datetime('now'))"
+      },
+      {
+        "name": "created_by",
+        "definition": "INTEGER"
+      }
+    ]
+  },
+  {
+    "name": "admin_logs",
+    "sql": "CREATE TABLE IF NOT EXISTS admin_logs (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  admin_id INTEGER,\n  admin_name TEXT NOT NULL,\n  action TEXT NOT NULL,\n  target_type TEXT,\n  target_id TEXT,\n  details TEXT,\n  ip TEXT,\n  created_at TEXT NOT NULL DEFAULT (datetime('now'))\n);",
+    "columns": [
+      {
+        "name": "id",
+        "definition": "INTEGER PRIMARY KEY AUTOINCREMENT"
+      },
+      {
+        "name": "admin_id",
+        "definition": "INTEGER"
+      },
+      {
+        "name": "admin_name",
+        "definition": "TEXT NOT NULL"
+      },
+      {
+        "name": "action",
+        "definition": "TEXT NOT NULL"
+      },
+      {
+        "name": "target_type",
+        "definition": "TEXT"
+      },
+      {
+        "name": "target_id",
+        "definition": "TEXT"
+      },
+      {
+        "name": "details",
+        "definition": "TEXT"
+      },
+      {
+        "name": "ip",
+        "definition": "TEXT"
+      },
+      {
+        "name": "created_at",
+        "definition": "TEXT NOT NULL DEFAULT (datetime('now'))"
+      }
+    ]
+  },
+  {
+    "name": "fallback_jobs",
+    "sql": "CREATE TABLE IF NOT EXISTS fallback_jobs (\n  id TEXT PRIMARY KEY,\n  channel TEXT NOT NULL CHECK(channel IN ('telegram','bale')),\n  chat_id TEXT NOT NULL,\n  user_id INTEGER,\n  type TEXT NOT NULL,\n  payload TEXT NOT NULL,\n  reason TEXT NOT NULL,\n  status TEXT NOT NULL DEFAULT 'pending',\n  attempts INTEGER NOT NULL DEFAULT 0,\n  next_at INTEGER NOT NULL,\n  expires_at INTEGER NOT NULL,\n  locked_at INTEGER,\n  provider_id TEXT,\n  error TEXT,\n  created_at TEXT NOT NULL DEFAULT (datetime('now')),\n  completed_at TEXT\n);",
+    "columns": [
+      {
+        "name": "id",
+        "definition": "TEXT PRIMARY KEY"
+      },
+      {
+        "name": "channel",
+        "definition": "TEXT NOT NULL CHECK(channel IN ('telegram','bale'))"
+      },
+      {
+        "name": "chat_id",
+        "definition": "TEXT NOT NULL"
+      },
+      {
+        "name": "user_id",
+        "definition": "INTEGER"
+      },
+      {
+        "name": "type",
+        "definition": "TEXT NOT NULL"
+      },
+      {
+        "name": "payload",
+        "definition": "TEXT NOT NULL"
+      },
+      {
+        "name": "reason",
+        "definition": "TEXT NOT NULL"
+      },
+      {
+        "name": "status",
+        "definition": "TEXT NOT NULL DEFAULT 'pending'"
+      },
+      {
+        "name": "attempts",
+        "definition": "INTEGER NOT NULL DEFAULT 0"
+      },
+      {
+        "name": "next_at",
+        "definition": "INTEGER NOT NULL"
+      },
+      {
+        "name": "expires_at",
+        "definition": "INTEGER NOT NULL"
+      },
+      {
+        "name": "locked_at",
+        "definition": "INTEGER"
+      },
+      {
+        "name": "provider_id",
+        "definition": "TEXT"
+      },
+      {
+        "name": "error",
+        "definition": "TEXT"
+      },
+      {
+        "name": "created_at",
+        "definition": "TEXT NOT NULL DEFAULT (datetime('now'))"
+      },
+      {
+        "name": "completed_at",
+        "definition": "TEXT"
+      }
+    ]
+  },
+  {
+    "name": "fallback_dispatch",
+    "sql": "CREATE TABLE IF NOT EXISTS fallback_dispatch (\n  id INTEGER PRIMARY KEY CHECK(id = 1),\n  until_ms INTEGER NOT NULL DEFAULT 0,\n  owner TEXT\n);",
+    "columns": [
+      {
+        "name": "id",
+        "definition": "INTEGER PRIMARY KEY CHECK(id = 1)"
+      },
+      {
+        "name": "until_ms",
+        "definition": "INTEGER NOT NULL DEFAULT 0"
+      },
+      {
+        "name": "owner",
+        "definition": "TEXT"
+      }
+    ]
+  },
+  {
+    "name": "fallback_channel_limits",
+    "sql": "CREATE TABLE IF NOT EXISTS fallback_channel_limits (\n  channel TEXT PRIMARY KEY CHECK(channel IN ('telegram','bale')),\n  until_ms INTEGER NOT NULL DEFAULT 0\n);",
+    "columns": [
+      {
+        "name": "channel",
+        "definition": "TEXT PRIMARY KEY CHECK(channel IN ('telegram','bale'))"
+      },
+      {
+        "name": "until_ms",
+        "definition": "INTEGER NOT NULL DEFAULT 0"
+      }
+    ]
+  }
+];
+var SCHEMA_INDEXES = [
+  {
+    "name": "idx_users_phone",
+    "sql": "CREATE INDEX IF NOT EXISTS idx_users_phone             ON users (phone);"
+  },
+  {
+    "name": "idx_users_role",
+    "sql": "CREATE INDEX IF NOT EXISTS idx_users_role              ON users (role);"
+  },
+  {
+    "name": "idx_users_referred_by",
+    "sql": "CREATE INDEX IF NOT EXISTS idx_users_referred_by       ON users (referred_by);"
+  },
+  {
+    "name": "idx_users_referral_code",
+    "sql": "CREATE INDEX IF NOT EXISTS idx_users_referral_code     ON users (referral_code);"
+  },
+  {
+    "name": "ux_users_referral_code",
+    "sql": "CREATE UNIQUE INDEX IF NOT EXISTS ux_users_referral_code ON users (referral_code) WHERE referral_code IS NOT NULL;"
+  },
+  {
+    "name": "idx_users_last_visit_date",
+    "sql": "CREATE INDEX IF NOT EXISTS idx_users_last_visit_date   ON users (last_visit_date);"
+  },
+  {
+    "name": "idx_users_birth_date",
+    "sql": "CREATE INDEX IF NOT EXISTS idx_users_birth_date        ON users (birth_date);"
+  },
+  {
+    "name": "idx_users_created_at",
+    "sql": "CREATE INDEX IF NOT EXISTS idx_users_created_at        ON users (created_at);"
+  },
+  {
+    "name": "idx_invoices_user_id",
+    "sql": "CREATE INDEX IF NOT EXISTS idx_invoices_user_id    ON invoices (user_id);"
+  },
+  {
+    "name": "idx_invoices_created_at",
+    "sql": "CREATE INDEX IF NOT EXISTS idx_invoices_created_at ON invoices (created_at);"
+  },
+  {
+    "name": "idx_invoices_voided",
+    "sql": "CREATE INDEX IF NOT EXISTS idx_invoices_voided     ON invoices (voided_at);"
+  },
+  {
+    "name": "idx_invoices_payment",
+    "sql": "CREATE INDEX IF NOT EXISTS idx_invoices_payment    ON invoices (payment_method, created_at);"
+  },
+  {
+    "name": "idx_invoices_shift",
+    "sql": "CREATE INDEX IF NOT EXISTS idx_invoices_shift      ON invoices (shift_id);"
+  },
+  {
+    "name": "idx_invoices_staff_day",
+    "sql": "CREATE INDEX IF NOT EXISTS idx_invoices_staff_day  ON invoices (registered_by, created_at);"
+  },
+  {
+    "name": "ux_invoices_visit_day",
+    "sql": "CREATE UNIQUE INDEX IF NOT EXISTS ux_invoices_visit_day\n  ON invoices (user_id, visit_day) WHERE visit_day IS NOT NULL;"
+  },
+  {
+    "name": "ux_invoices_client_request",
+    "sql": "CREATE UNIQUE INDEX IF NOT EXISTS ux_invoices_client_request\n  ON invoices (client_request_id) WHERE client_request_id IS NOT NULL;"
+  },
+  {
+    "name": "idx_sms_logs_user_id",
+    "sql": "CREATE INDEX IF NOT EXISTS idx_sms_logs_user_id ON sms_logs (user_id);"
+  },
+  {
+    "name": "idx_sms_logs_type",
+    "sql": "CREATE INDEX IF NOT EXISTS idx_sms_logs_type    ON sms_logs (type, sent_at);"
+  },
+  {
+    "name": "idx_coupons_user_id",
+    "sql": "CREATE INDEX IF NOT EXISTS idx_coupons_user_id ON coupons (user_id);"
+  },
+  {
+    "name": "idx_coupons_code",
+    "sql": "CREATE INDEX IF NOT EXISTS idx_coupons_code    ON coupons (code);"
+  },
+  {
+    "name": "idx_otp_codes_phone",
+    "sql": "CREATE INDEX IF NOT EXISTS idx_otp_codes_phone ON otp_codes (phone, created_at);"
+  },
+  {
+    "name": "idx_shifts_status",
+    "sql": "CREATE INDEX IF NOT EXISTS idx_shifts_status ON shifts (status, opened_at);"
+  },
+  {
+    "name": "idx_shifts_staff",
+    "sql": "CREATE INDEX IF NOT EXISTS idx_shifts_staff  ON shifts (staff_id, opened_at);"
+  },
+  {
+    "name": "ux_shifts_open_staff",
+    "sql": "CREATE UNIQUE INDEX IF NOT EXISTS ux_shifts_open_staff\n  ON shifts (staff_id) WHERE status = 'open' AND staff_id IS NOT NULL;"
+  },
+  {
+    "name": "idx_cash_movements_shift",
+    "sql": "CREATE INDEX IF NOT EXISTS idx_cash_movements_shift ON cash_movements (shift_id, created_at);"
+  },
+  {
+    "name": "idx_admin_logs_created",
+    "sql": "CREATE INDEX IF NOT EXISTS idx_admin_logs_created ON admin_logs(created_at DESC);"
+  },
+  {
+    "name": "idx_admin_logs_action",
+    "sql": "CREATE INDEX IF NOT EXISTS idx_admin_logs_action ON admin_logs(action);"
+  },
+  {
+    "name": "idx_fallback_jobs_due",
+    "sql": "CREATE INDEX IF NOT EXISTS idx_fallback_jobs_due ON fallback_jobs(status,next_at);"
+  },
+  {
+    "name": "idx_fallback_jobs_created",
+    "sql": "CREATE INDEX IF NOT EXISTS idx_fallback_jobs_created ON fallback_jobs(created_at DESC);"
+  }
+];
+
+// src/lib/schema.ts
+init_db();
+var SCHEMA_VERSION = "site-recovery-v4";
+var readyCache = /* @__PURE__ */ new WeakMap();
+var controlRows = [
+  { table: "fallback_dispatch", key: "state:fallback_dispatch", condition: "id=1", sql: "INSERT OR IGNORE INTO fallback_dispatch(id,until_ms) VALUES(1,0)" },
+  { table: "fallback_channel_limits", key: "state:telegram", condition: "channel='telegram'", sql: "INSERT OR IGNORE INTO fallback_channel_limits(channel,until_ms) VALUES('telegram',0)" },
+  { table: "fallback_channel_limits", key: "state:bale", condition: "channel='bale'", sql: "INSERT OR IGNORE INTO fallback_channel_limits(channel,until_ms) VALUES('bale',0)" }
+];
+function invalidateSchemaCache(db) {
+  readyCache.delete(db);
+}
+async function schemaStatus(db, fresh = false) {
+  if (!fresh && (readyCache.get(db) ?? 0) > Date.now()) return { ready: true, pending: [], blocked: [] };
+  const names = SCHEMA_TABLES.map((t) => t.name);
+  const indexes = SCHEMA_INDEXES.map((i) => i.name);
+  const result = await db.prepare(`
+    SELECT 'column' AS kind, m.name AS table_name, p.name AS name
+    FROM sqlite_master m JOIN pragma_table_info(m.name) p
+    WHERE m.type = 'table' AND m.name IN (${names.map(() => "?").join(",")})
+    UNION ALL SELECT 'index' AS kind, tbl_name AS table_name, name
+    FROM sqlite_master WHERE type = 'index' AND name IN (${indexes.map(() => "?").join(",")})
+  `).bind(...names, ...indexes).all();
+  const columns = /* @__PURE__ */ new Map();
+  const foundIndexes = /* @__PURE__ */ new Set();
+  for (const row of result.results ?? []) {
+    if (row.kind === "index") {
+      foundIndexes.add(row.name);
+      continue;
+    }
+    const table = row.table_name.toLowerCase();
+    if (!columns.has(table)) columns.set(table, /* @__PURE__ */ new Set());
+    columns.get(table).add(row.name.toLowerCase());
+  }
+  const pending = [];
+  const tables = [...SCHEMA_TABLES].sort((a, b) => Number(b.name === "admin_logs") - Number(a.name === "admin_logs"));
+  for (const table of tables) {
+    if (!columns.has(table.name)) {
+      pending.push({ key: "table:" + table.name, sql: table.sql, blocked: table.name === "users" || table.name === "settings" });
+      continue;
+    }
+    for (const col of table.columns) {
+      if (columns.get(table.name).has(col.name)) continue;
+      const definition = col.definition.replace(/\s+UNIQUE\b/i, "");
+      const blocked = /PRIMARY KEY|DEFAULT\s*\(|REFERENCES/i.test(definition) || /NOT NULL/i.test(definition) && !/DEFAULT\b/i.test(definition);
+      pending.push({
+        key: "column:" + table.name + "." + col.name,
+        sql: `ALTER TABLE ${table.name} ADD COLUMN ${col.name} ${definition}`,
+        blocked,
+        baseline: table.name === "users" && col.name === "lifetime_points"
+      });
+    }
+  }
+  const presentStates = controlRows.filter((row) => columns.get(row.table)?.has(row.table === "fallback_dispatch" ? "id" : "channel"));
+  const foundStates = presentStates.length ? await db.prepare(presentStates.map(
+    (row) => `SELECT '${row.key}' AS key, EXISTS(SELECT 1 FROM ${row.table} WHERE ${row.condition}) AS present`
+  ).join(" UNION ALL ")).all() : { results: [] };
+  const activeStates = new Set((foundStates.results ?? []).filter((r) => r.present).map((r) => r.key));
+  for (const row of controlRows) if (!activeStates.has(row.key)) pending.push({ key: row.key, sql: row.sql });
+  for (const index of SCHEMA_INDEXES) if (!foundIndexes.has(index.name)) pending.push({ key: "index:" + index.name, sql: index.sql });
+  const status = { ready: pending.length === 0, pending, blocked: pending.filter((s) => s.blocked).map((s) => s.key) };
+  if (status.ready) readyCache.set(db, Date.now() + 3e4);
+  else readyCache.delete(db);
+  return status;
+}
+async function applySchemaSteps(db, actor) {
+  invalidateSchemaCache(db);
+  const status = await schemaStatus(db, true);
+  if (status.blocked.length) throw new Error("SCHEMA_MANUAL_REVIEW_REQUIRED");
+  for (const step of status.pending.slice(0, 4)) {
+    try {
+      if (step.baseline) {
+        await db.batch([
+          db.prepare(step.sql),
+          db.prepare("UPDATE users SET lifetime_points = MAX(0, COALESCE(points, 0))")
+        ]);
+      } else await db.prepare(step.sql).run();
+    } catch (error) {
+      const name = step.key.startsWith("column:") ? step.key.split(".").pop() : "";
+      if (!name || !new RegExp("duplicate column name:\\s*" + name + "\\b", "i").test(String(error))) throw error;
+    }
+    console.info("SCHEMA_ADDITIVE_UPGRADE", step.key);
+    await logAdminAction(db, {
+      adminId: actor.uid,
+      adminName: actor.name,
+      action: "database_upgrade",
+      targetType: "schema",
+      targetId: step.key,
+      details: "\u0627\u0641\u0632\u0648\u062F\u0646 \u0633\u0627\u0632\u06AF\u0627\u0631 \u0633\u0627\u062E\u062A\u0627\u0631: " + step.key
+    });
+  }
+  invalidateSchemaCache(db);
+  return schemaStatus(db, true);
+}
+async function upgradeBackup(db) {
+  const schema = await db.prepare(`SELECT type, name, sql FROM sqlite_master
+    WHERE type IN ('table','index','trigger','view') AND substr(name,1,7) <> 'sqlite_'
+    AND substr(name,1,4) <> '_cf_' AND sql IS NOT NULL ORDER BY type, name`).all();
+  const tables = (schema.results ?? []).filter((s) => s.type === "table");
+  if (!tables.some((t) => t.name === "users") || !tables.some((t) => t.name === "settings")) throw new Error("BACKUP_CORE_TABLE_MISSING");
+  if (tables.length > 24) throw new Error("BACKUP_TOO_LARGE");
+  const data = {};
+  let bytes = 0;
+  for (const table of tables) {
+    const identifier = '"' + table.name.replace(/"/g, '""') + '"';
+    const rows = await db.prepare(`SELECT * FROM ${identifier} LIMIT 20001`).all();
+    if ((rows.results?.length ?? 0) > 2e4) throw new Error("BACKUP_TOO_LARGE");
+    data[table.name] = rows.results ?? [];
+    bytes += new TextEncoder().encode(JSON.stringify(data[table.name])).byteLength;
+    if (bytes > 8 * 1024 * 1024) throw new Error("BACKUP_TOO_LARGE");
+  }
+  const sequences = tables.some((t) => /AUTOINCREMENT/i.test(t.sql)) ? (await db.prepare("SELECT name, seq FROM sqlite_sequence").all()).results ?? [] : [];
+  return JSON.stringify({
+    app: "cafe-club",
+    format: "private-upgrade-snapshot-v1",
+    version: SCHEMA_VERSION,
+    generated_at: (/* @__PURE__ */ new Date()).toISOString(),
+    consistency: "application writes blocked while schema is incomplete; use D1 Time Travel for a point-in-time backup",
+    schema: schema.results ?? [],
+    sequences,
+    data
+  });
+}
+async function backupReceipt(secret, uid) {
+  const now = Math.floor(Date.now() / 1e3);
+  return sign2({ aud: "schema-backup", uid, version: SCHEMA_VERSION, iat: now, exp: now + 900 }, secret, "HS256");
+}
+async function verifyBackupReceipt(secret, uid, receipt) {
+  if (typeof receipt !== "string" || receipt.length > 2048) return false;
+  try {
+    const p = await verify2(receipt, secret, { alg: "HS256", aud: "schema-backup" });
+    return p.uid === uid && p.version === SCHEMA_VERSION;
+  } catch {
+    return false;
+  }
+}
+function isSchemaError(error) {
+  return /no such (?:table|column)|has no column named|database schema has changed/i.test(String(error));
+}
+
+// node_modules/hono/dist/middleware/body-limit/index.js
+var ERROR_MESSAGE = "Payload Too Large";
+var bodyLimit = (options) => {
+  const onError = options.onError || (() => {
+    const res = new Response(ERROR_MESSAGE, { status: 413 });
+    throw new HTTPException(413, { res });
+  });
+  const maxSize = options.maxSize;
+  return async function bodyLimit2(c, next) {
+    if (!c.req.raw.body) return next();
+    const hasTransferEncoding = c.req.raw.headers.has("transfer-encoding");
+    if (c.req.raw.headers.has("content-length") && !hasTransferEncoding) return parseInt(c.req.raw.headers.get("content-length") || "0", 10) > maxSize ? onError(c) : next();
+    let size = 0;
+    const chunks = [];
+    const rawReader = c.req.raw.body.getReader();
+    for (; ; ) {
+      const { done, value } = await rawReader.read();
+      if (done) break;
+      size += value.length;
+      if (size > maxSize) return onError(c);
+      chunks.push(value);
+    }
+    const requestInit = {
+      body: new ReadableStream({ start(controller) {
+        for (const chunk of chunks) controller.enqueue(chunk);
+        controller.close();
+      } }),
+      duplex: "half"
+    };
+    c.req.raw = new Request(c.req.raw, requestInit);
+    return next();
+  };
+};
+
+// src/lib/admin-notifications.ts
+init_db();
+init_fallback();
+init_utils();
+var ACTIONS = {
+  invoice_void: "\u0627\u0628\u0637\u0627\u0644 \u0641\u0627\u06A9\u062A\u0648\u0631",
+  invoice_correct: "\u0627\u0635\u0644\u0627\u062D \u0641\u0627\u06A9\u062A\u0648\u0631",
+  points_adjust: "\u062A\u063A\u06CC\u06CC\u0631 \u062F\u0633\u062A\u06CC \u0627\u0645\u062A\u06CC\u0627\u0632",
+  shift_open: "\u0628\u0627\u0632 \u0634\u062F\u0646 \u0635\u0646\u062F\u0648\u0642",
+  shift_close: "\u0628\u0633\u062A\u0646 \u0635\u0646\u062F\u0648\u0642",
+  cash_in: "\u0648\u0631\u0648\u062F \u0646\u0642\u062F \u0628\u0647 \u0635\u0646\u062F\u0648\u0642",
+  cash_out: "\u062E\u0631\u0648\u062C \u0646\u0642\u062F \u0627\u0632 \u0635\u0646\u062F\u0648\u0642",
+  settings_update: "\u062A\u063A\u06CC\u06CC\u0631 \u062A\u0646\u0638\u06CC\u0645\u0627\u062A \u0648 \u0633\u06CC\u0627\u0633\u062A \u0628\u0627\u0634\u06AF\u0627\u0647",
+  customer_update: "\u062A\u063A\u06CC\u06CC\u0631 \u0648\u0636\u0639\u06CC\u062A \u0645\u0634\u062A\u0631\u06CC",
+  customer_delete: "\u062D\u0630\u0641 \u0645\u0634\u062A\u0631\u06CC",
+  staff_password_reset: "\u0628\u0627\u0632\u0646\u0634\u0627\u0646\u06CC \u0631\u0645\u0632 \u06A9\u0627\u0631\u0645\u0646\u062F",
+  staff_delete: "\u062D\u0630\u0641 \u06A9\u0627\u0631\u0645\u0646\u062F",
+  password_change: "\u062A\u063A\u06CC\u06CC\u0631 \u0631\u0645\u0632 \u0639\u0628\u0648\u0631"
+};
+async function reportFailure(env, targetType, targetId, error) {
+  console.error("ADMIN_REPORT_QUEUE_FAILED", targetType, targetId);
+  await logAdminAction(env.DB, {
+    adminId: null,
+    adminName: "\u0633\u06CC\u0633\u062A\u0645",
+    action: "admin_report_failed",
+    targetType,
+    targetId,
+    details: error instanceof Error && error.message === "QUEUE_FULL" ? "\u06AF\u0632\u0627\u0631\u0634 \u0645\u062F\u06CC\u0631\u06CC\u062A \u062F\u0631 \u0635\u0641 \u062B\u0628\u062A \u0646\u0634\u062F: \u0638\u0631\u0641\u06CC\u062A \u0635\u0641 \u067E\u0631 \u0627\u0633\u062A. \u0639\u0645\u0644\u06CC\u0627\u062A \u0627\u0635\u0644\u06CC \u0627\u0646\u062C\u0627\u0645 \u0634\u062F\u0647 \u0627\u0633\u062A." : "\u06AF\u0632\u0627\u0631\u0634 \u0645\u062F\u06CC\u0631\u06CC\u062A \u062F\u0631 \u0635\u0641 \u062B\u0628\u062A \u0646\u0634\u062F: \u062A\u0646\u0638\u06CC\u0645\u0627\u062A\u060C \u06A9\u0644\u06CC\u062F \u0631\u0645\u0632\u0646\u06AF\u0627\u0631\u06CC \u06CC\u0627 \u067E\u0627\u06CC\u06AF\u0627\u0647 \u062F\u0627\u062F\u0647 \u0628\u0631\u0631\u0633\u06CC \u0634\u0648\u062F. \u0639\u0645\u0644\u06CC\u0627\u062A \u0627\u0635\u0644\u06CC \u0627\u0646\u062C\u0627\u0645 \u0634\u062F\u0647 \u0627\u0633\u062A."
+  });
+}
+async function notifyAdminAction(env, log) {
+  const title = ACTIONS[log.action];
+  if (!title) return;
+  try {
+    await enqueueFallback(env, {
+      phone: "",
+      userId: null,
+      type: log.action.startsWith("invoice_") ? "report_invoice" : "report_action",
+      title: `\u06AF\u0632\u0627\u0631\u0634 \u0645\u062F\u06CC\u0631\u06CC\u062A | ${title}`,
+      eventKey: `audit:${log.id}`,
+      message: [
+        `\u0627\u0646\u062C\u0627\u0645\u200C\u062F\u0647\u0646\u062F\u0647: ${log.actor.slice(0, 80)}`,
+        log.targetId != null ? `\u0634\u0646\u0627\u0633\u0647 \u0645\u0631\u062A\u0628\u0637: ${log.targetId}` : "",
+        (log.details ?? "").slice(0, 700),
+        `\u0634\u0646\u0627\u0633\u0647 \u06AF\u0632\u0627\u0631\u0634: ${log.id}`
+      ].filter(Boolean).join("\n")
+    }, "event");
+  } catch (error) {
+    await reportFailure(env, "audit", log.id, error);
+  }
+}
+async function notifyAdminInvoice(env, invoiceId) {
+  try {
+    const config = await loadFallbackConfig(env);
+    if (!config.notifyEnabled || config.notifyInvoices === false) return;
+    const row = await env.DB.prepare(`SELECT i.*,u.name AS customer_name,u.phone,s.name AS staff_name
+      FROM invoices i JOIN users u ON u.id=i.user_id LEFT JOIN users s ON s.id=i.registered_by
+      WHERE i.id=? AND i.voided_at IS NULL`).bind(invoiceId).first();
+    if (!row) return;
+    const parsed = safeJsonParse(row.items, []);
+    const items = Array.isArray(parsed) ? parsed.filter((i) => i && typeof i.name === "string") : [];
+    const lines = (Array.isArray(items) ? items : []).slice(0, 10).map((i) => `\u2022 ${String(i.name).slice(0, 60)} \xD7 ${i.qty} | ${formatNumberFa(i.price * i.qty)} \u062A\u0648\u0645\u0627\u0646`);
+    if (items.length > 10) lines.push(`\u0648 ${formatNumberFa(items.length - 10)} \u0631\u062F\u06CC\u0641 \u062F\u06CC\u06AF\u0631\u061B \u062C\u0632\u0626\u06CC\u0627\u062A \u06A9\u0627\u0645\u0644 \u062F\u0631 \u067E\u0646\u0644.`);
+    const message = [
+      `\u0641\u0627\u06A9\u062A\u0648\u0631 #${row.id} | \u0645\u0634\u062A\u0631\u06CC: ${row.customer_name}`,
+      `\u062B\u0628\u062A\u200C\u06A9\u0646\u0646\u062F\u0647: ${row.staff_name ?? "\u06A9\u0627\u0631\u0628\u0631 \u062D\u0630\u0641\u200C\u0634\u062F\u0647"}`,
+      `\u0632\u0645\u0627\u0646 \u062B\u0628\u062A: ${formatJalaliDateTime(row.created_at)}`,
+      `\u062C\u0645\u0639 \u0627\u0642\u0644\u0627\u0645: ${formatNumberFa(row.subtotal)} \u062A\u0648\u0645\u0627\u0646`,
+      `\u062A\u062E\u0641\u06CC\u0641: ${formatNumberFa(row.discount)} \u062A\u0648\u0645\u0627\u0646`,
+      `\u0645\u0628\u0644\u063A \u0646\u0647\u0627\u06CC\u06CC: ${formatNumberFa(row.amount)} \u062A\u0648\u0645\u0627\u0646`,
+      row.payment_method ? `\u067E\u0631\u062F\u0627\u062E\u062A \u0645\u0624\u062B\u0631: \u0646\u0642\u062F ${formatNumberFa(row.paid_cash)} | \u06A9\u0627\u0631\u062A ${formatNumberFa(row.paid_card)} | \u0622\u0646\u0644\u0627\u06CC\u0646 ${formatNumberFa(row.paid_online)} \u062A\u0648\u0645\u0627\u0646` : "\u0627\u0637\u0644\u0627\u0639\u0627\u062A \u0631\u0648\u0634 \u067E\u0631\u062F\u0627\u062E\u062A \u062B\u0628\u062A \u0646\u0634\u062F\u0647 \u0627\u0633\u062A.",
+      row.change_amount ? `\u0628\u0627\u0642\u06CC\u0645\u0627\u0646\u062F\u0647 \u0628\u0631\u06AF\u0634\u062A\u06CC: ${formatNumberFa(row.change_amount)} \u062A\u0648\u0645\u0627\u0646 (\u0627\u0632 \u0646\u0642\u062F \u0645\u0624\u062B\u0631 \u06A9\u0633\u0631 \u0634\u062F\u0647)` : "",
+      `\u0627\u0645\u062A\u06CC\u0627\u0632 \u0627\u06CC\u0646 \u0641\u0627\u06A9\u062A\u0648\u0631: ${formatNumberFa(row.points_earned)}`,
+      ...lines
+    ].filter(Boolean).join("\n");
+    await enqueueFallback(env, {
+      phone: row.phone,
+      userId: row.user_id,
+      type: "report_invoice",
+      title: "\u06AF\u0632\u0627\u0631\u0634 \u0645\u062F\u06CC\u0631\u06CC\u062A | \u0641\u0627\u06A9\u062A\u0648\u0631 \u062C\u062F\u06CC\u062F",
+      eventKey: `invoice:${row.id}`,
+      message
+    }, "event");
+  } catch (error) {
+    await reportFailure(env, "invoice", invoiceId, error);
+  }
+}
 
 // src/lib/auth.ts
 init_utils();
@@ -11495,10 +12419,21 @@ function adminInvoicesPage(input) {
     var correctModal = $('#correct-modal');
     var correctInvoice = null;
 
+    function correctNumber(value) {
+      var text = String(value == null ? '' : value)
+        .replace(/[\u06F0-\u06F9]/g, function(d){ return String('\u06F0\u06F1\u06F2\u06F3\u06F4\u06F5\u06F6\u06F7\u06F8\u06F9'.indexOf(d)); })
+        .replace(/[\u0660-\u0669]/g, function(d){ return String('\u0660\u0661\u0662\u0663\u0664\u0665\u0666\u0667\u0668\u0669'.indexOf(d)); })
+        .replace(/[\\s,\u066C]/g, '');
+      if (!text) return 0;
+      if (!/^[0-9]+$/.test(text)) return NaN;
+      var n = Number(text);
+      return Number.isSafeInteger(n) ? n : NaN;
+    }
+
     function moneyInput(el) {
       el.addEventListener('input', function () {
-        var digits = this.value.replace(/[^0-9]/g, '');
-        this.value = digits ? moneyFa(Number(digits)) : '';
+        var n = correctNumber(this.value);
+        if (Number.isFinite(n)) this.value = this.value.trim() ? moneyFa(n) : '';
         recalcCorrect();
       });
     }
@@ -11511,8 +12446,8 @@ function adminInvoicesPage(input) {
       return correctRows().map(function (row) {
         return {
           name: row.querySelector('[data-f="name"]').value.trim(),
-          qty: Number(row.querySelector('[data-f="qty"]').value.replace(/[^0-9]/g, '')) || 0,
-          price: Number(row.querySelector('[data-f="price"]').value.replace(/[^0-9]/g, '')) || 0
+          qty: correctNumber(row.querySelector('[data-f="qty"]').value),
+          price: correctNumber(row.querySelector('[data-f="price"]').value)
         };
       });
     }
@@ -11520,18 +12455,18 @@ function adminInvoicesPage(input) {
     function recalcCorrect() {
       var items = readCorrectItems();
       var subtotal = items.reduce(function (sum, item) { return sum + item.price * item.qty; }, 0);
-      var discount = Number($('#correct-discount').value.replace(/[^0-9]/g, '')) || 0;
+      var discount = correctNumber($('#correct-discount').value);
       var total = Math.max(0, subtotal - discount);
 
-      $('#correct-subtotal').textContent = moneyFa(subtotal) + ' \u062A\u0648\u0645\u0627\u0646';
-      $('#correct-total').textContent = moneyFa(total) + ' \u062A\u0648\u0645\u0627\u0646';
+      $('#correct-subtotal').textContent = Number.isFinite(subtotal) ? moneyFa(subtotal) + ' \u062A\u0648\u0645\u0627\u0646' : '\u0639\u062F\u062F \u0646\u0627\u0645\u0639\u062A\u0628\u0631';
+      $('#correct-total').textContent = Number.isFinite(total) ? moneyFa(total) + ' \u062A\u0648\u0645\u0627\u0646' : '\u0639\u062F\u062F \u0646\u0627\u0645\u0639\u062A\u0628\u0631';
 
       var paid = ['#correct-cash', '#correct-card', '#correct-online'].reduce(function (sum, sel) {
-        return sum + (Number($(sel).value.replace(/[^0-9]/g, '')) || 0);
+        return sum + (correctNumber($(sel).value));
       }, 0);
       var gap = paid - total;
       var gapEl = $('#correct-gap');
-      gapEl.textContent = (gap > 0 ? '+' : '') + moneyFa(gap) + ' \u062A\u0648\u0645\u0627\u0646';
+      gapEl.textContent = Number.isFinite(gap) ? (gap > 0 ? '+' : '') + moneyFa(gap) + ' \u062A\u0648\u0645\u0627\u0646' : '\u0639\u062F\u062F \u0646\u0627\u0645\u0639\u062A\u0628\u0631';
       gapEl.className = 'font-bold ' + (gap === 0 ? 'text-emerald-300' : gap > 0 ? 'text-sky-300' : 'text-rose-300');
     }
 
@@ -11541,7 +12476,7 @@ function adminInvoicesPage(input) {
       row.className = 'grid grid-cols-[1fr_64px_96px_28px] gap-1.5 items-center';
       row.innerHTML =
         '<input data-f="name" class="field !py-1.5 text-[11.5px]" placeholder="\u0646\u0627\u0645 \u0622\u06CC\u062A\u0645" maxlength="60" value="' + escapeHtml(item.name || '') + '" />' +
-        '<input data-f="qty" class="field !py-1.5 text-[11.5px] text-center" inputmode="numeric" dir="ltr" placeholder="\u06F1" value="' + (item.qty || 1) + '" />' +
+        '<input data-f="qty" class="field !py-1.5 text-[11.5px] text-center" inputmode="numeric" dir="ltr" placeholder="\u06F1" value="' + escapeHtml(String(item.qty || 1)) + '" />' +
         '<input data-f="price" class="field !py-1.5 text-[11.5px] text-left" inputmode="numeric" dir="ltr" placeholder="\u0642\u06CC\u0645\u062A" value="' + (item.price ? moneyFa(item.price) : '') + '" />' +
         '<button type="button" class="btn btn-ghost btn-sm !px-1.5" data-remove-row title="\u062D\u0630\u0641">' + '\u2715' + '</button>';
 
@@ -11553,8 +12488,8 @@ function adminInvoicesPage(input) {
         input.addEventListener('input', recalcCorrect);
       });
       row.querySelector('[data-f="price"]').addEventListener('blur', function () {
-        var digits = this.value.replace(/[^0-9]/g, '');
-        this.value = digits ? moneyFa(Number(digits)) : '';
+        var n = correctNumber(this.value);
+        if (Number.isFinite(n)) this.value = this.value.trim() ? moneyFa(n) : '';
         recalcCorrect();
       });
       $('#correct-rows').appendChild(row);
@@ -11578,7 +12513,7 @@ function adminInvoicesPage(input) {
       var items = [];
       try { items = JSON.parse(correctInvoice.items || '[]'); } catch (e) { items = []; }
       if (!Array.isArray(items) || items.length === 0) {
-        items = [{ name: '\u0641\u0627\u06A9\u062A\u0648\u0631 \u062F\u0633\u062A\u06CC', qty: 1, price: correctInvoice.amount }];
+        items = [{ name: '\u0641\u0627\u06A9\u062A\u0648\u0631 \u062F\u0633\u062A\u06CC', qty: 1, price: Number(correctInvoice.amount) + Number(correctInvoice.discount || 0) }];
       }
       items.forEach(function (item) {
         addCorrectRow({ name: item.name, qty: item.qty, price: item.price });
@@ -11598,7 +12533,7 @@ function adminInvoicesPage(input) {
     });
 
     $('#correct-add-row').addEventListener('click', function () { addCorrectRow({ name: '', qty: 1, price: 0 }); });
-    ['#correct-discount', '#correct-cash', '#correct-card', '#correct-online'].forEach(moneyInput);
+    ['#correct-discount', '#correct-cash', '#correct-card', '#correct-online'].forEach(function(selector){ moneyInput($(selector)); });
 
     function closeCorrect() {
       correctModal.classList.add('hidden');
@@ -11610,7 +12545,7 @@ function adminInvoicesPage(input) {
 
     $('#correct-confirm').addEventListener('click', async function () {
       if (!correctInvoice) return;
-      var items = readCorrectItems().filter(function (item) { return item.name && item.qty > 0; });
+      var items = readCorrectItems();
       var reason = $('#correct-reason').value.trim();
       var errorEl = $('#correct-error');
 
@@ -11619,16 +12554,17 @@ function adminInvoicesPage(input) {
         errorEl.classList.remove('hidden');
       };
 
-      if (items.length === 0) return fail('\u062D\u062F\u0627\u0642\u0644 \u06CC\u06A9 \u0622\u06CC\u062A\u0645 \u0628\u0627 \u062A\u0639\u062F\u0627\u062F \u0645\u0639\u062A\u0628\u0631 \u0644\u0627\u0632\u0645 \u0627\u0633\u062A.');
+      if (!items.length || items.length > 50 || items.some(function(item){ return !item.name || item.name.length > 60 || !Number.isSafeInteger(item.qty) || item.qty < 1 || item.qty > 99 || !Number.isSafeInteger(item.price) || item.price < 0 || item.price > 1000000000; })) return fail('\u0646\u0627\u0645\u060C \u062A\u0639\u062F\u0627\u062F \u06CC\u0627 \u0642\u06CC\u0645\u062A \u0627\u0642\u0644\u0627\u0645 \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A\u061B \u0631\u062F\u06CC\u0641 \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0631\u0627 \u0627\u0635\u0644\u0627\u062D \u06CC\u0627 \u062D\u0630\u0641 \u06A9\u0646\u06CC\u062F.');
       if (reason.length < 3) return fail('\u062F\u0644\u06CC\u0644 \u0627\u0635\u0644\u0627\u062D \u0631\u0627 \u0628\u0646\u0648\u06CC\u0633\u06CC\u062F (\u062D\u062F\u0627\u0642\u0644 \u06F3 \u0646\u0648\u06CC\u0633\u0647).');
 
       var total = items.reduce(function (sum, item) { return sum + item.price * item.qty; }, 0) -
-        (Number($('#correct-discount').value.replace(/[^0-9]/g, '')) || 0);
-      if (total <= 0) return fail('\u0645\u0628\u0644\u063A \u0646\u0647\u0627\u06CC\u06CC \u0628\u0627\u06CC\u062F \u0628\u06CC\u0634\u062A\u0631 \u0627\u0632 \u0635\u0641\u0631 \u0628\u0627\u0634\u062F.');
+        (correctNumber($('#correct-discount').value));
+      if (!Number.isSafeInteger(total) || total <= 0) return fail('\u0645\u0628\u0644\u063A \u0646\u0647\u0627\u06CC\u06CC \u06CC\u0627 \u062A\u062E\u0641\u06CC\u0641 \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.');
 
-      var cash = Number($('#correct-cash').value.replace(/[^0-9]/g, '')) || 0;
-      var card = Number($('#correct-card').value.replace(/[^0-9]/g, '')) || 0;
-      var online = Number($('#correct-online').value.replace(/[^0-9]/g, '')) || 0;
+      var cash = correctNumber($('#correct-cash').value);
+      var card = correctNumber($('#correct-card').value);
+      var online = correctNumber($('#correct-online').value);
+      if ([cash, card, online].some(function(n){ return !Number.isSafeInteger(n) || n < 0; })) return fail('\u0645\u0628\u0644\u063A \u067E\u0631\u062F\u0627\u062E\u062A\u06CC \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.');
       if (cash + card + online < total) return fail('\u0645\u0628\u0644\u063A \u067E\u0631\u062F\u0627\u062E\u062A\u06CC \u06A9\u0645\u062A\u0631 \u0627\u0632 \u0645\u0628\u0644\u063A \u0641\u0627\u06A9\u062A\u0648\u0631 \u0627\u0633\u062A.');
 
       errorEl.classList.add('hidden');
@@ -11639,7 +12575,7 @@ function adminInvoicesPage(input) {
           method: 'POST',
           body: {
             items: items,
-            discount: Number($('#correct-discount').value.replace(/[^0-9]/g, '')) || 0,
+            discount: correctNumber($('#correct-discount').value),
             payment: { cash: cash, card: card, online: online },
             reason: reason
           }
@@ -13059,6 +13995,7 @@ var ACTION_LABELS = {
   shift_close: { label: "\u0628\u0633\u062A\u0646 \u0635\u0646\u062F\u0648\u0642", tone: "info", iconName: "receipt" },
   cash_in: { label: "\u0648\u0631\u0648\u062F \u0646\u0642\u062F \u0628\u0647 \u0635\u0646\u062F\u0648\u0642", tone: "success", iconName: "receipt" },
   cash_out: { label: "\u062E\u0631\u0648\u062C \u0646\u0642\u062F \u0627\u0632 \u0635\u0646\u062F\u0648\u0642", tone: "warning", iconName: "receipt" },
+  database_upgrade: { label: "\u0627\u0631\u062A\u0642\u0627\u06CC \u0633\u0627\u062E\u062A\u0627\u0631 \u062F\u06CC\u062A\u0627\u0628\u06CC\u0633", tone: "info", iconName: "settings" },
   auth_schema_upgrade: { label: "\u0627\u0631\u062A\u0642\u0627\u06CC \u0633\u0627\u0632\u06AF\u0627\u0631\u06CC \u0646\u0634\u0633\u062A", tone: "info", iconName: "shield" },
   password_change: { label: "\u062A\u063A\u06CC\u06CC\u0631 \u0631\u0645\u0632 \u0639\u0628\u0648\u0631", tone: "warning", iconName: "shield" },
   staff_password_reset: { label: "\u0628\u0627\u0632\u0646\u0634\u0627\u0646\u06CC \u0631\u0645\u0632 \u06A9\u0627\u0631\u0645\u0646\u062F", tone: "warning", iconName: "shield" },
@@ -13551,7 +14488,7 @@ function reportsCsv(data) {
 
 // src/index.ts
 var app = new Hono3();
-var APP_BUILD = "auth-native-v3";
+var APP_BUILD = SCHEMA_VERSION;
 function resolveTimeZone2(env) {
   return resolveTimeZone(env.TZ_NAME);
 }
@@ -13669,6 +14606,7 @@ app.use("/login", sameOriginWrite);
 var loginBodyLimit = bodyLimit({ maxSize: 16 * 1024, onError: (c) => fail(c, "\u062D\u062C\u0645 \u0641\u0631\u0645 \u0648\u0631\u0648\u062F \u0628\u06CC\u0634 \u0627\u0632 \u062D\u062F \u0645\u062C\u0627\u0632 \u0627\u0633\u062A.", 413, "BODY_TOO_LARGE") });
 app.use("/login", loginBodyLimit);
 app.use("/api/auth/login", loginBodyLimit);
+app.use("/api/admin/system/schema", loginBodyLimit);
 app.use("/api/*", async (c, next) => {
   if (c.req.method === "GET") {
     await next();
@@ -13681,12 +14619,47 @@ app.use("/api/*", async (c, next) => {
   }
   await next();
 });
+app.use("*", async (c, next) => {
+  const path = c.req.path;
+  const recovery = path === "/admin/system" || path === "/api/admin/system/schema" || path === "/admin/export/backup.json";
+  const auth = ["/api/auth/login", "/api/auth/logout", "/api/auth/session", "/api/auth/me", "/me/login"].includes(path);
+  const business = /^(?:\/admin(?:\/|$)|\/staff(?:\/|$)|\/me(?:\/|$)|\/api\/)/.test(path);
+  const publicWrite = ["/api/auth/register", "/api/auth/otp/request", "/api/auth/otp/verify"].includes(path);
+  if (recovery || auth || path === "/api/health" || !business || !c.get("user") && !publicWrite) return next();
+  const status = await schemaStatus(c.env.DB);
+  if (!status.ready) {
+    if (path.startsWith("/api/")) return fail(c, "\u0633\u0627\u062E\u062A\u0627\u0631 \u062F\u06CC\u062A\u0627\u0628\u06CC\u0633 \u0646\u06CC\u0627\u0632 \u0628\u0647 \u0627\u0631\u062A\u0642\u0627 \u062F\u0627\u0631\u062F. \u0645\u062F\u06CC\u0631 \u0627\u0632 \u0628\u062E\u0634 \u0628\u0631\u0631\u0633\u06CC \u062F\u06CC\u062A\u0627\u0628\u06CC\u0633 \u0627\u0642\u062F\u0627\u0645 \u06A9\u0646\u062F.", 503, "SCHEMA_UPGRADE_REQUIRED");
+    if (c.get("user")?.role === "admin") return c.redirect("/admin/system", 303);
+    return c.html(errorPage(503, "\u0633\u0627\u062E\u062A\u0627\u0631 \u062F\u06CC\u062A\u0627\u0628\u06CC\u0633 \u0628\u0627\u06CC\u062F \u062A\u0648\u0633\u0637 \u0645\u062F\u06CC\u0631 \u0628\u0647\u200C\u0631\u0648\u0632\u0631\u0633\u0627\u0646\u06CC \u0634\u0648\u062F. \u0647\u06CC\u0686 \u0627\u0637\u0644\u0627\u0639\u0627\u062A\u06CC \u062D\u0630\u0641 \u0646\u0634\u062F\u0647 \u0627\u0633\u062A.", c.get("settings").cafe_name), 503);
+  }
+  await next();
+});
+app.get("/admin/system", requirePageRole("admin"), async (c) => {
+  return c.html(maintenancePage(c.get("settings"), await schemaStatus(c.env.DB, true)));
+});
+app.get("/api/admin/system/schema", requireApiRole("admin"), async (c) => {
+  const status = await schemaStatus(c.env.DB, true);
+  return ok(c, { ready: status.ready, remaining: status.pending.length, missing: status.pending.map((p) => p.key), blocked: status.blocked });
+});
+app.post("/api/admin/system/schema", requireApiRole("admin"), async (c) => {
+  let body;
+  try {
+    body = await c.req.json();
+  } catch {
+    return fail(c, "\u062F\u0631\u062E\u0648\u0627\u0633\u062A \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "BAD_JSON");
+  }
+  if (!body || body.confirmBackup !== true || !await verifyBackupReceipt(c.env.JWT_SECRET, c.get("user").uid, body.receipt)) {
+    return fail(c, "\u0627\u0628\u062A\u062F\u0627 \u067E\u0634\u062A\u06CC\u0628\u0627\u0646 \u0631\u0627 \u0627\u0632 \u0647\u0645\u06CC\u0646 \u0635\u0641\u062D\u0647 \u062F\u0631\u06CC\u0627\u0641\u062A \u0648 \u0630\u062E\u06CC\u0631\u0647 \u06A9\u0646\u06CC\u062F\u061B \u062A\u0623\u06CC\u06CC\u062F \u0622\u0646 \u06F1\u06F5 \u062F\u0642\u06CC\u0642\u0647 \u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 409, "BACKUP_REQUIRED");
+  }
+  const before = await schemaStatus(c.env.DB, true);
+  if (before.blocked.length) {
+    return fail(c, "\u0627\u0637\u0644\u0627\u0639\u0627\u062A \u067E\u0627\u06CC\u0647 \u06CC\u0627 \u062A\u0627\u0631\u06CC\u062E\u06CC \u0645\u0641\u0642\u0648\u062F \u0627\u0633\u062A\u061B \u0627\u0631\u062A\u0642\u0627\u06CC \u062E\u0648\u062F\u06A9\u0627\u0631 \u0627\u0645\u0646 \u0646\u06CC\u0633\u062A. Binding \u0648 \u0646\u0633\u062E\u0647\u0654 \u067E\u0634\u062A\u06CC\u0628\u0627\u0646 \u0628\u0627\u06CC\u062F \u0628\u0631\u0631\u0633\u06CC \u0634\u0648\u0646\u062F.", 409, "MANUAL_REVIEW_REQUIRED");
+  }
+  const status = await applySchemaSteps(c.env.DB, c.get("user"));
+  return ok(c, { ready: status.ready, remaining: status.pending.length });
+});
 app.get("/", (c) => {
   const settings = c.get("settings");
-  const user = c.get("user");
-  if (user) {
-    return c.redirect(homeForRole(user.role), 302);
-  }
   return c.html(landingPage(settings));
 });
 app.get("/register", (c) => {
@@ -13697,8 +14670,6 @@ app.get("/register", (c) => {
 });
 app.get("/login", (c) => {
   const settings = c.get("settings");
-  const user = c.get("user");
-  if (user) return c.redirect(homeForRole(user.role), 302);
   const next = (c.req.query("next") ?? "").slice(0, 200);
   const expired = c.req.query("expired") === "1";
   const notice = (c.req.query("e") ?? "").slice(0, 20);
@@ -14335,14 +15306,8 @@ app.get("/api/auth/logout", (c) => {
   clearSessionCookie(c, isSecureRequest(c));
   return c.redirect("/login", 302);
 });
-app.post("/api/auth/logout", (c) => {
-  clearSessionCookie(c, isSecureRequest(c));
-  return ok(c, { loggedOut: true });
-});
 app.get("/me/login", (c) => {
   const settings = c.get("settings");
-  const user = c.get("user");
-  if (user) return c.redirect(homeForRole(user.role), 302);
   return c.html(
     customerLoginPage(settings, {
       expired: c.req.query("expired") === "1",
@@ -15075,6 +16040,24 @@ app.post("/api/admin/sms/test", requireApiRole("admin"), async (c) => {
   );
 });
 app.get("/admin/export/backup.json", requirePageRole("admin"), async (c) => {
+  if (c.req.query("scope") === "upgrade") {
+    try {
+      const snapshot = await upgradeBackup(c.env.DB);
+      const receipt = await backupReceipt(c.env.JWT_SECRET, c.get("user").uid);
+      return new Response(snapshot, { headers: {
+        "Content-Type": "application/json; charset=utf-8",
+        "Content-Disposition": 'attachment; filename="cafe-club-private-upgrade-backup.json"',
+        "X-Upgrade-Receipt": receipt,
+        "Cache-Control": "no-store",
+        "CDN-Cache-Control": "no-store",
+        "Cloudflare-CDN-Cache-Control": "no-store",
+        "Vary": "Cookie"
+      } });
+    } catch (error) {
+      console.error("UPGRADE_BACKUP_FAILED", error);
+      return fail(c, "\u067E\u0634\u062A\u06CC\u0628\u0627\u0646 \u06A9\u0627\u0645\u0644 \u0633\u0627\u062E\u062A\u0647 \u0646\u0634\u062F\u061B \u0627\u0631\u062A\u0642\u0627 \u0622\u063A\u0627\u0632 \u0646\u0645\u06CC\u200C\u0634\u0648\u062F. \u0628\u0631\u0627\u06CC \u062F\u06CC\u062A\u0627\u0628\u06CC\u0633 \u0628\u0632\u0631\u06AF \u06CC\u0627 \u063A\u06CC\u0631\u0645\u0639\u0645\u0648\u0644 \u0627\u0632 D1 Export/Time Travel \u0627\u0633\u062A\u0641\u0627\u062F\u0647 \u06A9\u0646\u06CC\u062F.", 503, "BACKUP_FAILED");
+    }
+  }
   const [usersRes, invoicesRes, couponsRes, settingsRes, smsRes] = await Promise.all([
     c.env.DB.prepare(
       `SELECT id, name, phone, birth_date, points, lifetime_points, tier, referred_by,
@@ -15613,25 +16596,14 @@ app.delete("/api/admin/coupons/:id", requireApiRole("admin"), async (c) => {
   return ok(c, { deactivated: true });
 });
 app.get("/api/health", async (c) => {
-  try {
-    const row = await c.env.DB.prepare("SELECT COUNT(*) AS c FROM users").first();
-    return ok(c, {
-      status: "ok",
-      database: "connected",
-      build: APP_BUILD,
-      users: row?.c ?? 0,
-      time: (/* @__PURE__ */ new Date()).toISOString()
-    });
-  } catch (error) {
-    return c.json(
-      {
-        ok: false,
-        error: "\u0627\u062A\u0635\u0627\u0644 \u0628\u0647 \u062F\u06CC\u062A\u0627\u0628\u06CC\u0633 \u0628\u0631\u0642\u0631\u0627\u0631 \u0646\u06CC\u0633\u062A. \u0622\u06CC\u0627 schema.sql \u0627\u062C\u0631\u0627 \u0634\u062F\u0647 \u0627\u0633\u062A\u061F",
-        detail: error instanceof Error ? error.message : String(error)
-      },
-      500
-    );
-  }
+  const row = await c.env.DB.prepare("SELECT COUNT(*) AS c FROM users").first();
+  return ok(c, {
+    status: "ok",
+    database: "connected",
+    build: APP_BUILD,
+    users: row?.c ?? 0,
+    time: (/* @__PURE__ */ new Date()).toISOString()
+  });
 });
 app.notFound((c) => {
   if (c.req.path.startsWith("/api/")) {
@@ -15644,21 +16616,25 @@ app.notFound((c) => {
   );
 });
 app.onError((error, c) => {
-  console.error("Unhandled error:", error);
-  if (c.req.path.startsWith("/api/")) {
-    return c.json(
-      {
-        ok: false,
-        error: "\u062E\u0637\u0627\u06CC \u062F\u0627\u062E\u0644\u06CC \u0633\u0631\u0648\u0631. \u0644\u0637\u0641\u0627\u064B \u062F\u0648\u0628\u0627\u0631\u0647 \u062A\u0644\u0627\u0634 \u06A9\u0646\u06CC\u062F."
-      },
-      500
-    );
-  }
-  const settings = c.get("settings");
-  return c.html(
-    errorPage(500, "\u062E\u0637\u0627\u06CC \u063A\u06CC\u0631\u0645\u0646\u062A\u0638\u0631\u0647\u200C\u0627\u06CC \u0631\u062E \u062F\u0627\u062F. \u0644\u0637\u0641\u0627\u064B \u0686\u0646\u062F \u0644\u062D\u0638\u0647 \u0628\u0639\u062F \u062F\u0648\u0628\u0627\u0631\u0647 \u062A\u0644\u0627\u0634 \u06A9\u0646\u06CC\u062F.", settings?.cafe_name ?? "\u0628\u0627\u0634\u06AF\u0627\u0647 \u0645\u0634\u062A\u0631\u06CC\u0627\u0646"),
-    500
-  );
+  const requestId = crypto.randomUUID();
+  const schema = isSchemaError(error);
+  if (schema && c.env.DB) invalidateSchemaCache(c.env.DB);
+  console.error("APP_REQUEST_FAILED", { requestId, path: c.req.path, method: c.req.method, error });
+  c.header("X-Request-ID", requestId);
+  c.header("Cache-Control", "no-store");
+  const conflict = c.req.path === "/api/admin/system/schema" && /UNIQUE constraint failed/i.test(String(error));
+  const status = schema ? 503 : conflict ? 409 : 500;
+  const message = conflict ? "\u0648\u062C\u0648\u062F \u062F\u0627\u062F\u0647\u0654 \u062A\u06A9\u0631\u0627\u0631\u06CC \u0645\u0627\u0646\u0639 \u0633\u0627\u062E\u062A \u0627\u06CC\u0646\u062F\u06A9\u0633 \u0627\u0645\u0646 \u0634\u062F. \u0647\u06CC\u0686 \u0631\u06A9\u0648\u0631\u062F\u06CC \u062D\u0630\u0641 \u0646\u0634\u062F\u0647\u061B \u0633\u0648\u0627\u0628\u0642 \u0628\u0627\u06CC\u062F \u062A\u0648\u0633\u0637 \u0645\u062F\u06CC\u0631 \u0628\u0631\u0631\u0633\u06CC \u0634\u0648\u0646\u062F." : schema ? "\u0633\u0627\u062E\u062A\u0627\u0631 \u062F\u06CC\u062A\u0627\u0628\u06CC\u0633 \u0628\u0627 \u0646\u0633\u062E\u0647\u0654 \u0628\u0631\u0646\u0627\u0645\u0647 \u0647\u0645\u200C\u062A\u0631\u0627\u0632 \u0646\u06CC\u0633\u062A. \u0645\u062F\u06CC\u0631 \u0628\u0627\u06CC\u062F \u0627\u0632 \u0628\u062E\u0634 \u0628\u0631\u0631\u0633\u06CC \u0648 \u0627\u0631\u062A\u0642\u0627\u06CC \u062F\u06CC\u062A\u0627\u0628\u06CC\u0633 \u0627\u0642\u062F\u0627\u0645 \u06A9\u0646\u062F." : "\u067E\u0631\u062F\u0627\u0632\u0634 \u062F\u0631\u062E\u0648\u0627\u0633\u062A \u062F\u0631 \u0633\u0631\u0648\u0631 \u0645\u062A\u0648\u0642\u0641 \u0634\u062F. \u0634\u0646\u0627\u0633\u0647\u0654 \u067E\u06CC\u06AF\u06CC\u0631\u06CC \u0631\u0627 \u0628\u0631\u0627\u06CC \u0628\u0631\u0631\u0633\u06CC \u0644\u0627\u06AF \u0646\u06AF\u0647 \u062F\u0627\u0631\u06CC\u062F.";
+  if (c.req.path.startsWith("/api/")) return c.json({
+    ok: false,
+    error: message,
+    code: schema ? "SCHEMA_UPGRADE_REQUIRED" : conflict ? "SCHEMA_DATA_CONFLICT" : "INTERNAL_ERROR",
+    requestId
+  }, status);
+  return c.html(errorPage(status, message, c.get("settings")?.cafe_name ?? "\u0628\u0627\u0634\u06AF\u0627\u0647 \u0645\u0634\u062A\u0631\u06CC\u0627\u0646", {
+    requestId,
+    recovery: c.get("user")?.role === "admin"
+  }), status);
 });
 function generateReadablePassword(length) {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
@@ -15667,6 +16643,10 @@ function generateReadablePassword(length) {
   return Array.from(bytes).map((b) => alphabet[b % alphabet.length]).join("");
 }
 async function scheduled(controller, env, ctx) {
+  if (!(await schemaStatus(env.DB)).ready) {
+    console.warn("CRON_PAUSED_SCHEMA_UPGRADE_REQUIRED");
+    return;
+  }
   if (controller.cron === "* * * * *") {
     const hourBoundary = new Date(controller.scheduledTime).getUTCMinutes() === 0;
     ctx.waitUntil((hourBoundary ? processFallbackQueue(env, true) : drainFallbackQueue(env)).catch(() => console.error("fallback cron failed")));
@@ -15691,7 +16671,9 @@ var index_default = {
   async fetch(request, env, ctx) {
     const response = await app.fetch(request, env, ctx);
     if (["POST", "PUT", "PATCH", "DELETE"].includes(request.method) || request.method === "GET" && new URL(request.url).pathname === "/api/admin/fallback/history" && response.status === 200) {
-      ctx.waitUntil(processFallbackQueue(env).catch(() => console.error("fallback dispatcher failed")));
+      ctx.waitUntil((async () => {
+        if ((await schemaStatus(env.DB)).ready) await processFallbackQueue(env);
+      })().catch(() => console.error("fallback dispatcher failed")));
     }
     return response;
   },

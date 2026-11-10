@@ -82,7 +82,7 @@ try {
   function native(body=credentials,extra={}){return http('/login',{method:'POST',body:new URLSearchParams(body),...extra});}
   await test('native form sets one secure cookie, then server confirms it and reaches role-bound destination',async()=>{
     reset();const l=await native({...credentials,next:'/admin/settings?tab=menu'},{https:true});assert.equal(l.response.status,303);assert.match(l.response.headers.get('cache-control'),/no-store/);assert.equal(l.response.headers.getSetCookie().length,1);
-    const cookie=l.response.headers.get('set-cookie').split(';')[0];const target=l.response.headers.get('location');assert(!target.includes(credentials.password));const done=await http(target,{cookie,https:true});assert.equal(done.response.status,303);assert.equal(done.response.headers.get('location'),'/admin/settings?tab=menu');assert.equal(done.response.headers.get('x-app-build'),'auth-native-v3');
+    const cookie=l.response.headers.get('set-cookie').split(';')[0];const target=l.response.headers.get('location');assert(!target.includes(credentials.password));const done=await http(target,{cookie,https:true});assert.equal(done.response.status,303);assert.equal(done.response.headers.get('location'),'/admin/settings?tab=menu');assert.equal(done.response.headers.get('x-app-build'),'site-recovery-v4');
   });
   await test('legacy login adds only session version, preserves all user data and records the additive upgrade once',async()=>{
     reset();legacy();const before=db.prepare('SELECT * FROM users ORDER BY id').all();const l=await login();assert(hasVersion());const after=db.prepare('SELECT * FROM users ORDER BY id').all();assert.deepEqual(JSON.parse(JSON.stringify(after.map(({token_version,...row})=>row))),JSON.parse(JSON.stringify(before)));assert(after.every(r=>r.token_version===0));
@@ -152,10 +152,10 @@ try {
     const r=await native();assert.equal(r.response.status,429);assert(Number(r.response.headers.get('retry-after'))>0);assert.equal(r.response.headers.get('set-cookie'),null);
   });
   await test('health exposes deployment build identifier but no secret or credentials',async()=>{
-    reset();const r=await http('/api/health');assert.equal(r.json.data.build,'auth-native-v3');assert(!r.text.includes(env.JWT_SECRET));assert(!r.text.includes(credentials.password));
+    reset();const r=await http('/api/health');assert.equal(r.json.data.build,'site-recovery-v4');assert(!r.text.includes(env.JWT_SECRET));assert(!r.text.includes(credentials.password));
   });
-  await test('legacy native login completes all server redirects and renders the actual dashboard',async()=>{
-    reset();legacy();const l=await native();assert.equal(l.response.status,303);const cookie=l.response.headers.get('set-cookie').split(';')[0];const done=await http(l.response.headers.get('location'),{cookie});assert.equal(done.response.status,303);const dashboard=await http(done.response.headers.get('location'),{cookie});assert.equal(dashboard.response.status,200);assert.match(dashboard.text,/text\/javascript|<script/);
+  await test('legacy native login completes auth and safely offers schema recovery before the dashboard',async()=>{
+    reset();legacy();const l=await native();assert.equal(l.response.status,303);const cookie=l.response.headers.get('set-cookie').split(';')[0];const done=await http(l.response.headers.get('location'),{cookie});assert.equal(done.response.status,303);const dashboard=await http(done.response.headers.get('location'),{cookie});assert.equal(dashboard.response.status,303);assert.equal(dashboard.response.headers.get('location'),'/admin/system');
   });
   await test('completion cannot mistake a valid different account for the intended sign-in identity',async()=>{
     reset();const l=await login();const cookie=l.response.headers.get('set-cookie').split(';')[0];const r=await http('/auth/complete?uid=2&next=/admin',{cookie});assert.equal(r.response.status,401);assert.equal(r.response.headers.get('location'),null);

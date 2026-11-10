@@ -37,6 +37,8 @@ CREATE INDEX IF NOT EXISTS idx_users_phone             ON users (phone);
 CREATE INDEX IF NOT EXISTS idx_users_role              ON users (role);
 CREATE INDEX IF NOT EXISTS idx_users_referred_by       ON users (referred_by);
 CREATE INDEX IF NOT EXISTS idx_users_referral_code     ON users (referral_code);
+-- Also enforces uniqueness when referral_code was added to an older users table.
+CREATE UNIQUE INDEX IF NOT EXISTS ux_users_referral_code ON users (referral_code) WHERE referral_code IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_users_last_visit_date   ON users (last_visit_date);
 CREATE INDEX IF NOT EXISTS idx_users_birth_date        ON users (birth_date);
 CREATE INDEX IF NOT EXISTS idx_users_created_at        ON users (created_at);

@@ -9,3 +9,5 @@ single-file/
 backup-*.sql
 
 .cache/
+
+cafe-club-private-upgrade-backup*.json

@@ -24,6 +24,7 @@ const ACTION_LABELS: Record<string, { label: string; tone: string; iconName: str
   shift_close: { label: 'بستن صندوق', tone: 'info', iconName: 'receipt' },
   cash_in: { label: 'ورود نقد به صندوق', tone: 'success', iconName: 'receipt' },
   cash_out: { label: 'خروج نقد از صندوق', tone: 'warning', iconName: 'receipt' },
+  database_upgrade: { label: 'ارتقای ساختار دیتابیس', tone: 'info', iconName: 'settings' },
   auth_schema_upgrade: { label: 'ارتقای سازگاری نشست', tone: 'info', iconName: 'shield' },
   password_change: { label: 'تغییر رمز عبور', tone: 'warning', iconName: 'shield' },
   staff_password_reset: { label: 'بازنشانی رمز کارمند', tone: 'warning', iconName: 'shield' },

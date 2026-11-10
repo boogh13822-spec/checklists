@@ -108,6 +108,25 @@ try{
   await test('env-sourced token is explained and not editable in browser',async()=>{
     cfg.channels[0]={channel:'telegram',chatId:'123',hasToken:true,tokenSource:'env'};await panel.locator('#fallback-reload').click();await panel.waitForFunction(()=>document.getElementById('fb-telegram-source').textContent.includes('Secret'));assert(await panel.locator('#fb-telegram-token').isDisabled());
   });
+  let correctionPage, correctionId;
+  await test('invoice page initializes correction controls and preserves Persian-formatted original amounts',async()=>{
+    const phone='0912'+String(Math.floor(Math.random()*9000000)+1000000);
+    const customer=(await request('/api/admin/customers',{method:'POST',body:{name:'مشتری تست مرورگر اصلاح',phone,birth_date:'1992-05-05',sms_opt_in:0}})).data;
+    const invoice=(await request('/api/staff/invoices',{method:'POST',body:{userId:customer.id,items:[{name:'قهوه تست اصلاح',qty:2,price:12500}],payment:{cash:25000},clientRequestId:'browser-correction-'+Date.now()}})).data;
+    correctionId=invoice.invoiceId;correctionPage=await pageFor(admin);await correctionPage.goto(BASE+'/admin/invoices');await correctionPage.locator('[data-correct-id="'+correctionId+'"]').click();await correctionPage.waitForFunction(()=>!document.getElementById('correct-modal').classList.contains('hidden'));assert((await correctionPage.locator('#correct-total').innerText()).replace(/[,٬]/g,'').includes('۲۵۰۰۰'));
+  });
+  await test('invalid correction row is rejected rather than silently dropped or submitted',async()=>{
+    let posts=0;const listener=r=>{if(r.method()==='POST'&&r.url().includes('/correct'))posts++;};correctionPage.on('request',listener);
+    await correctionPage.locator('#correct-rows [data-f="price"]').fill('-100');await correctionPage.locator('#correct-reason').fill('آزمون اعتبارسنجی');await correctionPage.locator('#correct-confirm').click();assert((await correctionPage.locator('#correct-error').innerText()).includes('نامعتبر'));assert.equal(posts,0);correctionPage.off('request',listener);
+  });
+  await test('real browser submits Persian/Arabic correction numbers exactly and server persists the replacement invoice',async()=>{
+    await correctionPage.locator('#correct-rows [data-f="qty"]').fill('٢');await correctionPage.locator('#correct-rows [data-f="price"]').fill('١٣٬٠٠٠');await correctionPage.locator('#correct-rows [data-f="price"]').blur();await correctionPage.locator('#correct-discount').fill('۱ ۰۰۰');await correctionPage.locator('#correct-cash').fill('۲۵٬۰۰۰');
+    assert((await correctionPage.locator('#correct-total').innerText()).replace(/[,٬]/g,'').includes('۲۵۰۰۰'));
+    const reply=correctionPage.waitForResponse(r=>r.request().method()==='POST'&&r.url().endsWith('/api/admin/invoices/'+correctionId+'/correct'));
+    await correctionPage.locator('#correct-confirm').click();const response=await reply;const payload=response.request().postDataJSON();assert.equal(payload.items[0].qty,2);assert.equal(payload.items[0].price,13000);assert.equal(payload.discount,1000);assert.equal(payload.payment.cash,25000);const out=await response.json();assert(response.ok(),JSON.stringify(out));
+    const replacement=(await request('/api/admin/invoices/'+out.data.newInvoiceId)).data;assert.equal(replacement.amount,25000);assert.equal(replacement.discount,1000);assert.equal(replacement.paid_cash,25000);assert((await request('/api/admin/invoices/'+correctionId)).data.voided_at);
+    await correctionPage.waitForTimeout(1000);
+  });
   await test('all tested pages have zero uncaught JavaScript errors',async()=>assert.deepEqual(errors,[]));
   console.log(`\n${passed}/${passed} real Chromium checks passed (CDN blocked, messenger UI fixtures; no live provider verification).`);
 }finally{
