@@ -1628,7 +1628,7 @@ export function adminInvoicesPage(input: {
           '<div class="flex items-center justify-between"><span class="text-cream/50">شماره فاکتور</span><span class="font-bold">#' + fa(invoice.id) + '</span></div>' +
           '<div class="flex items-center justify-between"><span class="text-cream/50">مشتری</span><span class="font-bold">' + escapeHtml(invoice.customer_name || '—') + ' <span class="text-cream/35 font-mono text-[11px]" dir="ltr">' + escapeHtml(invoice.customer_phone || '') + '</span></span></div>' +
           '<div class="flex items-center justify-between"><span class="text-cream/50">ثبت‌کننده</span><span>' + escapeHtml(invoice.staff_name || '—') + '</span></div>' +
-          '<div class="flex items-center justify-between"><span class="text-cream/50">زمان ثبت</span><span>' + formatJalaliDateTime(invoice.created_at) + '</span></div>' +
+          '<div class="flex items-center justify-between"><span class="text-cream/50">زمان ثبت</span><span>' + formatJalaliDateTimeClient(invoice.created_at) + '</span></div>' +
         '</div>' +
         '<div class="rounded-xl bg-black/25 border border-white/10 p-3 mb-3">' + (rows || '<p class="text-cream/40 text-[11px]">آیتمی ثبت نشده است.</p>') + '</div>' +
         '<div class="space-y-1.5 mb-3">' +
@@ -1643,7 +1643,7 @@ export function adminInvoicesPage(input: {
           }).join('') +
         '</div>' +
         (invoice.voided_at
-          ? '<div class="mt-3 rounded-xl bg-rose-500/10 border border-rose-400/25 p-3 text-[11.5px] text-rose-200">این فاکتور در ' + formatJalaliDateTime(invoice.voided_at) + ' باطل شده است.<br>دلیل: ' + escapeHtml(invoice.void_reason || '—') + '</div>'
+          ? '<div class="mt-3 rounded-xl bg-rose-500/10 border border-rose-400/25 p-3 text-[11.5px] text-rose-200">این فاکتور در ' + formatJalaliDateTimeClient(invoice.voided_at) + ' باطل شده است.<br>دلیل: ' + escapeHtml(invoice.void_reason || '—') + '</div>'
           : '');
     }
   `;

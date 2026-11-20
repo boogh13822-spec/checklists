@@ -1,4 +1,4 @@
-import { can, LEGACY_STAFF_PERMISSIONS, validatePermissions, type StaffPermission } from './lib/permissions';
+import { personnelRole, can, LEGACY_STAFF_PERMISSIONS, validatePermissions, type StaffPermission } from './lib/permissions';
 import { customerSearchText, customerSearchPattern } from './lib/db';
 /**
  * ============================================================================
@@ -137,7 +137,7 @@ import { adminLogsCsv, adminLogsPage, adminReportsPage, reportsCsv } from './ui/
  * ========================================================================== */
 
 const app = new Hono<AppEnv>();
-const APP_BUILD = 'customer-workflow-v6';
+const APP_BUILD = 'customer-staff-fixes-v7';
 
 /**
  * منطقه‌ی زمانی از متغیر محیطی TZ_NAME (پیش‌فرض Asia/Tehran).
@@ -534,7 +534,7 @@ app.get('/admin/shifts', requirePageRole('admin'), async (c) => {
   });
 
   const [staffOptions, openShifts] = await Promise.all([
-    c.env.DB.prepare(`SELECT id, name FROM users WHERE role IN ('staff','admin') ORDER BY name ASC`).all<{
+    c.env.DB.prepare(`SELECT id, name FROM users WHERE (role IN ('staff','admin') OR (role='customer' AND staff_role IN ('staff','admin'))) ORDER BY name ASC`).all<{
       id: number;
       name: string;
     }>(),
@@ -801,7 +801,7 @@ app.get('/admin/invoices', requirePageRole('admin'), async (c) => {
   });
 
   const staffOptions = await c.env.DB.prepare(
-    `SELECT id, name FROM users WHERE role IN ('staff','admin') ORDER BY name ASC`
+    `SELECT id, name FROM users WHERE (role IN ('staff','admin') OR (role='customer' AND staff_role IN ('staff','admin'))) ORDER BY name ASC`
   ).all<{ id: number; name: string }>();
 
   return c.html(
@@ -1064,7 +1064,7 @@ async function handleStaffLogin(c: Context<AppEnv>) {
     await logLoginFailure(c, phone, user ? 'wrong_password' : 'unknown_phone');
     return reject('شماره موبایل یا رمز عبور اشتباه است.', 401, 'INVALID_CREDENTIALS');
   }
-  if (user.role !== 'staff' && user.role !== 'admin') {
+  if (!personnelRole(user)) {
     await logLoginFailure(c, phone, 'not_staff');
     return reject(
       'این حساب مشتری است؛ از صفحهٔ «باشگاه من» با کد پیامکی وارد شوید.',
@@ -1072,7 +1072,7 @@ async function handleStaffLogin(c: Context<AppEnv>) {
       'WRONG_PORTAL'
     );
   }
-  if (user.is_active !== 1) {
+  if (user.is_active !== 1 || (user.role === 'customer' && user.staff_active !== 1)) {
     await logLoginFailure(c, phone, 'inactive');
     return reject('حساب شما غیرفعال شده است. با مدیر تماس بگیرید.', 403, 'ACCOUNT_DISABLED');
   }
@@ -1083,11 +1083,12 @@ async function handleStaffLogin(c: Context<AppEnv>) {
     console.error('AUTH_SESSION_SCHEMA_UNAVAILABLE', error);
     return reject('ساخت نشست امن ممکن نشد. مدیر باید دسترسی و ساختار دیتابیس را بررسی کند.', 503, 'AUTH_SCHEMA_UNAVAILABLE');
   }
-  if (!user || user.is_active !== 1 || (user.role !== 'staff' && user.role !== 'admin') || user.password_hash !== verifiedHash) {
+  if (!user || user.is_active !== 1 || !personnelRole(user) || (user.role === 'customer' && user.staff_active !== 1) || user.password_hash !== verifiedHash) {
     return reject('اطلاعات حساب تغییر کرده است. لطفاً دوباره وارد شوید.', 401, 'CREDENTIALS_CHANGED');
   }
   resetRateLimit(rateKey);
 
+  user = {...user, role:personnelRole(user)!};
   const ttl = sessionTtl(c.env);
   const token = await createToken(secret, user, ttl);
   setSessionCookie(c, token, isSecureRequest(c), ttl);
@@ -1369,7 +1370,7 @@ app.get('/api/auth/me', async (c) => {
       id: dbUser.id,
       name: dbUser.name,
       phone: dbUser.phone,
-      role: dbUser.role,
+      role: user.role,
     },
   });
 });
@@ -1741,8 +1742,11 @@ app.post('/api/admin/customers/:id/deactivate', requireApiRole('admin'), async (
   const id = toPositiveInt(c.req.param('id'), 0);
   if (!id) return fail(c, 'شناسه نامعتبر است.', 400, 'INVALID_ID');
 
+  const linked=await findUserById(c.env.DB,id);
+  if(linked && personnelRole(linked))return fail(c,'ابتدا دسترسی پرسنلی را از بخش کارکنان بردارید؛ عضویت مشتری جداگانه مدیریت می‌شود.',409,'CUSTOMER_HAS_STAFF_ACCESS');
+
   const result = await c.env.DB.prepare(
-    `UPDATE users SET is_active = 0 WHERE id = ? AND role = 'customer'`
+    `UPDATE users SET is_active = 0 WHERE id = ? AND role = 'customer' AND staff_role IS NULL`
   )
     .bind(id)
     .run();
@@ -2139,10 +2143,13 @@ app.delete('/api/admin/customers/:id', requireApiRole('admin'), async (c) => {
     return fail(c, 'مشتری یافت نشد.', 404, 'NOT_FOUND');
   }
 
+  if (personnelRole(user)) return fail(c,'این مشتری دسترسی پرسنلی دارد؛ ابتدا دسترسی را از بخش کارکنان بردارید.',409,'CUSTOMER_HAS_STAFF_ACCESS');
+
   // فاکتورها، کدهای تخفیف و لاگ‌های پیامک طبق کلیدهای خارجی مدیریت می‌شوند
-  await c.env.DB.prepare("DELETE FROM users WHERE id = ? AND role = 'customer'")
+  const removed = await c.env.DB.prepare("DELETE FROM users WHERE id = ? AND role = 'customer' AND staff_role IS NULL")
     .bind(id)
     .run();
+  if (!removed.meta?.changes) return fail(c,'وضعیت حساب تغییر کرد؛ دوباره بررسی کنید.',409,'ACCOUNT_CHANGED');
 
   await audit(c, 'customer_delete', {
     targetType: 'customer',
@@ -2631,7 +2638,18 @@ app.post('/api/admin/staff', requireApiRole('admin'), async (c) => {
   }
 
   const exists = await findUserByPhone(c.env.DB, phone);
-  if (exists) return fail(c, 'این شماره موبایل قبلاً ثبت شده است.', 409, 'PHONE_EXISTS');
+  if (exists) {
+    if (exists.role !== 'customer' || personnelRole(exists)) return fail(c,'این شماره قبلاً دسترسی پرسنلی دارد.',409,'PHONE_EXISTS');
+    if (exists.is_active !== 1) return fail(c,'ابتدا وضعیت عضویت مشتری را بررسی و فعال کنید.',409,'CUSTOMER_INACTIVE');
+    if (body.confirmExistingCustomer !== true) return fail(c,'این شماره عضو باشگاه است؛ افزودن دسترسی پرسنلی با حفظ حساب، نام، امتیاز و خریدهای مشتری را تأیید کنید.',409,'CONFIRM_CUSTOMER_STAFF');
+    const passwordHash=await hashPassword(password);
+    const linked=await c.env.DB.prepare(`UPDATE users SET staff_role=?,staff_active=1,password_hash=?,permissions=?,token_version=token_version+1
+      WHERE id=? AND role='customer' AND staff_role IS NULL AND is_active=1 RETURNING id`)
+      .bind(role,passwordHash,JSON.stringify(body.permissions ?? LEGACY_STAFF_PERMISSIONS),exists.id).first<{id:number}>();
+    if(!linked)return fail(c,'وضعیت حساب تغییر کرد؛ دوباره بررسی کنید.',409,'ACCOUNT_CHANGED');
+    await audit(c,'staff_customer_link',{targetType:'user',targetId:exists.id,details:'دسترسی پرسنلی با حفظ عضویت مشتری اضافه شد.'});
+    return ok(c,{id:exists.id,name:exists.name,phone:exists.phone,role,customerPreserved:true},201);
+  }
 
   const passwordHash = await hashPassword(password);
   const referralCode = generateCouponCode('REF');
@@ -2671,7 +2689,7 @@ app.put('/api/admin/staff/:id', requireApiRole('admin'), async (c) => {
   if (body.permissions !== undefined && !validatePermissions(body.permissions)) return fail(c,'دسترسی‌ها نامعتبرند.',400,'INVALID_PERMISSIONS');
   if (body.role !== undefined && !['staff','admin'].includes(String(body.role))) return fail(c,'نقش نامعتبر است.',400,'INVALID_ROLE');
   const target = await findUserById(c.env.DB, id);
-  if (!target || (target.role !== 'staff' && target.role !== 'admin')) {
+  if (!target || !personnelRole(target)) {
     return fail(c, 'کاربر یافت نشد.', 404, 'NOT_FOUND');
   }
 
@@ -2680,9 +2698,9 @@ app.put('/api/admin/staff/:id', requireApiRole('admin'), async (c) => {
     if (id === currentUser.uid && nextActive === 0) {
       return fail(c, 'نمی‌توانید حساب خودتان را غیرفعال کنید.', 400, 'SELF_DISABLE');
     }
-    if (nextActive === 0 && target.role === 'admin') {
+    if (nextActive === 0 && personnelRole(target) === 'admin') {
       const adminCount = await c.env.DB.prepare(
-        `SELECT COUNT(*) AS c FROM users WHERE role = 'admin' AND is_active = 1`
+        `SELECT COUNT(*) AS c FROM users WHERE is_active = 1 AND (role = 'admin' OR (role='customer' AND staff_role='admin' AND staff_active=1))`
       ).first<{ c: number }>();
       if ((adminCount?.c ?? 0) <= 1) {
         return fail(c, 'حداقل یک ادمین فعال باید باقی بماند.', 400, 'LAST_ADMIN');
@@ -2693,13 +2711,20 @@ app.put('/api/admin/staff/:id', requireApiRole('admin'), async (c) => {
 
   if (body.role !== undefined) {
     const nextRole: Role = body.role === 'admin' ? 'admin' : 'staff';
+    if(nextRole !== 'admin' && personnelRole(target)==='admin') {
+      const count=await c.env.DB.prepare("SELECT COUNT(*) AS c FROM users WHERE is_active=1 AND (role='admin' OR (role='customer' AND staff_role='admin' AND staff_active=1))").first<{c:number}>();
+      if((count?.c ?? 0)<=1)return fail(c,'حداقل یک ادمین فعال باید باقی بماند.',400,'LAST_ADMIN');
+    }
     if (id === currentUser.uid && nextRole !== 'admin') {
       return fail(c, 'نمی‌توانید نقش خودتان را تغییر دهید.', 400, 'SELF_ROLE');
     }
 
   }
 
-  await c.env.DB.prepare('UPDATE users SET is_active=?,role=?,permissions=? WHERE id=?').bind(body.is_active === undefined ? target.is_active : Number(body.is_active) === 1 ? 1 : 0,body.role ?? target.role,body.permissions === undefined ? target.permissions ?? null : JSON.stringify(body.permissions),id).run();
+  const dual = target.role === 'customer';
+  await c.env.DB.prepare(dual ? 'UPDATE users SET staff_active=?,staff_role=?,permissions=? WHERE id=?' : 'UPDATE users SET is_active=?,role=?,permissions=? WHERE id=?')
+    .bind(body.is_active === undefined ? (dual ? target.staff_active ?? 1 : target.is_active) : Number(body.is_active) === 1 ? 1 : 0,
+      body.role ?? personnelRole(target),body.permissions === undefined ? target.permissions ?? null : JSON.stringify(body.permissions),id).run();
   await audit(c,'staff_permissions_update',{targetType:'staff',targetId:id,details:'دسترسی یا وضعیت کارمند به‌روزرسانی شد؛ اعمال در درخواست بعدی.'});
   return ok(c, { updated: true });
 });
@@ -2709,7 +2734,7 @@ app.post('/api/admin/staff/:id/password', requireApiRole('admin'), async (c) => 
   if (!id) return fail(c, 'شناسه نامعتبر است.', 400, 'INVALID_ID');
 
   const target = await findUserById(c.env.DB, id);
-  if (!target || (target.role !== 'staff' && target.role !== 'admin')) {
+  if (!target || !personnelRole(target)) {
     return fail(c, 'کاربر یافت نشد.', 404, 'NOT_FOUND');
   }
 
@@ -2739,20 +2764,26 @@ app.delete('/api/admin/staff/:id', requireApiRole('admin'), async (c) => {
   if (id === currentUser.uid) return fail(c, 'نمی‌توانید حساب خودتان را حذف کنید.', 400, 'SELF_DELETE');
 
   const target = await findUserById(c.env.DB, id);
-  if (!target || (target.role !== 'staff' && target.role !== 'admin')) {
+  if (!target || !personnelRole(target)) {
     return fail(c, 'کاربر یافت نشد.', 404, 'NOT_FOUND');
   }
 
-  if (target.role === 'admin') {
+  if (personnelRole(target) === 'admin') {
     const adminCount = await c.env.DB.prepare(
-      `SELECT COUNT(*) AS c FROM users WHERE role = 'admin' AND is_active = 1`
+      `SELECT COUNT(*) AS c FROM users WHERE is_active = 1 AND (role = 'admin' OR (role='customer' AND staff_role='admin' AND staff_active=1))`
     ).first<{ c: number }>();
     if ((adminCount?.c ?? 0) <= 1) {
       return fail(c, 'حداقل یک ادمین فعال باید باقی بماند.', 400, 'LAST_ADMIN');
     }
   }
 
-  await c.env.DB.prepare('DELETE FROM users WHERE id = ?').bind(id).run();
+  if(target.role === 'customer') {
+    const openShift = await getOpenShift(c.env.DB,id);
+    if(openShift)return fail(c,'ابتدا شیفت باز این کارمند را ببندید.',409,'OPEN_SHIFT');
+    await c.env.DB.prepare('UPDATE users SET staff_role=NULL,staff_active=1,password_hash=NULL,permissions=NULL,token_version=token_version+1 WHERE id=?').bind(id).run();
+  } else {
+    await c.env.DB.prepare('DELETE FROM users WHERE id = ?').bind(id).run();
+  }
   await audit(c, 'staff_delete', { targetType: 'user', targetId: id, details: `کاربر «${target.name}» حذف شد.` });
   return ok(c, { deleted: true });
 });

@@ -490,7 +490,7 @@ export async function runMonthlyReport(
   );
 
   const { results: admins } = await env.DB.prepare(
-    `SELECT id, name, phone FROM users WHERE role = 'admin' AND is_active = 1 LIMIT 6`
+    `SELECT id, name, phone FROM users WHERE is_active=1 AND (role='admin' OR (role='customer' AND staff_role='admin' AND staff_active=1)) LIMIT 6`
   ).all<{ id: number; name: string; phone: string }>();
 
   const message =

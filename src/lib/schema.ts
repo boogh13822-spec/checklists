@@ -3,7 +3,7 @@ import { sign, verify } from 'hono/jwt';
 import { SCHEMA_TABLES, SCHEMA_INDEXES } from './schema-manifest';
 import { logAdminAction } from './db';
 
-export const SCHEMA_VERSION = 'customer-workflow-v6';
+export const SCHEMA_VERSION = 'customer-staff-fixes-v7';
 type Step = { key: string; sql: string; baseline?: boolean; blocked?: boolean };
 export type SchemaStatus = { ready: boolean; pending: Step[]; blocked: string[] };
 const readyCache = new WeakMap<D1Database, number>();

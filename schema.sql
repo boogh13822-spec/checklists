@@ -15,6 +15,8 @@ CREATE TABLE IF NOT EXISTS users (
   phone              TEXT    NOT NULL UNIQUE,
   nickname           TEXT NOT NULL DEFAULT '',
   permissions        TEXT DEFAULT NULL,
+  staff_role         TEXT DEFAULT NULL,                      -- optional staff/admin access for a customer
+  staff_active       INTEGER NOT NULL DEFAULT 1,              -- personnel access only; customer membership is separate
   birth_date         TEXT,                                   -- قالب YYYY-MM-DD
   points             INTEGER NOT NULL DEFAULT 0,             -- موجودی امتیاز (قابل خرج)
   lifetime_points    INTEGER NOT NULL DEFAULT 0,             -- مجموع امتیازهای کسب‌شده (مبنای سطح)

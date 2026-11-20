@@ -144,7 +144,7 @@ export function staffPage(
             <div id="customer-choices" class="space-y-2 mt-3" role="status"></div>
             <div ${allowed('customer.list') ? '' : 'hidden'} class="flex gap-2 mt-3"><button id="customer-list" type="button" class="btn btn-ghost btn-sm">فهرست مشتریان</button><button id="customer-list-prev" type="button" class="btn btn-ghost btn-sm" disabled>قبلی</button><button id="customer-list-next" type="button" class="btn btn-ghost btn-sm" disabled>بعدی</button></div>
             <details id="quick-customer" ${allowed('customer.create') ? '' : 'hidden'} class="mt-4 rounded-xl border border-white/10 p-3"><summary class="cursor-pointer font-bold text-sm">ثبت مشتری جدید ${allowed('invoice.create') ? 'و ادامه به فاکتور' : ''}</summary>
-              <div class="space-y-3 mt-3"><p class="hint">شماره را در کادر بالا وارد کنید. تولد و معرف را بعداً مدیر می‌تواند تکمیل کند.</p><label class="label" for="quick-name">نام مشتری</label><input id="quick-name" class="field" maxlength="60" /><label class="label" for="quick-nickname">لقب (اختیاری)</label><input id="quick-nickname" class="field" maxlength="40" /><label class="flex gap-2 text-xs"><input id="quick-sms" type="checkbox" /> مشتری رضایت دریافت پیامک دارد</label><button id="quick-save" type="button" class="btn btn-primary btn-sm">ثبت مشتری ${allowed('invoice.create') ? 'و انتخاب برای فاکتور' : ''}</button><p id="quick-result" class="hint" role="status"></p></div>
+              <div class="space-y-3 mt-3"><p class="hint">شماره را در کادر بالا وارد کنید. تاریخ تولد اختیاری است؛ در صورت اطلاع تیک آن را بزنید.</p><label class="label" for="quick-name">نام مشتری</label><input id="quick-name" class="field" maxlength="60" /><label class="label" for="quick-nickname">لقب (اختیاری)</label><input id="quick-nickname" class="field" maxlength="40" /><label class="flex gap-2 text-xs"><input id="quick-birth-known" type="checkbox" /> تاریخ تولد را می‌دانم (شمسی)</label><div class="grid grid-cols-3 gap-2"><select id="quick-day" aria-label="روز تولد" class="field"></select><select id="quick-month" aria-label="ماه تولد" class="field">${['فروردین','اردیبهشت','خرداد','تیر','مرداد','شهریور','مهر','آبان','آذر','دی','بهمن','اسفند'].map((name,i)=>`<option value="${i+1}">${name}</option>`).join('')}</select><select id="quick-year" aria-label="سال تولد" class="field"></select></div><label class="flex gap-2 text-xs"><input id="quick-sms" type="checkbox" /> مشتری رضایت دریافت پیامک دارد</label><button id="quick-save" type="button" class="btn btn-primary btn-sm">ثبت مشتری ${allowed('invoice.create') ? 'و انتخاب برای فاکتور' : ''}</button><p id="quick-result" class="hint" role="status"></p></div>
             </details>
             <div id="search-state" class="mt-4"></div>
 
@@ -920,12 +920,17 @@ export function staffPage(
     $('#customer-list').addEventListener('click',function(){if(CAN_LIST){choicePage=1;loadChoices(false);}});
     $('#customer-list-prev').addEventListener('click',function(){if(CAN_LIST&&choicePage>1){choicePage--;loadChoices(false);}});
     $('#customer-list-next').addEventListener('click',function(){if(CAN_LIST){choicePage++;loadChoices(false);}});
+    initJalaliPickers($('#quick-day'),$('#quick-month'),$('#quick-year'),'',110);
+    function quickBirthState(){['day','month','year'].forEach(function(key){$('#quick-'+key).disabled=!$('#quick-birth-known').checked;});}
+    $('#quick-birth-known').addEventListener('change',quickBirthState);quickBirthState();
     $('#quick-save').addEventListener('click',async function(){
       if(!CAN_CREATE||creatingCustomer||submitting||pendingInvoice)return;var phone=normalizePhone(phoneInput.value),name=$('#quick-name').value.trim();
       if(!/^09\\d{9}$/.test(phone)||name.length<2){$('#quick-result').textContent='نام کامل و شمارهٔ معتبر را وارد کنید.';return;}
+      var birth=$('#quick-birth-known').checked ? readJalaliPickers($('#quick-day'),$('#quick-month'),$('#quick-year')) : '';
+      if(birth===null){$('#quick-result').textContent='تاریخ تولد را کامل و درست انتخاب کنید.';return;}
       creatingCustomer=true;var button=this;setLoading(button,true,'در حال ثبت…');phoneInput.disabled=true;$('#search-btn').disabled=true;
-      try{await api('/api/staff/customers',{method:'POST',body:{name:name,phone:phone,nickname:$('#quick-nickname').value.trim(),sms_opt_in:$('#quick-sms').checked,birth_date:''}});
-        $('#quick-result').textContent='مشتری ثبت شد.';$('#quick-name').value='';$('#quick-nickname').value='';$('#quick-sms').checked=false;$('#quick-customer').open=false;
+      try{await api('/api/staff/customers',{method:'POST',body:{name:name,phone:phone,nickname:$('#quick-nickname').value.trim(),sms_opt_in:$('#quick-sms').checked,birth_date:birth}});
+        $('#quick-result').textContent='مشتری ثبت شد.';$('#quick-name').value='';$('#quick-nickname').value='';$('#quick-sms').checked=false;$('#quick-birth-known').checked=false;quickBirthState();$('#quick-customer').open=false;
         creatingCustomer=false;phoneInput.value=phone;
         if(CAN_INVOICE){await searchCustomer();if(customer){$('#manual-amount').focus();$('#quick-result').textContent='مشتری انتخاب شد؛ فاکتور را در همین صفحه ثبت کنید.';}}
         else{phoneInput.value='';toast('مشتری ثبت شد.','success');}

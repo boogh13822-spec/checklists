@@ -1572,16 +1572,17 @@ export type StaffListItem = {
   is_active: number;
   created_at: string;
   invoices_count: number;
+  customer_member?: number;
   permissions?: string | null;
 };
 
 export async function listStaff(db: D1Database): Promise<StaffListItem[]> {
   const { results } = await db
     .prepare(
-      `SELECT u.id, u.name, u.phone, u.role, u.is_active, u.created_at, u.permissions,
+      `SELECT u.id, u.name, u.phone, CASE WHEN u.role='customer' THEN u.staff_role ELSE u.role END AS role, CASE WHEN u.role='customer' THEN u.staff_active ELSE u.is_active END AS is_active, u.created_at, u.permissions, (u.role='customer') AS customer_member,
               (SELECT COUNT(*) FROM invoices i WHERE i.registered_by = u.id AND i.voided_at IS NULL) AS invoices_count
        FROM users u
-       WHERE u.role IN ('staff', 'admin')
+       WHERE u.role IN ('staff', 'admin') OR (u.role='customer' AND u.staff_role IN ('staff','admin'))
        ORDER BY u.role ASC, u.id ASC`
     )
     .all<StaffListItem>();

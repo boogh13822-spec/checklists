@@ -38,6 +38,8 @@ export type UserRow = {
   id: number;
   name: string;
   phone: string;
+  staff_role?: 'staff' | 'admin' | null;
+  staff_active?: number;
   nickname?: string;
   permissions?: string | null;
   birth_date: string | null;

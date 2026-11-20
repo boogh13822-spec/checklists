@@ -20,6 +20,7 @@ const ACTION_LABELS: Record<string, { label: string; tone: string; iconName: str
   fallback_settings_update: { label: 'تنظیم پیام‌های ادمین', tone: 'info', iconName: 'settings' },
   fallback_manual: { label: 'پیام دستی مدیر', tone: 'info', iconName: 'chat' },
   fallback_delivery_failed: { label: 'خطای ارسال به ادمین', tone: 'danger', iconName: 'warning' },
+  staff_customer_link: { label: 'افزودن دسترسی پرسنلی به عضو باشگاه', tone: 'info', iconName: 'shield' },
   staff_permissions_update: { label: 'تغییر دسترسی کارمند', tone: 'info', iconName: 'shield' },
   fallback_diagnose: { label: 'بررسی ارتباط بدون ارسال', tone: 'info', iconName: 'shield' },
   fallback_test: { label: 'تست اتصال پیام‌رسان', tone: 'muted', iconName: 'chat' },

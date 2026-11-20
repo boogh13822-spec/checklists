@@ -437,6 +437,15 @@ export const CORE_JS = `
     return out;
   };
 
+  window.formatJalaliDateTimeClient = function (value) {
+    if (!value) return '—';
+    var iso = String(value).trim().replace(' ', 'T');
+    if (!/(Z|[+-]\\d{2}:?\\d{2})$/i.test(iso)) iso += 'Z';
+    var date = new Date(iso);
+    if (!Number.isFinite(date.getTime())) return '—';
+    return new Intl.DateTimeFormat('fa-IR-u-ca-persian', {timeZone:'Asia/Tehran',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}).format(date);
+  };
+
   // تبدیل تاریخ شمسی (انتخاب کاربر) به میلادی — برای تاریخ تولد
   window.jalaliToGregorian = function (jy, jm, jd) {
     function div(a, b) { return Math.trunc ? Math.trunc(a / b) : (a / b) | 0; }

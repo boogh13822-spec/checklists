@@ -2466,10 +2466,10 @@ async function listInvoices(db, params) {
 }
 async function listStaff(db) {
   const { results } = await db.prepare(
-    `SELECT u.id, u.name, u.phone, u.role, u.is_active, u.created_at, u.permissions,
+    `SELECT u.id, u.name, u.phone, CASE WHEN u.role='customer' THEN u.staff_role ELSE u.role END AS role, CASE WHEN u.role='customer' THEN u.staff_active ELSE u.is_active END AS is_active, u.created_at, u.permissions, (u.role='customer') AS customer_member,
               (SELECT COUNT(*) FROM invoices i WHERE i.registered_by = u.id AND i.voided_at IS NULL) AS invoices_count
        FROM users u
-       WHERE u.role IN ('staff', 'admin')
+       WHERE u.role IN ('staff', 'admin') OR (u.role='customer' AND u.staff_role IN ('staff','admin'))
        ORDER BY u.role ASC, u.id ASC`
   ).all();
   return results ?? [];
@@ -3296,6 +3296,10 @@ function storedPermissions(value) {
 function can(user, permission) {
   return user?.role === "admin" || user?.role === "staff" && !!user.permissions?.includes(permission);
 }
+function personnelRole(user) {
+  if (user?.role === "admin" || user?.role === "staff") return user.role;
+  return user?.role === "customer" && (user.staff_role === "staff" || user.staff_role === "admin") ? user.staff_role : null;
+}
 
 // src/index.ts
 init_db();
@@ -3697,6 +3701,15 @@ var CORE_JS = `
     var out = fa(p.jd) + ' ' + months[p.jm - 1];
     if (withYear !== false) out += ' ' + fa(p.jy);
     return out;
+  };
+
+  window.formatJalaliDateTimeClient = function (value) {
+    if (!value) return '\u2014';
+    var iso = String(value).trim().replace(' ', 'T');
+    if (!/(Z|[+-]\\d{2}:?\\d{2})$/i.test(iso)) iso += 'Z';
+    var date = new Date(iso);
+    if (!Number.isFinite(date.getTime())) return '\u2014';
+    return new Intl.DateTimeFormat('fa-IR-u-ca-persian', {timeZone:'Asia/Tehran',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'}).format(date);
   };
 
   // \u062A\u0628\u062F\u06CC\u0644 \u062A\u0627\u0631\u06CC\u062E \u0634\u0645\u0633\u06CC (\u0627\u0646\u062A\u062E\u0627\u0628 \u06A9\u0627\u0631\u0628\u0631) \u0628\u0647 \u0645\u06CC\u0644\u0627\u062F\u06CC \u2014 \u0628\u0631\u0627\u06CC \u062A\u0627\u0631\u06CC\u062E \u062A\u0648\u0644\u062F
@@ -6798,7 +6811,7 @@ var sign2 = Jwt.sign;
 var SCHEMA_TABLES = [
   {
     "name": "users",
-    "sql": "CREATE TABLE IF NOT EXISTS users (\n  id                 INTEGER PRIMARY KEY AUTOINCREMENT,\n  name               TEXT    NOT NULL,\n  phone              TEXT    NOT NULL UNIQUE,\n  nickname           TEXT NOT NULL DEFAULT '',\n  permissions        TEXT DEFAULT NULL,\n  birth_date         TEXT,                                   \n  points             INTEGER NOT NULL DEFAULT 0,             \n  lifetime_points    INTEGER NOT NULL DEFAULT 0,             \n  tier               TEXT    NOT NULL DEFAULT 'bronze',       \n  referred_by        INTEGER,                                \n  referral_code      TEXT    UNIQUE,                         \n  last_visit_date    TEXT,                                   \n  avg_visit_interval REAL    NOT NULL DEFAULT 0,             \n  role               TEXT    NOT NULL DEFAULT 'customer',     \n  password_hash      TEXT,                                   \n  is_active          INTEGER NOT NULL DEFAULT 1,\n  first_purchase_at  TEXT,                                   \n  referral_rewarded  INTEGER NOT NULL DEFAULT 0,\n  last_churn_sms_at  TEXT,\n  sms_opt_in         INTEGER NOT NULL DEFAULT 1,              \n  token_version      INTEGER NOT NULL DEFAULT 0,              \n  created_at         TEXT    NOT NULL DEFAULT (datetime('now')),\n  FOREIGN KEY (referred_by) REFERENCES users (id) ON DELETE SET NULL\n);",
+    "sql": "CREATE TABLE IF NOT EXISTS users (\n  id                 INTEGER PRIMARY KEY AUTOINCREMENT,\n  name               TEXT    NOT NULL,\n  phone              TEXT    NOT NULL UNIQUE,\n  nickname           TEXT NOT NULL DEFAULT '',\n  permissions        TEXT DEFAULT NULL,\n  staff_role         TEXT DEFAULT NULL,                      \n  staff_active       INTEGER NOT NULL DEFAULT 1,              \n  birth_date         TEXT,                                   \n  points             INTEGER NOT NULL DEFAULT 0,             \n  lifetime_points    INTEGER NOT NULL DEFAULT 0,             \n  tier               TEXT    NOT NULL DEFAULT 'bronze',       \n  referred_by        INTEGER,                                \n  referral_code      TEXT    UNIQUE,                         \n  last_visit_date    TEXT,                                   \n  avg_visit_interval REAL    NOT NULL DEFAULT 0,             \n  role               TEXT    NOT NULL DEFAULT 'customer',     \n  password_hash      TEXT,                                   \n  is_active          INTEGER NOT NULL DEFAULT 1,\n  first_purchase_at  TEXT,                                   \n  referral_rewarded  INTEGER NOT NULL DEFAULT 0,\n  last_churn_sms_at  TEXT,\n  sms_opt_in         INTEGER NOT NULL DEFAULT 1,              \n  token_version      INTEGER NOT NULL DEFAULT 0,              \n  created_at         TEXT    NOT NULL DEFAULT (datetime('now')),\n  FOREIGN KEY (referred_by) REFERENCES users (id) ON DELETE SET NULL\n);",
     "columns": [
       {
         "name": "id",
@@ -6819,6 +6832,14 @@ var SCHEMA_TABLES = [
       {
         "name": "permissions",
         "definition": "TEXT DEFAULT NULL"
+      },
+      {
+        "name": "staff_role",
+        "definition": "TEXT DEFAULT NULL"
+      },
+      {
+        "name": "staff_active",
+        "definition": "INTEGER NOT NULL DEFAULT 1"
       },
       {
         "name": "birth_date",
@@ -7528,7 +7549,7 @@ var SCHEMA_INDEXES = [
 
 // src/lib/schema.ts
 init_db();
-var SCHEMA_VERSION = "customer-workflow-v6";
+var SCHEMA_VERSION = "customer-staff-fixes-v7";
 var readyCache = /* @__PURE__ */ new WeakMap();
 var controlRows = [
   { table: "fallback_dispatch", key: "state:fallback_dispatch", condition: "id=1", sql: "INSERT OR IGNORE INTO fallback_dispatch(id,until_ms) VALUES(1,0)" },
@@ -7947,7 +7968,14 @@ var attachUser = async (c, next) => {
     await next();
     return;
   }
-  c.set("user", { ...payload, role: user.role, name: user.name, permissions: user.role === "staff" ? storedPermissions(user.permissions) : [] });
+  const role = payload.role === "customer" ? user.role === "customer" ? "customer" : null : user.role === "customer" && user.staff_active !== 1 ? null : personnelRole(user);
+  if (!role) {
+    clearSessionCookie(c, isSecureRequest(c));
+    c.set("user", null);
+    await next();
+    return;
+  }
+  c.set("user", { ...payload, role, name: user.name, permissions: role === "staff" ? storedPermissions(user.permissions) : [] });
   await next();
 };
 function unauthorized(c) {
@@ -8376,7 +8404,7 @@ async function runMonthlyReport(env, settings, force = false) {
     utcStamp(Date.now() - 30 * 864e5)
   );
   const { results: admins } = await env.DB.prepare(
-    `SELECT id, name, phone FROM users WHERE role = 'admin' AND is_active = 1 LIMIT 6`
+    `SELECT id, name, phone FROM users WHERE is_active=1 AND (role='admin' OR (role='customer' AND staff_role='admin' AND staff_active=1)) LIMIT 6`
   ).all();
   const message = `\u06AF\u0632\u0627\u0631\u0634 ${formatJalali((/* @__PURE__ */ new Date()).toISOString().slice(0, 10))}
 \u0645\u0634\u062A\u0631\u06CC\u0627\u0646: ${toPersianDigits(stats.totalCustomers)}
@@ -9744,7 +9772,7 @@ function staffPage(settings, user, menu, todayStats, todayInvoices, isAdmin = fa
             <div id="customer-choices" class="space-y-2 mt-3" role="status"></div>
             <div ${allowed("customer.list") ? "" : "hidden"} class="flex gap-2 mt-3"><button id="customer-list" type="button" class="btn btn-ghost btn-sm">\u0641\u0647\u0631\u0633\u062A \u0645\u0634\u062A\u0631\u06CC\u0627\u0646</button><button id="customer-list-prev" type="button" class="btn btn-ghost btn-sm" disabled>\u0642\u0628\u0644\u06CC</button><button id="customer-list-next" type="button" class="btn btn-ghost btn-sm" disabled>\u0628\u0639\u062F\u06CC</button></div>
             <details id="quick-customer" ${allowed("customer.create") ? "" : "hidden"} class="mt-4 rounded-xl border border-white/10 p-3"><summary class="cursor-pointer font-bold text-sm">\u062B\u0628\u062A \u0645\u0634\u062A\u0631\u06CC \u062C\u062F\u06CC\u062F ${allowed("invoice.create") ? "\u0648 \u0627\u062F\u0627\u0645\u0647 \u0628\u0647 \u0641\u0627\u06A9\u062A\u0648\u0631" : ""}</summary>
-              <div class="space-y-3 mt-3"><p class="hint">\u0634\u0645\u0627\u0631\u0647 \u0631\u0627 \u062F\u0631 \u06A9\u0627\u062F\u0631 \u0628\u0627\u0644\u0627 \u0648\u0627\u0631\u062F \u06A9\u0646\u06CC\u062F. \u062A\u0648\u0644\u062F \u0648 \u0645\u0639\u0631\u0641 \u0631\u0627 \u0628\u0639\u062F\u0627\u064B \u0645\u062F\u06CC\u0631 \u0645\u06CC\u200C\u062A\u0648\u0627\u0646\u062F \u062A\u06A9\u0645\u06CC\u0644 \u06A9\u0646\u062F.</p><label class="label" for="quick-name">\u0646\u0627\u0645 \u0645\u0634\u062A\u0631\u06CC</label><input id="quick-name" class="field" maxlength="60" /><label class="label" for="quick-nickname">\u0644\u0642\u0628 (\u0627\u062E\u062A\u06CC\u0627\u0631\u06CC)</label><input id="quick-nickname" class="field" maxlength="40" /><label class="flex gap-2 text-xs"><input id="quick-sms" type="checkbox" /> \u0645\u0634\u062A\u0631\u06CC \u0631\u0636\u0627\u06CC\u062A \u062F\u0631\u06CC\u0627\u0641\u062A \u067E\u06CC\u0627\u0645\u06A9 \u062F\u0627\u0631\u062F</label><button id="quick-save" type="button" class="btn btn-primary btn-sm">\u062B\u0628\u062A \u0645\u0634\u062A\u0631\u06CC ${allowed("invoice.create") ? "\u0648 \u0627\u0646\u062A\u062E\u0627\u0628 \u0628\u0631\u0627\u06CC \u0641\u0627\u06A9\u062A\u0648\u0631" : ""}</button><p id="quick-result" class="hint" role="status"></p></div>
+              <div class="space-y-3 mt-3"><p class="hint">\u0634\u0645\u0627\u0631\u0647 \u0631\u0627 \u062F\u0631 \u06A9\u0627\u062F\u0631 \u0628\u0627\u0644\u0627 \u0648\u0627\u0631\u062F \u06A9\u0646\u06CC\u062F. \u062A\u0627\u0631\u06CC\u062E \u062A\u0648\u0644\u062F \u0627\u062E\u062A\u06CC\u0627\u0631\u06CC \u0627\u0633\u062A\u061B \u062F\u0631 \u0635\u0648\u0631\u062A \u0627\u0637\u0644\u0627\u0639 \u062A\u06CC\u06A9 \u0622\u0646 \u0631\u0627 \u0628\u0632\u0646\u06CC\u062F.</p><label class="label" for="quick-name">\u0646\u0627\u0645 \u0645\u0634\u062A\u0631\u06CC</label><input id="quick-name" class="field" maxlength="60" /><label class="label" for="quick-nickname">\u0644\u0642\u0628 (\u0627\u062E\u062A\u06CC\u0627\u0631\u06CC)</label><input id="quick-nickname" class="field" maxlength="40" /><label class="flex gap-2 text-xs"><input id="quick-birth-known" type="checkbox" /> \u062A\u0627\u0631\u06CC\u062E \u062A\u0648\u0644\u062F \u0631\u0627 \u0645\u06CC\u200C\u062F\u0627\u0646\u0645 (\u0634\u0645\u0633\u06CC)</label><div class="grid grid-cols-3 gap-2"><select id="quick-day" aria-label="\u0631\u0648\u0632 \u062A\u0648\u0644\u062F" class="field"></select><select id="quick-month" aria-label="\u0645\u0627\u0647 \u062A\u0648\u0644\u062F" class="field">${["\u0641\u0631\u0648\u0631\u062F\u06CC\u0646", "\u0627\u0631\u062F\u06CC\u0628\u0647\u0634\u062A", "\u062E\u0631\u062F\u0627\u062F", "\u062A\u06CC\u0631", "\u0645\u0631\u062F\u0627\u062F", "\u0634\u0647\u0631\u06CC\u0648\u0631", "\u0645\u0647\u0631", "\u0622\u0628\u0627\u0646", "\u0622\u0630\u0631", "\u062F\u06CC", "\u0628\u0647\u0645\u0646", "\u0627\u0633\u0641\u0646\u062F"].map((name, i) => `<option value="${i + 1}">${name}</option>`).join("")}</select><select id="quick-year" aria-label="\u0633\u0627\u0644 \u062A\u0648\u0644\u062F" class="field"></select></div><label class="flex gap-2 text-xs"><input id="quick-sms" type="checkbox" /> \u0645\u0634\u062A\u0631\u06CC \u0631\u0636\u0627\u06CC\u062A \u062F\u0631\u06CC\u0627\u0641\u062A \u067E\u06CC\u0627\u0645\u06A9 \u062F\u0627\u0631\u062F</label><button id="quick-save" type="button" class="btn btn-primary btn-sm">\u062B\u0628\u062A \u0645\u0634\u062A\u0631\u06CC ${allowed("invoice.create") ? "\u0648 \u0627\u0646\u062A\u062E\u0627\u0628 \u0628\u0631\u0627\u06CC \u0641\u0627\u06A9\u062A\u0648\u0631" : ""}</button><p id="quick-result" class="hint" role="status"></p></div>
             </details>
             <div id="search-state" class="mt-4"></div>
 
@@ -10502,12 +10530,17 @@ function staffPage(settings, user, menu, todayStats, todayInvoices, isAdmin = fa
     $('#customer-list').addEventListener('click',function(){if(CAN_LIST){choicePage=1;loadChoices(false);}});
     $('#customer-list-prev').addEventListener('click',function(){if(CAN_LIST&&choicePage>1){choicePage--;loadChoices(false);}});
     $('#customer-list-next').addEventListener('click',function(){if(CAN_LIST){choicePage++;loadChoices(false);}});
+    initJalaliPickers($('#quick-day'),$('#quick-month'),$('#quick-year'),'',110);
+    function quickBirthState(){['day','month','year'].forEach(function(key){$('#quick-'+key).disabled=!$('#quick-birth-known').checked;});}
+    $('#quick-birth-known').addEventListener('change',quickBirthState);quickBirthState();
     $('#quick-save').addEventListener('click',async function(){
       if(!CAN_CREATE||creatingCustomer||submitting||pendingInvoice)return;var phone=normalizePhone(phoneInput.value),name=$('#quick-name').value.trim();
       if(!/^09\\d{9}$/.test(phone)||name.length<2){$('#quick-result').textContent='\u0646\u0627\u0645 \u06A9\u0627\u0645\u0644 \u0648 \u0634\u0645\u0627\u0631\u0647\u0654 \u0645\u0639\u062A\u0628\u0631 \u0631\u0627 \u0648\u0627\u0631\u062F \u06A9\u0646\u06CC\u062F.';return;}
+      var birth=$('#quick-birth-known').checked ? readJalaliPickers($('#quick-day'),$('#quick-month'),$('#quick-year')) : '';
+      if(birth===null){$('#quick-result').textContent='\u062A\u0627\u0631\u06CC\u062E \u062A\u0648\u0644\u062F \u0631\u0627 \u06A9\u0627\u0645\u0644 \u0648 \u062F\u0631\u0633\u062A \u0627\u0646\u062A\u062E\u0627\u0628 \u06A9\u0646\u06CC\u062F.';return;}
       creatingCustomer=true;var button=this;setLoading(button,true,'\u062F\u0631 \u062D\u0627\u0644 \u062B\u0628\u062A\u2026');phoneInput.disabled=true;$('#search-btn').disabled=true;
-      try{await api('/api/staff/customers',{method:'POST',body:{name:name,phone:phone,nickname:$('#quick-nickname').value.trim(),sms_opt_in:$('#quick-sms').checked,birth_date:''}});
-        $('#quick-result').textContent='\u0645\u0634\u062A\u0631\u06CC \u062B\u0628\u062A \u0634\u062F.';$('#quick-name').value='';$('#quick-nickname').value='';$('#quick-sms').checked=false;$('#quick-customer').open=false;
+      try{await api('/api/staff/customers',{method:'POST',body:{name:name,phone:phone,nickname:$('#quick-nickname').value.trim(),sms_opt_in:$('#quick-sms').checked,birth_date:birth}});
+        $('#quick-result').textContent='\u0645\u0634\u062A\u0631\u06CC \u062B\u0628\u062A \u0634\u062F.';$('#quick-name').value='';$('#quick-nickname').value='';$('#quick-sms').checked=false;$('#quick-birth-known').checked=false;quickBirthState();$('#quick-customer').open=false;
         creatingCustomer=false;phoneInput.value=phone;
         if(CAN_INVOICE){await searchCustomer();if(customer){$('#manual-amount').focus();$('#quick-result').textContent='\u0645\u0634\u062A\u0631\u06CC \u0627\u0646\u062A\u062E\u0627\u0628 \u0634\u062F\u061B \u0641\u0627\u06A9\u062A\u0648\u0631 \u0631\u0627 \u062F\u0631 \u0647\u0645\u06CC\u0646 \u0635\u0641\u062D\u0647 \u062B\u0628\u062A \u06A9\u0646\u06CC\u062F.';}}
         else{phoneInput.value='';toast('\u0645\u0634\u062A\u0631\u06CC \u062B\u0628\u062A \u0634\u062F.','success');}
@@ -12958,7 +12991,7 @@ function adminInvoicesPage(input) {
           '<div class="flex items-center justify-between"><span class="text-cream/50">\u0634\u0645\u0627\u0631\u0647 \u0641\u0627\u06A9\u062A\u0648\u0631</span><span class="font-bold">#' + fa(invoice.id) + '</span></div>' +
           '<div class="flex items-center justify-between"><span class="text-cream/50">\u0645\u0634\u062A\u0631\u06CC</span><span class="font-bold">' + escapeHtml(invoice.customer_name || '\u2014') + ' <span class="text-cream/35 font-mono text-[11px]" dir="ltr">' + escapeHtml(invoice.customer_phone || '') + '</span></span></div>' +
           '<div class="flex items-center justify-between"><span class="text-cream/50">\u062B\u0628\u062A\u200C\u06A9\u0646\u0646\u062F\u0647</span><span>' + escapeHtml(invoice.staff_name || '\u2014') + '</span></div>' +
-          '<div class="flex items-center justify-between"><span class="text-cream/50">\u0632\u0645\u0627\u0646 \u062B\u0628\u062A</span><span>' + formatJalaliDateTime(invoice.created_at) + '</span></div>' +
+          '<div class="flex items-center justify-between"><span class="text-cream/50">\u0632\u0645\u0627\u0646 \u062B\u0628\u062A</span><span>' + formatJalaliDateTimeClient(invoice.created_at) + '</span></div>' +
         '</div>' +
         '<div class="rounded-xl bg-black/25 border border-white/10 p-3 mb-3">' + (rows || '<p class="text-cream/40 text-[11px]">\u0622\u06CC\u062A\u0645\u06CC \u062B\u0628\u062A \u0646\u0634\u062F\u0647 \u0627\u0633\u062A.</p>') + '</div>' +
         '<div class="space-y-1.5 mb-3">' +
@@ -12973,7 +13006,7 @@ function adminInvoicesPage(input) {
           }).join('') +
         '</div>' +
         (invoice.voided_at
-          ? '<div class="mt-3 rounded-xl bg-rose-500/10 border border-rose-400/25 p-3 text-[11.5px] text-rose-200">\u0627\u06CC\u0646 \u0641\u0627\u06A9\u062A\u0648\u0631 \u062F\u0631 ' + formatJalaliDateTime(invoice.voided_at) + ' \u0628\u0627\u0637\u0644 \u0634\u062F\u0647 \u0627\u0633\u062A.<br>\u062F\u0644\u06CC\u0644: ' + escapeHtml(invoice.void_reason || '\u2014') + '</div>'
+          ? '<div class="mt-3 rounded-xl bg-rose-500/10 border border-rose-400/25 p-3 text-[11.5px] text-rose-200">\u0627\u06CC\u0646 \u0641\u0627\u06A9\u062A\u0648\u0631 \u062F\u0631 ' + formatJalaliDateTimeClient(invoice.voided_at) + ' \u0628\u0627\u0637\u0644 \u0634\u062F\u0647 \u0627\u0633\u062A.<br>\u062F\u0644\u06CC\u0644: ' + escapeHtml(invoice.void_reason || '\u2014') + '</div>'
           : '');
     }
   `;
@@ -13808,7 +13841,7 @@ function adminStaffPage(input) {
             <span class="w-9 h-9 rounded-full ${member.role === "admin" ? "bg-gradient-to-br from-fuchsia-400 to-purple-800" : "bg-gradient-to-br from-amber-300 to-amber-800"} text-coffee-950 text-[12px] font-bold flex items-center justify-center">${escapeHtml(member.name.slice(0, 1))}</span>
             <div>
               <div class="text-[12.5px] font-medium flex items-center gap-1.5">
-                ${escapeHtml(member.name)}
+                ${escapeHtml(member.name)}${member.customer_member ? ' <span class="badge tone-info">\u0639\u0636\u0648 \u0628\u0627\u0634\u06AF\u0627\u0647</span>' : ""}
                 ${isSelf ? '<span class="badge tone-info !text-[9px]">\u0634\u0645\u0627</span>' : ""}
               </div>
               <div class="text-[10.5px] text-cream/35 font-mono" dir="ltr">${escapeHtml(member.phone)}</div>
@@ -13956,7 +13989,14 @@ function adminStaffPage(input) {
       var btn = $('#staff-submit');
       setLoading(btn, true, '\u062F\u0631 \u062D\u0627\u0644 \u0627\u06CC\u062C\u0627\u062F\u2026');
       try {
-        await api('/api/admin/staff', { method: 'POST', body: { name: name, phone: phone, role: role, password: password, permissions: Array.from($('#s-permissions').querySelectorAll('input:checked')).map(function(input){return input.value;}) } });
+        var payload={name:name,phone:phone,role:role,password:password,permissions:Array.from($('#s-permissions').querySelectorAll('input:checked')).map(function(input){return input.value;})};
+        try { await api('/api/admin/staff',{method:'POST',body:payload}); }
+        catch(error){
+          if(error.code!=='CONFIRM_CUSTOMER_STAFF')throw error;
+          var confirmed=await confirmAction({title:'\u0627\u06CC\u0646 \u0634\u0645\u0627\u0631\u0647 \u0639\u0636\u0648 \u0628\u0627\u0634\u06AF\u0627\u0647 \u0627\u0633\u062A',message:'\u062F\u0633\u062A\u0631\u0633\u06CC \u067E\u0631\u0633\u0646\u0644\u06CC \u0628\u0647 \u0647\u0645\u0627\u0646 \u062D\u0633\u0627\u0628 \u0627\u0636\u0627\u0641\u0647 \u0634\u0648\u062F\u061F \u0646\u0627\u0645\u060C \u062A\u0648\u0644\u062F\u060C \u0633\u0648\u0627\u0628\u0642 \u062E\u0631\u06CC\u062F \u0648 \u0627\u0645\u062A\u06CC\u0627\u0632\u0647\u0627 \u062D\u0641\u0638 \u0645\u06CC\u200C\u0634\u0648\u0646\u062F \u0648 \u0639\u0636\u0648\u06CC\u062A \u0645\u0634\u062A\u0631\u06CC \u0641\u0639\u0627\u0644 \u0645\u06CC\u200C\u0645\u0627\u0646\u062F. \u0631\u0645\u0632 \u062C\u062F\u06CC\u062F \u0628\u0631\u0627\u06CC \u0648\u0631\u0648\u062F \u067E\u0631\u0633\u0646\u0644\u06CC \u062A\u0646\u0638\u06CC\u0645 \u0645\u06CC\u200C\u0634\u0648\u062F.',confirmText:'\u0627\u0641\u0632\u0648\u062F\u0646 \u0628\u0627 \u062D\u0641\u0638 \u0639\u0636\u0648\u06CC\u062A'});
+          if(!confirmed){setLoading(btn,false);return;}
+          payload.confirmExistingCustomer=true;await api('/api/admin/staff',{method:'POST',body:payload});
+        }
         await confirmAction({title:'\u06A9\u0627\u0631\u0645\u0646\u062F \u0627\u06CC\u062C\u0627\u062F \u0634\u062F',message:'\u0631\u0645\u0632 \u0627\u0648\u0644\u06CC\u0647: '+password+' \u2014 \u0627\u06A9\u0646\u0648\u0646 \u0622\u0646 \u0631\u0627 \u0627\u0645\u0646 \u0628\u0647 \u06A9\u0627\u0631\u0645\u0646\u062F \u062A\u062D\u0648\u06CC\u0644 \u062F\u0647\u06CC\u062F\u061B \u0631\u0645\u0632 \u0641\u0642\u0637 \u0647\u0634\u200C\u0634\u062F\u0647 \u0630\u062E\u06CC\u0631\u0647 \u0645\u06CC\u200C\u0634\u0648\u062F.',confirmText:'\u0631\u0645\u0632 \u0631\u0627 \u0630\u062E\u06CC\u0631\u0647 \u06A9\u0631\u062F\u0645',cancelText:'\u0628\u0633\u062A\u0646'});
         $('#s-password').value='';window.location.reload();
       } catch (error) {
@@ -13990,7 +14030,7 @@ function adminStaffPage(input) {
       var active = button.dataset.active === '1';
       var ok = await confirmAction({
         title: active ? '\u063A\u06CC\u0631\u0641\u0639\u0627\u0644 \u06A9\u0631\u062F\u0646 \u06A9\u0627\u0631\u0628\u0631' : '\u0641\u0639\u0627\u0644 \u06A9\u0631\u062F\u0646 \u06A9\u0627\u0631\u0628\u0631',
-        message: active ? '\u0627\u06CC\u0646 \u06A9\u0627\u0631\u0628\u0631 \u062F\u06CC\u06AF\u0631 \u0646\u0645\u06CC\u200C\u062A\u0648\u0627\u0646\u062F \u0648\u0627\u0631\u062F \u0634\u0648\u062F.' : '\u0627\u06CC\u0646 \u06A9\u0627\u0631\u0628\u0631 \u062F\u0648\u0628\u0627\u0631\u0647 \u0645\u06CC\u200C\u062A\u0648\u0627\u0646\u062F \u0648\u0627\u0631\u062F \u0634\u0648\u062F.',
+        message: active ? '\u0648\u0631\u0648\u062F \u067E\u0631\u0633\u0646\u0644\u06CC \u063A\u06CC\u0631\u0641\u0639\u0627\u0644 \u0645\u06CC\u200C\u0634\u0648\u062F\u061B \u0639\u0636\u0648\u06CC\u062A \u0645\u0634\u062A\u0631\u06CC\u0650 \u0645\u0631\u062A\u0628\u0637 \u062D\u0641\u0638 \u0645\u06CC\u200C\u0634\u0648\u062F.' : '\u0627\u06CC\u0646 \u06A9\u0627\u0631\u0628\u0631 \u062F\u0648\u0628\u0627\u0631\u0647 \u0645\u06CC\u200C\u062A\u0648\u0627\u0646\u062F \u0648\u0627\u0631\u062F \u0634\u0648\u062F.',
         confirmText: active ? '\u063A\u06CC\u0631\u0641\u0639\u0627\u0644 \u06A9\u0646' : '\u0641\u0639\u0627\u0644 \u06A9\u0646',
         danger: active
       });
@@ -14007,14 +14047,14 @@ function adminStaffPage(input) {
     bindAction('[data-delete]', async function (button) {
       var ok = await confirmAction({
         title: '\u062D\u0630\u0641 \u06A9\u0627\u0631\u0628\u0631',
-        message: '\u06A9\u0627\u0631\u0628\u0631 \xAB' + button.dataset.name + '\xBB \u062D\u0630\u0641 \u0634\u0648\u062F\u061F \u0627\u06CC\u0646 \u0639\u0645\u0644\u06CC\u0627\u062A \u0642\u0627\u0628\u0644 \u0628\u0627\u0632\u06AF\u0634\u062A \u0646\u06CC\u0633\u062A.',
+        message: '\u062F\u0633\u062A\u0631\u0633\u06CC \u067E\u0631\u0633\u0646\u0644\u06CC \xAB' + button.dataset.name + '\xBB \u062D\u0630\u0641 \u0634\u0648\u062F\u061F \u0628\u0631\u0627\u06CC \u0639\u0636\u0648 \u0628\u0627\u0634\u06AF\u0627\u0647\u060C \u062D\u0633\u0627\u0628 \u0645\u0634\u062A\u0631\u06CC \u0648 \u0633\u0648\u0627\u0628\u0642 \u062D\u0641\u0638 \u0645\u06CC\u200C\u0634\u0648\u062F. \u062D\u0630\u0641 \u062D\u0633\u0627\u0628 \u0635\u0631\u0641\u0627\u064B \u067E\u0631\u0633\u0646\u0644\u06CC \u0642\u0627\u0628\u0644 \u0628\u0627\u0632\u06AF\u0634\u062A \u0646\u06CC\u0633\u062A.',
         confirmText: '\u062D\u0630\u0641',
         danger: true
       });
       if (!ok) return;
       try {
         await api('/api/admin/staff/' + button.dataset.delete, { method: 'DELETE' });
-        toast('\u06A9\u0627\u0631\u0628\u0631 \u062D\u0630\u0641 \u0634\u062F.', 'success');
+        toast('\u062F\u0633\u062A\u0631\u0633\u06CC \u067E\u0631\u0633\u0646\u0644\u06CC \u062D\u0630\u0641 \u0634\u062F.', 'success');
         setTimeout(function () { window.location.reload(); }, 700);
       } catch (error) {
         toast(error.message, 'error');
@@ -14317,6 +14357,7 @@ var ACTION_LABELS = {
   fallback_settings_update: { label: "\u062A\u0646\u0638\u06CC\u0645 \u067E\u06CC\u0627\u0645\u200C\u0647\u0627\u06CC \u0627\u062F\u0645\u06CC\u0646", tone: "info", iconName: "settings" },
   fallback_manual: { label: "\u067E\u06CC\u0627\u0645 \u062F\u0633\u062A\u06CC \u0645\u062F\u06CC\u0631", tone: "info", iconName: "chat" },
   fallback_delivery_failed: { label: "\u062E\u0637\u0627\u06CC \u0627\u0631\u0633\u0627\u0644 \u0628\u0647 \u0627\u062F\u0645\u06CC\u0646", tone: "danger", iconName: "warning" },
+  staff_customer_link: { label: "\u0627\u0641\u0632\u0648\u062F\u0646 \u062F\u0633\u062A\u0631\u0633\u06CC \u067E\u0631\u0633\u0646\u0644\u06CC \u0628\u0647 \u0639\u0636\u0648 \u0628\u0627\u0634\u06AF\u0627\u0647", tone: "info", iconName: "shield" },
   staff_permissions_update: { label: "\u062A\u063A\u06CC\u06CC\u0631 \u062F\u0633\u062A\u0631\u0633\u06CC \u06A9\u0627\u0631\u0645\u0646\u062F", tone: "info", iconName: "shield" },
   fallback_diagnose: { label: "\u0628\u0631\u0631\u0633\u06CC \u0627\u0631\u062A\u0628\u0627\u0637 \u0628\u062F\u0648\u0646 \u0627\u0631\u0633\u0627\u0644", tone: "info", iconName: "shield" },
   fallback_test: { label: "\u062A\u0633\u062A \u0627\u062A\u0635\u0627\u0644 \u067E\u06CC\u0627\u0645\u200C\u0631\u0633\u0627\u0646", tone: "muted", iconName: "chat" },
@@ -14818,7 +14859,7 @@ function reportsCsv(data) {
 
 // src/index.ts
 var app = new Hono3();
-var APP_BUILD = "customer-workflow-v6";
+var APP_BUILD = "customer-staff-fixes-v7";
 function resolveTimeZone2(env) {
   return resolveTimeZone(env.TZ_NAME);
 }
@@ -15109,7 +15150,7 @@ app.get("/admin/shifts", requirePageRole("admin"), async (c) => {
     to: c.req.query("to") ?? ""
   });
   const [staffOptions, openShifts] = await Promise.all([
-    c.env.DB.prepare(`SELECT id, name FROM users WHERE role IN ('staff','admin') ORDER BY name ASC`).all(),
+    c.env.DB.prepare(`SELECT id, name FROM users WHERE (role IN ('staff','admin') OR (role='customer' AND staff_role IN ('staff','admin'))) ORDER BY name ASC`).all(),
     listOpenShifts(c.env.DB)
   ]);
   return c.html(
@@ -15326,7 +15367,7 @@ app.get("/admin/invoices", requirePageRole("admin"), async (c) => {
     staffId: staffFilter
   });
   const staffOptions = await c.env.DB.prepare(
-    `SELECT id, name FROM users WHERE role IN ('staff','admin') ORDER BY name ASC`
+    `SELECT id, name FROM users WHERE (role IN ('staff','admin') OR (role='customer' AND staff_role IN ('staff','admin'))) ORDER BY name ASC`
   ).all();
   return c.html(
     adminInvoicesPage({
@@ -15543,7 +15584,7 @@ async function handleStaffLogin(c) {
     await logLoginFailure(c, phone, user ? "wrong_password" : "unknown_phone");
     return reject("\u0634\u0645\u0627\u0631\u0647 \u0645\u0648\u0628\u0627\u06CC\u0644 \u06CC\u0627 \u0631\u0645\u0632 \u0639\u0628\u0648\u0631 \u0627\u0634\u062A\u0628\u0627\u0647 \u0627\u0633\u062A.", 401, "INVALID_CREDENTIALS");
   }
-  if (user.role !== "staff" && user.role !== "admin") {
+  if (!personnelRole(user)) {
     await logLoginFailure(c, phone, "not_staff");
     return reject(
       "\u0627\u06CC\u0646 \u062D\u0633\u0627\u0628 \u0645\u0634\u062A\u0631\u06CC \u0627\u0633\u062A\u061B \u0627\u0632 \u0635\u0641\u062D\u0647\u0654 \xAB\u0628\u0627\u0634\u06AF\u0627\u0647 \u0645\u0646\xBB \u0628\u0627 \u06A9\u062F \u067E\u06CC\u0627\u0645\u06A9\u06CC \u0648\u0627\u0631\u062F \u0634\u0648\u06CC\u062F.",
@@ -15551,7 +15592,7 @@ async function handleStaffLogin(c) {
       "WRONG_PORTAL"
     );
   }
-  if (user.is_active !== 1) {
+  if (user.is_active !== 1 || user.role === "customer" && user.staff_active !== 1) {
     await logLoginFailure(c, phone, "inactive");
     return reject("\u062D\u0633\u0627\u0628 \u0634\u0645\u0627 \u063A\u06CC\u0631\u0641\u0639\u0627\u0644 \u0634\u062F\u0647 \u0627\u0633\u062A. \u0628\u0627 \u0645\u062F\u06CC\u0631 \u062A\u0645\u0627\u0633 \u0628\u06AF\u06CC\u0631\u06CC\u062F.", 403, "ACCOUNT_DISABLED");
   }
@@ -15562,10 +15603,11 @@ async function handleStaffLogin(c) {
     console.error("AUTH_SESSION_SCHEMA_UNAVAILABLE", error);
     return reject("\u0633\u0627\u062E\u062A \u0646\u0634\u0633\u062A \u0627\u0645\u0646 \u0645\u0645\u06A9\u0646 \u0646\u0634\u062F. \u0645\u062F\u06CC\u0631 \u0628\u0627\u06CC\u062F \u062F\u0633\u062A\u0631\u0633\u06CC \u0648 \u0633\u0627\u062E\u062A\u0627\u0631 \u062F\u06CC\u062A\u0627\u0628\u06CC\u0633 \u0631\u0627 \u0628\u0631\u0631\u0633\u06CC \u06A9\u0646\u062F.", 503, "AUTH_SCHEMA_UNAVAILABLE");
   }
-  if (!user || user.is_active !== 1 || user.role !== "staff" && user.role !== "admin" || user.password_hash !== verifiedHash) {
+  if (!user || user.is_active !== 1 || !personnelRole(user) || user.role === "customer" && user.staff_active !== 1 || user.password_hash !== verifiedHash) {
     return reject("\u0627\u0637\u0644\u0627\u0639\u0627\u062A \u062D\u0633\u0627\u0628 \u062A\u063A\u06CC\u06CC\u0631 \u06A9\u0631\u062F\u0647 \u0627\u0633\u062A. \u0644\u0637\u0641\u0627\u064B \u062F\u0648\u0628\u0627\u0631\u0647 \u0648\u0627\u0631\u062F \u0634\u0648\u06CC\u062F.", 401, "CREDENTIALS_CHANGED");
   }
   resetRateLimit(rateKey);
+  user = { ...user, role: personnelRole(user) };
   const ttl = sessionTtl(c.env);
   const token = await createToken(secret, user, ttl);
   setSessionCookie(c, token, isSecureRequest(c), ttl);
@@ -15781,7 +15823,7 @@ app.get("/api/auth/me", async (c) => {
       id: dbUser.id,
       name: dbUser.name,
       phone: dbUser.phone,
-      role: dbUser.role
+      role: user.role
     }
   });
 });
@@ -16073,8 +16115,10 @@ app.post("/api/admin/customers/:id/points", requireApiRole("admin"), async (c) =
 app.post("/api/admin/customers/:id/deactivate", requireApiRole("admin"), async (c) => {
   const id = toPositiveInt(c.req.param("id"), 0);
   if (!id) return fail(c, "\u0634\u0646\u0627\u0633\u0647 \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "INVALID_ID");
+  const linked = await findUserById(c.env.DB, id);
+  if (linked && personnelRole(linked)) return fail(c, "\u0627\u0628\u062A\u062F\u0627 \u062F\u0633\u062A\u0631\u0633\u06CC \u067E\u0631\u0633\u0646\u0644\u06CC \u0631\u0627 \u0627\u0632 \u0628\u062E\u0634 \u06A9\u0627\u0631\u06A9\u0646\u0627\u0646 \u0628\u0631\u062F\u0627\u0631\u06CC\u062F\u061B \u0639\u0636\u0648\u06CC\u062A \u0645\u0634\u062A\u0631\u06CC \u062C\u062F\u0627\u06AF\u0627\u0646\u0647 \u0645\u062F\u06CC\u0631\u06CC\u062A \u0645\u06CC\u200C\u0634\u0648\u062F.", 409, "CUSTOMER_HAS_STAFF_ACCESS");
   const result = await c.env.DB.prepare(
-    `UPDATE users SET is_active = 0 WHERE id = ? AND role = 'customer'`
+    `UPDATE users SET is_active = 0 WHERE id = ? AND role = 'customer' AND staff_role IS NULL`
   ).bind(id).run();
   if (!result.meta?.changes) return fail(c, "\u0645\u0634\u062A\u0631\u06CC \u06CC\u0627\u0641\u062A \u0646\u0634\u062F.", 404, "NOT_FOUND");
   await audit(c, "customer_update", { targetType: "customer", targetId: id, details: "\u062D\u0633\u0627\u0628 \u0645\u0634\u062A\u0631\u06CC \u063A\u06CC\u0631\u0641\u0639\u0627\u0644 \u0634\u062F." });
@@ -16393,7 +16437,9 @@ app.delete("/api/admin/customers/:id", requireApiRole("admin"), async (c) => {
   if (!user || user.role !== "customer") {
     return fail(c, "\u0645\u0634\u062A\u0631\u06CC \u06CC\u0627\u0641\u062A \u0646\u0634\u062F.", 404, "NOT_FOUND");
   }
-  await c.env.DB.prepare("DELETE FROM users WHERE id = ? AND role = 'customer'").bind(id).run();
+  if (personnelRole(user)) return fail(c, "\u0627\u06CC\u0646 \u0645\u0634\u062A\u0631\u06CC \u062F\u0633\u062A\u0631\u0633\u06CC \u067E\u0631\u0633\u0646\u0644\u06CC \u062F\u0627\u0631\u062F\u061B \u0627\u0628\u062A\u062F\u0627 \u062F\u0633\u062A\u0631\u0633\u06CC \u0631\u0627 \u0627\u0632 \u0628\u062E\u0634 \u06A9\u0627\u0631\u06A9\u0646\u0627\u0646 \u0628\u0631\u062F\u0627\u0631\u06CC\u062F.", 409, "CUSTOMER_HAS_STAFF_ACCESS");
+  const removed = await c.env.DB.prepare("DELETE FROM users WHERE id = ? AND role = 'customer' AND staff_role IS NULL").bind(id).run();
+  if (!removed.meta?.changes) return fail(c, "\u0648\u0636\u0639\u06CC\u062A \u062D\u0633\u0627\u0628 \u062A\u063A\u06CC\u06CC\u0631 \u06A9\u0631\u062F\u061B \u062F\u0648\u0628\u0627\u0631\u0647 \u0628\u0631\u0631\u0633\u06CC \u06A9\u0646\u06CC\u062F.", 409, "ACCOUNT_CHANGED");
   await audit(c, "customer_delete", {
     targetType: "customer",
     targetId: id,
@@ -16881,7 +16927,17 @@ app.post("/api/admin/staff", requireApiRole("admin"), async (c) => {
     return fail(c, "\u0631\u0645\u0632 \u0639\u0628\u0648\u0631 \u0628\u0627\u06CC\u062F \u0628\u06CC\u0646 \u06F8 \u062A\u0627 \u06F7\u06F2 \u06A9\u0627\u0631\u0627\u06A9\u062A\u0631 \u0628\u0627\u0634\u062F.", 400, "INVALID_PASSWORD");
   }
   const exists = await findUserByPhone(c.env.DB, phone);
-  if (exists) return fail(c, "\u0627\u06CC\u0646 \u0634\u0645\u0627\u0631\u0647 \u0645\u0648\u0628\u0627\u06CC\u0644 \u0642\u0628\u0644\u0627\u064B \u062B\u0628\u062A \u0634\u062F\u0647 \u0627\u0633\u062A.", 409, "PHONE_EXISTS");
+  if (exists) {
+    if (exists.role !== "customer" || personnelRole(exists)) return fail(c, "\u0627\u06CC\u0646 \u0634\u0645\u0627\u0631\u0647 \u0642\u0628\u0644\u0627\u064B \u062F\u0633\u062A\u0631\u0633\u06CC \u067E\u0631\u0633\u0646\u0644\u06CC \u062F\u0627\u0631\u062F.", 409, "PHONE_EXISTS");
+    if (exists.is_active !== 1) return fail(c, "\u0627\u0628\u062A\u062F\u0627 \u0648\u0636\u0639\u06CC\u062A \u0639\u0636\u0648\u06CC\u062A \u0645\u0634\u062A\u0631\u06CC \u0631\u0627 \u0628\u0631\u0631\u0633\u06CC \u0648 \u0641\u0639\u0627\u0644 \u06A9\u0646\u06CC\u062F.", 409, "CUSTOMER_INACTIVE");
+    if (body.confirmExistingCustomer !== true) return fail(c, "\u0627\u06CC\u0646 \u0634\u0645\u0627\u0631\u0647 \u0639\u0636\u0648 \u0628\u0627\u0634\u06AF\u0627\u0647 \u0627\u0633\u062A\u061B \u0627\u0641\u0632\u0648\u062F\u0646 \u062F\u0633\u062A\u0631\u0633\u06CC \u067E\u0631\u0633\u0646\u0644\u06CC \u0628\u0627 \u062D\u0641\u0638 \u062D\u0633\u0627\u0628\u060C \u0646\u0627\u0645\u060C \u0627\u0645\u062A\u06CC\u0627\u0632 \u0648 \u062E\u0631\u06CC\u062F\u0647\u0627\u06CC \u0645\u0634\u062A\u0631\u06CC \u0631\u0627 \u062A\u0623\u06CC\u06CC\u062F \u06A9\u0646\u06CC\u062F.", 409, "CONFIRM_CUSTOMER_STAFF");
+    const passwordHash2 = await hashPassword(password);
+    const linked = await c.env.DB.prepare(`UPDATE users SET staff_role=?,staff_active=1,password_hash=?,permissions=?,token_version=token_version+1
+      WHERE id=? AND role='customer' AND staff_role IS NULL AND is_active=1 RETURNING id`).bind(role, passwordHash2, JSON.stringify(body.permissions ?? LEGACY_STAFF_PERMISSIONS), exists.id).first();
+    if (!linked) return fail(c, "\u0648\u0636\u0639\u06CC\u062A \u062D\u0633\u0627\u0628 \u062A\u063A\u06CC\u06CC\u0631 \u06A9\u0631\u062F\u061B \u062F\u0648\u0628\u0627\u0631\u0647 \u0628\u0631\u0631\u0633\u06CC \u06A9\u0646\u06CC\u062F.", 409, "ACCOUNT_CHANGED");
+    await audit(c, "staff_customer_link", { targetType: "user", targetId: exists.id, details: "\u062F\u0633\u062A\u0631\u0633\u06CC \u067E\u0631\u0633\u0646\u0644\u06CC \u0628\u0627 \u062D\u0641\u0638 \u0639\u0636\u0648\u06CC\u062A \u0645\u0634\u062A\u0631\u06CC \u0627\u0636\u0627\u0641\u0647 \u0634\u062F." });
+    return ok(c, { id: exists.id, name: exists.name, phone: exists.phone, role, customerPreserved: true }, 201);
+  }
   const passwordHash = await hashPassword(password);
   const referralCode = generateCouponCode("REF");
   const result = await c.env.DB.prepare(
@@ -16913,7 +16969,7 @@ app.put("/api/admin/staff/:id", requireApiRole("admin"), async (c) => {
   if (body.permissions !== void 0 && !validatePermissions(body.permissions)) return fail(c, "\u062F\u0633\u062A\u0631\u0633\u06CC\u200C\u0647\u0627 \u0646\u0627\u0645\u0639\u062A\u0628\u0631\u0646\u062F.", 400, "INVALID_PERMISSIONS");
   if (body.role !== void 0 && !["staff", "admin"].includes(String(body.role))) return fail(c, "\u0646\u0642\u0634 \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "INVALID_ROLE");
   const target = await findUserById(c.env.DB, id);
-  if (!target || target.role !== "staff" && target.role !== "admin") {
+  if (!target || !personnelRole(target)) {
     return fail(c, "\u06A9\u0627\u0631\u0628\u0631 \u06CC\u0627\u0641\u062A \u0646\u0634\u062F.", 404, "NOT_FOUND");
   }
   if (body.is_active !== void 0) {
@@ -16921,9 +16977,9 @@ app.put("/api/admin/staff/:id", requireApiRole("admin"), async (c) => {
     if (id === currentUser.uid && nextActive === 0) {
       return fail(c, "\u0646\u0645\u06CC\u200C\u062A\u0648\u0627\u0646\u06CC\u062F \u062D\u0633\u0627\u0628 \u062E\u0648\u062F\u062A\u0627\u0646 \u0631\u0627 \u063A\u06CC\u0631\u0641\u0639\u0627\u0644 \u06A9\u0646\u06CC\u062F.", 400, "SELF_DISABLE");
     }
-    if (nextActive === 0 && target.role === "admin") {
+    if (nextActive === 0 && personnelRole(target) === "admin") {
       const adminCount = await c.env.DB.prepare(
-        `SELECT COUNT(*) AS c FROM users WHERE role = 'admin' AND is_active = 1`
+        `SELECT COUNT(*) AS c FROM users WHERE is_active = 1 AND (role = 'admin' OR (role='customer' AND staff_role='admin' AND staff_active=1))`
       ).first();
       if ((adminCount?.c ?? 0) <= 1) {
         return fail(c, "\u062D\u062F\u0627\u0642\u0644 \u06CC\u06A9 \u0627\u062F\u0645\u06CC\u0646 \u0641\u0639\u0627\u0644 \u0628\u0627\u06CC\u062F \u0628\u0627\u0642\u06CC \u0628\u0645\u0627\u0646\u062F.", 400, "LAST_ADMIN");
@@ -16932,11 +16988,21 @@ app.put("/api/admin/staff/:id", requireApiRole("admin"), async (c) => {
   }
   if (body.role !== void 0) {
     const nextRole = body.role === "admin" ? "admin" : "staff";
+    if (nextRole !== "admin" && personnelRole(target) === "admin") {
+      const count = await c.env.DB.prepare("SELECT COUNT(*) AS c FROM users WHERE is_active=1 AND (role='admin' OR (role='customer' AND staff_role='admin' AND staff_active=1))").first();
+      if ((count?.c ?? 0) <= 1) return fail(c, "\u062D\u062F\u0627\u0642\u0644 \u06CC\u06A9 \u0627\u062F\u0645\u06CC\u0646 \u0641\u0639\u0627\u0644 \u0628\u0627\u06CC\u062F \u0628\u0627\u0642\u06CC \u0628\u0645\u0627\u0646\u062F.", 400, "LAST_ADMIN");
+    }
     if (id === currentUser.uid && nextRole !== "admin") {
       return fail(c, "\u0646\u0645\u06CC\u200C\u062A\u0648\u0627\u0646\u06CC\u062F \u0646\u0642\u0634 \u062E\u0648\u062F\u062A\u0627\u0646 \u0631\u0627 \u062A\u063A\u06CC\u06CC\u0631 \u062F\u0647\u06CC\u062F.", 400, "SELF_ROLE");
     }
   }
-  await c.env.DB.prepare("UPDATE users SET is_active=?,role=?,permissions=? WHERE id=?").bind(body.is_active === void 0 ? target.is_active : Number(body.is_active) === 1 ? 1 : 0, body.role ?? target.role, body.permissions === void 0 ? target.permissions ?? null : JSON.stringify(body.permissions), id).run();
+  const dual = target.role === "customer";
+  await c.env.DB.prepare(dual ? "UPDATE users SET staff_active=?,staff_role=?,permissions=? WHERE id=?" : "UPDATE users SET is_active=?,role=?,permissions=? WHERE id=?").bind(
+    body.is_active === void 0 ? dual ? target.staff_active ?? 1 : target.is_active : Number(body.is_active) === 1 ? 1 : 0,
+    body.role ?? personnelRole(target),
+    body.permissions === void 0 ? target.permissions ?? null : JSON.stringify(body.permissions),
+    id
+  ).run();
   await audit(c, "staff_permissions_update", { targetType: "staff", targetId: id, details: "\u062F\u0633\u062A\u0631\u0633\u06CC \u06CC\u0627 \u0648\u0636\u0639\u06CC\u062A \u06A9\u0627\u0631\u0645\u0646\u062F \u0628\u0647\u200C\u0631\u0648\u0632\u0631\u0633\u0627\u0646\u06CC \u0634\u062F\u061B \u0627\u0639\u0645\u0627\u0644 \u062F\u0631 \u062F\u0631\u062E\u0648\u0627\u0633\u062A \u0628\u0639\u062F\u06CC." });
   return ok(c, { updated: true });
 });
@@ -16944,7 +17010,7 @@ app.post("/api/admin/staff/:id/password", requireApiRole("admin"), async (c) => 
   const id = toPositiveInt(c.req.param("id"), 0);
   if (!id) return fail(c, "\u0634\u0646\u0627\u0633\u0647 \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "INVALID_ID");
   const target = await findUserById(c.env.DB, id);
-  if (!target || target.role !== "staff" && target.role !== "admin") {
+  if (!target || !personnelRole(target)) {
     return fail(c, "\u06A9\u0627\u0631\u0628\u0631 \u06CC\u0627\u0641\u062A \u0646\u0634\u062F.", 404, "NOT_FOUND");
   }
   const newPassword = generateReadablePassword(12);
@@ -16965,18 +17031,24 @@ app.delete("/api/admin/staff/:id", requireApiRole("admin"), async (c) => {
   if (!id) return fail(c, "\u0634\u0646\u0627\u0633\u0647 \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "INVALID_ID");
   if (id === currentUser.uid) return fail(c, "\u0646\u0645\u06CC\u200C\u062A\u0648\u0627\u0646\u06CC\u062F \u062D\u0633\u0627\u0628 \u062E\u0648\u062F\u062A\u0627\u0646 \u0631\u0627 \u062D\u0630\u0641 \u06A9\u0646\u06CC\u062F.", 400, "SELF_DELETE");
   const target = await findUserById(c.env.DB, id);
-  if (!target || target.role !== "staff" && target.role !== "admin") {
+  if (!target || !personnelRole(target)) {
     return fail(c, "\u06A9\u0627\u0631\u0628\u0631 \u06CC\u0627\u0641\u062A \u0646\u0634\u062F.", 404, "NOT_FOUND");
   }
-  if (target.role === "admin") {
+  if (personnelRole(target) === "admin") {
     const adminCount = await c.env.DB.prepare(
-      `SELECT COUNT(*) AS c FROM users WHERE role = 'admin' AND is_active = 1`
+      `SELECT COUNT(*) AS c FROM users WHERE is_active = 1 AND (role = 'admin' OR (role='customer' AND staff_role='admin' AND staff_active=1))`
     ).first();
     if ((adminCount?.c ?? 0) <= 1) {
       return fail(c, "\u062D\u062F\u0627\u0642\u0644 \u06CC\u06A9 \u0627\u062F\u0645\u06CC\u0646 \u0641\u0639\u0627\u0644 \u0628\u0627\u06CC\u062F \u0628\u0627\u0642\u06CC \u0628\u0645\u0627\u0646\u062F.", 400, "LAST_ADMIN");
     }
   }
-  await c.env.DB.prepare("DELETE FROM users WHERE id = ?").bind(id).run();
+  if (target.role === "customer") {
+    const openShift2 = await getOpenShift(c.env.DB, id);
+    if (openShift2) return fail(c, "\u0627\u0628\u062A\u062F\u0627 \u0634\u06CC\u0641\u062A \u0628\u0627\u0632 \u0627\u06CC\u0646 \u06A9\u0627\u0631\u0645\u0646\u062F \u0631\u0627 \u0628\u0628\u0646\u062F\u06CC\u062F.", 409, "OPEN_SHIFT");
+    await c.env.DB.prepare("UPDATE users SET staff_role=NULL,staff_active=1,password_hash=NULL,permissions=NULL,token_version=token_version+1 WHERE id=?").bind(id).run();
+  } else {
+    await c.env.DB.prepare("DELETE FROM users WHERE id = ?").bind(id).run();
+  }
   await audit(c, "staff_delete", { targetType: "user", targetId: id, details: `\u06A9\u0627\u0631\u0628\u0631 \xAB${target.name}\xBB \u062D\u0630\u0641 \u0634\u062F.` });
   return ok(c, { deleted: true });
 });

@@ -153,6 +153,7 @@ if (!logicBlock) {
     crypto: { randomUUID: () => 'test-uuid' },
     fa: (v) => String(v), money: (v) => String(v), moneyFa: (v) => String(v),
     escapeHtml: (v) => String(v), toast() {}, api: async () => ({}), setLoading() {},
+    initJalaliPickers() {},readJalaliPickers:()=>null,
     initJalaliRange() {}, readJalaliRange: () => ({ iso: '', partial: false }),
     fetch: async () => ({ ok: true, json: async () => ({}) }),
     $: (selector) => element(),

@@ -822,7 +822,7 @@ export function adminStaffPage(input: {
             <span class="w-9 h-9 rounded-full ${member.role === 'admin' ? 'bg-gradient-to-br from-fuchsia-400 to-purple-800' : 'bg-gradient-to-br from-amber-300 to-amber-800'} text-coffee-950 text-[12px] font-bold flex items-center justify-center">${escapeHtml(member.name.slice(0, 1))}</span>
             <div>
               <div class="text-[12.5px] font-medium flex items-center gap-1.5">
-                ${escapeHtml(member.name)}
+                ${escapeHtml(member.name)}${member.customer_member ? ' <span class="badge tone-info">عضو باشگاه</span>' : ''}
                 ${isSelf ? '<span class="badge tone-info !text-[9px]">شما</span>' : ''}
               </div>
               <div class="text-[10.5px] text-cream/35 font-mono" dir="ltr">${escapeHtml(member.phone)}</div>
@@ -977,7 +977,14 @@ export function adminStaffPage(input: {
       var btn = $('#staff-submit');
       setLoading(btn, true, 'در حال ایجاد…');
       try {
-        await api('/api/admin/staff', { method: 'POST', body: { name: name, phone: phone, role: role, password: password, permissions: Array.from($('#s-permissions').querySelectorAll('input:checked')).map(function(input){return input.value;}) } });
+        var payload={name:name,phone:phone,role:role,password:password,permissions:Array.from($('#s-permissions').querySelectorAll('input:checked')).map(function(input){return input.value;})};
+        try { await api('/api/admin/staff',{method:'POST',body:payload}); }
+        catch(error){
+          if(error.code!=='CONFIRM_CUSTOMER_STAFF')throw error;
+          var confirmed=await confirmAction({title:'این شماره عضو باشگاه است',message:'دسترسی پرسنلی به همان حساب اضافه شود؟ نام، تولد، سوابق خرید و امتیازها حفظ می‌شوند و عضویت مشتری فعال می‌ماند. رمز جدید برای ورود پرسنلی تنظیم می‌شود.',confirmText:'افزودن با حفظ عضویت'});
+          if(!confirmed){setLoading(btn,false);return;}
+          payload.confirmExistingCustomer=true;await api('/api/admin/staff',{method:'POST',body:payload});
+        }
         await confirmAction({title:'کارمند ایجاد شد',message:'رمز اولیه: '+password+' — اکنون آن را امن به کارمند تحویل دهید؛ رمز فقط هش‌شده ذخیره می‌شود.',confirmText:'رمز را ذخیره کردم',cancelText:'بستن'});
         $('#s-password').value='';window.location.reload();
       } catch (error) {
@@ -1011,7 +1018,7 @@ export function adminStaffPage(input: {
       var active = button.dataset.active === '1';
       var ok = await confirmAction({
         title: active ? 'غیرفعال کردن کاربر' : 'فعال کردن کاربر',
-        message: active ? 'این کاربر دیگر نمی‌تواند وارد شود.' : 'این کاربر دوباره می‌تواند وارد شود.',
+        message: active ? 'ورود پرسنلی غیرفعال می‌شود؛ عضویت مشتریِ مرتبط حفظ می‌شود.' : 'این کاربر دوباره می‌تواند وارد شود.',
         confirmText: active ? 'غیرفعال کن' : 'فعال کن',
         danger: active
       });
@@ -1028,14 +1035,14 @@ export function adminStaffPage(input: {
     bindAction('[data-delete]', async function (button) {
       var ok = await confirmAction({
         title: 'حذف کاربر',
-        message: 'کاربر «' + button.dataset.name + '» حذف شود؟ این عملیات قابل بازگشت نیست.',
+        message: 'دسترسی پرسنلی «' + button.dataset.name + '» حذف شود؟ برای عضو باشگاه، حساب مشتری و سوابق حفظ می‌شود. حذف حساب صرفاً پرسنلی قابل بازگشت نیست.',
         confirmText: 'حذف',
         danger: true
       });
       if (!ok) return;
       try {
         await api('/api/admin/staff/' + button.dataset.delete, { method: 'DELETE' });
-        toast('کاربر حذف شد.', 'success');
+        toast('دسترسی پرسنلی حذف شد.', 'success');
         setTimeout(function () { window.location.reload(); }, 700);
       } catch (error) {
         toast(error.message, 'error');

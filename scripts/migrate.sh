@@ -239,6 +239,9 @@ apply "ALTER TABLE users ADD COLUMN permissions TEXT DEFAULT NULL" "مجوزها
 apply "ALTER TABLE sms_logs ADD COLUMN fallback_ids TEXT NOT NULL DEFAULT '[]'" "پیوند ارسال پیامک به مقصد ادمین"
 apply "ALTER TABLE sms_logs ADD COLUMN delivery_kind TEXT NOT NULL DEFAULT 'legacy'" "تفکیک ارسال آزمایشی و پذیرش پنل"
 
+apply "ALTER TABLE users ADD COLUMN staff_role TEXT DEFAULT NULL" "دسترسی پرسنلی مستقل برای عضو باشگاه"
+apply "ALTER TABLE users ADD COLUMN staff_active INTEGER NOT NULL DEFAULT 1" "وضعیت دسترسی پرسنلی مستقل"
+
 # --- ۵) پر کردن داده‌های قدیمی ------------------------------------------------
 apply "UPDATE users SET lifetime_points = points WHERE lifetime_points = 0 AND points > 0" \
   "هم‌تراز کردن lifetime_points با امتیاز فعلی مشتریان قدیمی"

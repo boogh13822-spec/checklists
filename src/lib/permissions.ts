@@ -23,3 +23,9 @@ export function storedPermissions(value: string | null | undefined): StaffPermis
 export function can(user: Pick<JwtPayload,'role'|'permissions'> | null | undefined, permission: StaffPermission): boolean {
   return user?.role === 'admin' || (user?.role === 'staff' && !!user.permissions?.includes(permission));
 }
+
+/** Personnel portal identity; never elevate a customer OTP session. */
+export function personnelRole(user: {role: string; staff_role?: string | null} | null | undefined): 'staff' | 'admin' | null {
+  if(user?.role === 'admin' || user?.role === 'staff') return user.role;
+  return user?.role === 'customer' && (user.staff_role === 'staff' || user.staff_role === 'admin') ? user.staff_role : null;
+}
