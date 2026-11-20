@@ -27,9 +27,9 @@ import { appShell, emptyState, icon, jsonForScript, pageHeader } from './layout'
  *  اجزای مشترک
  * ========================================================================== */
 
-function tierBadge(tier: string): string {
+function tierBadge(tier: string, settings: AppSettings): string {
   const meta = TIER_META[tier] ?? TIER_META.bronze;
-  return `<span class="badge ${meta.badge}">${meta.icon} ${meta.label}</span>`;
+  return `<span class="badge ${meta.badge}">${meta.icon} ${escapeHtml(tierLabel(tier, settings))}</span>`;
 }
 
 function statCard(options: {
@@ -398,12 +398,12 @@ export function adminCustomersPage(input: {
           <a href="/admin/customers/${customer.id}" class="flex items-center gap-2.5 group">
             <span class="w-8 h-8 rounded-full bg-gradient-to-br from-amber-300 to-amber-800 text-coffee-950 text-[12px] font-bold flex items-center justify-center shrink-0">${escapeHtml(customer.name.slice(0, 1))}</span>
             <span class="min-w-0">
-              <span class="block text-[12.5px] font-medium group-hover:text-gold transition truncate">${escapeHtml(customer.name)}</span>
+              <span class="block text-[12.5px] font-medium group-hover:text-gold transition truncate">${escapeHtml(customer.name)}${customer.nickname ? ' · '+escapeHtml(customer.nickname) : ''}</span>
               <span class="block text-[10.5px] text-cream/35 font-mono" dir="ltr">${escapeHtml(customer.phone)}</span>
             </span>
           </a>
         </td>
-        <td>${tierBadge(customer.tier)}</td>
+        <td>${tierBadge(customer.tier, settings)}</td>
         <td class="font-bold text-amber-200">${formatNumberFa(customer.points)}</td>
         <td class="text-[12px]">${formatNumberFa(customer.visits)}</td>
         <td class="text-[12px] text-cream/60">${formatNumberFa(customer.total_spent)}</td>
@@ -426,8 +426,8 @@ export function adminCustomersPage(input: {
           <span class="w-10 h-10 rounded-full bg-gradient-to-br from-amber-300 to-amber-800 text-coffee-950 font-bold flex items-center justify-center shrink-0">${escapeHtml(customer.name.slice(0, 1))}</span>
           <div class="min-w-0 flex-1">
             <div class="flex items-center justify-between gap-2">
-              <div class="text-[13px] font-semibold truncate">${escapeHtml(customer.name)}</div>
-              ${tierBadge(customer.tier)}
+              <div class="text-[13px] font-semibold truncate">${escapeHtml(customer.name)}${customer.nickname ? ' · '+escapeHtml(customer.nickname) : ''}</div>
+              ${tierBadge(customer.tier, settings)}
             </div>
             <div class="text-[11px] text-cream/40 font-mono mt-0.5" dir="ltr">${escapeHtml(customer.phone)}</div>
             <div class="flex items-center gap-3 mt-2.5 text-[10.5px] text-cream/45">
@@ -470,7 +470,7 @@ export function adminCustomersPage(input: {
           ${['bronze', 'silver', 'gold', 'vip']
             .map(
               (tier) =>
-                `<option value="${tier}" ${params.tier === tier ? 'selected' : ''}>${TIER_META[tier].label}</option>`
+                `<option value="${tier}" ${params.tier === tier ? 'selected' : ''}>${escapeHtml(tierLabel(tier, settings))}</option>`
             )
             .join('')}
         </select>
@@ -532,7 +532,7 @@ export function adminCustomersPage(input: {
           <input id="add-phone" type="tel" inputmode="numeric" dir="ltr" class="field text-left tracking-wider" placeholder="09xxxxxxxxx" maxlength="13" required />
         </div>
         <div>
-          <label class="label">تاریخ تولد</label>
+          <label class="flex gap-2 text-xs"><input id="add-birth-known" type="checkbox" /> تاریخ تولد معلوم است (اختیاری)</label>
           <div class="grid grid-cols-3 gap-2">
             <select id="add-day" class="field"></select>
             <select id="add-month" class="field">
@@ -543,6 +543,8 @@ export function adminCustomersPage(input: {
             <select id="add-year" class="field"></select>
           </div>
         </div>
+        <div><label class="label" for="add-nickname">لقب (اختیاری)</label><input id="add-nickname" class="field" maxlength="40" /></div>
+        <label class="flex gap-2 text-sm"><input id="add-invoice-now" type="checkbox" checked /> پس از ثبت، ادامه به فاکتور همین مشتری</label>
         <div>
           <label class="label">کد معرف <span class="text-cream/30">(اختیاری)</span></label>
           <input id="add-referral" type="text" dir="ltr" class="field text-left tracking-wider" placeholder="REF-XXXXXX" maxlength="30" />
@@ -560,6 +562,8 @@ export function adminCustomersPage(input: {
   (function () {
     var modal = $('#add-modal');
     initJalaliPickers($('#add-day'), $('#add-month'), $('#add-year'), '', 90);
+    function addBirthState(){['day','month','year'].forEach(function(key){$('#add-'+key).disabled=!$('#add-birth-known').checked;});}
+    $('#add-birth-known').addEventListener('change',addBirthState);addBirthState();
 
     $('#open-add').addEventListener('click', function () { modal.classList.remove('hidden'); $('#add-name').focus(); });
     $('#close-add').addEventListener('click', function () { modal.classList.add('hidden'); });
@@ -580,7 +584,7 @@ export function adminCustomersPage(input: {
       event.preventDefault();
       var name = $('#add-name').value.trim();
       var phone = normalizePhone($('#add-phone').value);
-      var birth = readJalaliPickers($('#add-day'), $('#add-month'), $('#add-year'));
+      var birth = $('#add-birth-known').checked ? readJalaliPickers($('#add-day'), $('#add-month'), $('#add-year')) : '';
       var referral = $('#add-referral').value.trim();
       if (name.length < 2) { toast('نام را کامل وارد کنید.', 'error'); return; }
       if (!/^09\\d{9}$/.test(phone)) { toast('شماره موبایل معتبر نیست.', 'error'); return; }
@@ -588,10 +592,11 @@ export function adminCustomersPage(input: {
       var btn = $('#add-submit');
       setLoading(btn, true, 'در حال ثبت…');
       try {
-        await api('/api/admin/customers', { method: 'POST', body: { name: name, phone: phone, birth_date: birth, referral: referral } });
+        await api('/api/admin/customers', { method: 'POST', body: { name: name, phone: phone, birth_date: birth, referral: referral, nickname: $('#add-nickname').value.trim() } });
         toast('مشتری با موفقیت اضافه شد.', 'success');
         modal.classList.add('hidden');
-        setTimeout(function () { window.location.reload(); }, 900);
+        if ($('#add-invoice-now').checked) window.location.href='/staff?phone='+encodeURIComponent(phone);
+        else setTimeout(function () { window.location.reload(); }, 900);
       } catch (error) {
         toast(error.message, 'error');
         setLoading(btn, false);
@@ -648,7 +653,7 @@ export function adminCustomerDetailPage(input: {
         <div class="flex-1 min-w-0">
           <div class="flex items-center gap-2 flex-wrap">
             <h1 class="text-xl font-extrabold">${escapeHtml(user.name)}</h1>
-            ${tierBadge(user.tier)}
+            ${tierBadge(user.tier, settings)}
             <span class="badge tone-${status.tone}">${status.label}</span>
             ${user.is_active === 0 ? '<span class="badge tone-danger">غیرفعال</span>' : ''}
           </div>
@@ -698,8 +703,9 @@ export function adminCustomerDetailPage(input: {
               <input id="e-phone" type="tel" dir="ltr" class="field text-left tracking-wider" maxlength="13" value="${escapeHtml(user.phone)}" />
             </div>
           </div>
+          <div><label class="label" for="e-nickname">لقب (اختیاری)</label><input id="e-nickname" class="field" maxlength="40" value="${escapeHtml(user.nickname ?? '')}" /></div>
           <div>
-            <label class="label">تاریخ تولد</label>
+            <label class="flex gap-2 text-xs"><input id="e-birth-known" type="checkbox" ${user.birth_date ? 'checked' : ''} /> تاریخ تولد معلوم است (اختیاری)</label>
             <div class="grid grid-cols-3 gap-2">
               <select id="e-day" class="field"></select>
               <select id="e-month" class="field">
@@ -729,7 +735,7 @@ export function adminCustomerDetailPage(input: {
             <p class="hint">عدد مثبت برای افزودن و عدد منفی برای کسر امتیاز. امتیاز منفی اعمال نمی‌شود.</p>
           </div>
           <div class="rounded-xl bg-black/25 border border-white/10 p-3 text-[11px] text-cream/50 leading-6">
-            سطح فعلی: <span class="text-cream font-semibold">${tierLabel(user.tier)}</span>
+            سطح فعلی: <span class="text-cream font-semibold">${escapeHtml(tierLabel(user.tier, settings))}</span>
             — پس از تنظیم، سطح به‌صورت خودکار بازمحاسبه می‌شود.
           </div>
           <div class="text-[11px] text-cream/40 leading-6">
@@ -865,17 +871,19 @@ export function adminCustomerDetailPage(input: {
   (function () {
     var userId = ${user.id};
     initJalaliPickers($('#e-day'), $('#e-month'), $('#e-year'), ${jsonForScript(user.birth_date ?? '')}, 90);
+    function eBirthState(){['day','month','year'].forEach(function(key){$('#e-'+key).disabled=!$('#e-birth-known').checked;});}
+    $('#e-birth-known').addEventListener('change',eBirthState);eBirthState();
 
     $('#edit-form').addEventListener('submit', async function (event) {
       event.preventDefault();
       var name = $('#e-name').value.trim();
       var phone = $('#e-phone').value.trim();
-      var birth = readJalaliPickers($('#e-day'), $('#e-month'), $('#e-year'));
+      var birth = $('#e-birth-known').checked ? readJalaliPickers($('#e-day'), $('#e-month'), $('#e-year')) : '';
       if (name.length < 2) { toast('نام را کامل وارد کنید.', 'error'); return; }
       var btn = $('#save-btn');
       setLoading(btn, true, 'در حال ذخیره…');
       try {
-        await api('/api/admin/customers/' + userId, { method: 'PUT', body: { name: name, phone: phone, birth_date: birth } });
+        await api('/api/admin/customers/' + userId, { method: 'PUT', body: { name: name, phone: phone, birth_date: birth, nickname: $('#e-nickname').value.trim() } });
         toast('اطلاعات ذخیره شد.', 'success');
         setTimeout(function () { window.location.reload(); }, 800);
       } catch (error) {

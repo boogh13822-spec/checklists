@@ -140,7 +140,7 @@ section('۴) ثبت فاکتور و پرداخت');
 const invoice = async (items, payment, extra = {}) =>
   call('POST', '/api/staff/invoices', {
     body: {
-      userId: customerId,
+      userId: customerId, customerPhone: uniquePhone,
       items,
       amount: null,
       clientRequestId: `e2e-${Math.random().toString(36).slice(2)}`,
@@ -189,7 +189,7 @@ const badQty = await invoice([{ name: 'چای', qty: 0, price: 35000 }], { cash:
 check(badQty.status === 400 && badQty.body.code === 'INVALID_ITEM', 'تعداد صفر → INVALID_ITEM');
 
 const noPayment = await call('POST', '/api/staff/invoices', {
-  body: { userId: customerId, items: [{ name: 'اسپرسو', qty: 1, price: 45000 }], amount: null },
+  body: { userId: customerId, customerPhone: uniquePhone, items: [{ name: 'اسپرسو', qty: 1, price: 45000 }], amount: null },
   cookie: staffCookie,
 });
 check(noPayment.status === 201 && noPayment.body.data.paymentMethod === null,
@@ -197,7 +197,7 @@ check(noPayment.status === 201 && noPayment.body.data.paymentMethod === null,
 
 const reqId = `dup-${Date.now()}`;
 const dupBody = {
-  userId: customerId,
+  userId: customerId, customerPhone: uniquePhone,
   items: [{ name: 'اسپرسو', qty: 1, price: 45000 }],
   amount: null,
   clientRequestId: reqId,

@@ -27,7 +27,9 @@
     "test:schema": "node scripts/test-schema.mjs",
     "schema:check": "node scripts/generate-schema.mjs --check",
     "test:recovery:browser": "node scripts/test-recovery-browser.mjs",
-    "test:messenger": "node scripts/test-messenger.mjs"
+    "test:messenger": "node scripts/test-messenger.mjs",
+    "test:workflow": "node scripts/test-workflow.mjs",
+    "test:workflow:browser": "node scripts/test-workflow-browser.mjs"
   },
   "dependencies": {
     "hono": "^4.13.13"

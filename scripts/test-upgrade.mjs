@@ -153,7 +153,7 @@ try {
   });
   await test('staff cannot select awarded points; HTTP invoice reports deduplicate on request retry within Free D1 budget',async()=>{
     reset();const cookie=await login(true);await setting('points_mode','invoice');await setting('invoice_points',17);m.invalidateSettingsCache();await m.saveFallbackConfig(env,reports());globalThis.fetch=async()=>response({ok:true,result:{message_id:10}});const id=customer();
-    const body={userId:id,items:[{name:'دستی',price:1,qty:1}],pointsEarned:99999,points:99999,clientRequestId:'http-repeat'};env.DB.queries=0;
+    const body={userId:id,customerPhone:'09123330001',items:[{name:'دستی',price:1,qty:1}],pointsEarned:99999,points:99999,clientRequestId:'http-repeat'};env.DB.queries=0;
     const r=await request('POST','/api/staff/invoices',body,cookie);assert.equal(r.status,201,JSON.stringify(r));assert.equal(r.body.data.pointsEarned,17);assert(env.DB.queries<=50,'queries='+env.DB.queries);console.log('   Invoice + report dispatcher D1 queries: '+env.DB.queries);
     const again=await request('POST','/api/staff/invoices',body,cookie);assert.equal(again.body.data.duplicate,true);assert.equal(rows().length,1);assert.equal(db.prepare('SELECT points FROM users WHERE id=?').get(id).points,17);
   });

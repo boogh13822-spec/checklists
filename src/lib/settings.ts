@@ -86,6 +86,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   otp_login_enabled: 1,
   require_shift: 0,
   tiers: { silver: 500, gold: 2000, vip: 5000 },
+  tier_labels: { bronze: 'برنزی', silver: 'نقره‌ای', gold: 'طلایی', vip: 'الماسی' },
   cafe_name: 'کافه ملت',
   cafe_city: 'تهران',
   weather_api_key: '',
@@ -115,6 +116,7 @@ export const EDITABLE_SETTING_KEYS: Array<keyof AppSettings> = [
   'require_shift',
   'currency_unit',
   'tiers',
+  'tier_labels',
   'cafe_name',
   'cafe_city',
   'weather_api_key',
@@ -157,6 +159,7 @@ function coerceSettings(raw: Record<string, unknown>): AppSettings {
 
   return {
     sms_templates: templatesMerged,
+    tier_labels: Object.fromEntries(Object.entries(DEFAULT_SETTINGS.tier_labels).map(([key,label]) => [key, typeof (raw.tier_labels as Record<string,unknown>)?.[key] === 'string' && String((raw.tier_labels as Record<string,unknown>)[key]).trim() ? String((raw.tier_labels as Record<string,unknown>)[key]).trim().slice(0,30) : label])),
     points_mode: raw.points_mode === 'visit' || raw.points_mode === 'invoice' ? raw.points_mode : 'amount',
     points_per_currency: toIntInRange(raw.points_per_currency, 1, 1000, 1),
     invoice_points: toIntInRange(raw.invoice_points, 0, 100_000, 15),

@@ -1,3 +1,4 @@
+import { STAFF_PERMISSIONS, NEW_STAFF_PERMISSIONS, storedPermissions } from '../lib/permissions';
 import { fallbackPanel, fallbackScripts } from './fallback';
 /**
  * ----------------------------------------------------------------------------
@@ -8,6 +9,7 @@ import type { AppSettings, CouponRow, Role } from '../types';
 import type { CouponListItem, SmsLogListItem, StaffListItem } from '../lib/db';
 import type { MenuItem } from '../lib/settings';
 import {
+  safeJsonParse,
   escapeHtml,
   formatJalali,
   formatJalaliDateTime,
@@ -279,18 +281,20 @@ export function adminSettingsPage(input: {
           </div>
 
           <div>
+            <div class="label">نام سطح‌ها (ترتیب و امتیاز مشتری تغییر نمی‌کند)</div>
+            <div class="grid sm:grid-cols-4 gap-3 mb-4">${['bronze','silver','gold','vip'].map((key,index)=>`<label class="label">سطح ${toPersianDigits(index+1)}<input id="tier_label_${key}" class="field mt-1" maxlength="30" value="${escapeHtml(settings.tier_labels[key])}" /></label>`).join('')}</div>
             <div class="label">آستانه‌های سطح (بر اساس مجموع امتیاز کسب‌شده)</div>
             <div class="grid grid-cols-3 gap-4">
               <div>
-                <label class="label !text-[10.5px]" for="tier_silver">نقره‌ای</label>
+                <label class="label !text-[10.5px]" for="tier_silver">${escapeHtml(settings.tier_labels.silver)}</label>
                 <input id="tier_silver" type="number" min="1" class="field text-left" dir="ltr" value="${settings.tiers.silver}" />
               </div>
               <div>
-                <label class="label !text-[10.5px]" for="tier_gold">طلایی</label>
+                <label class="label !text-[10.5px]" for="tier_gold">${escapeHtml(settings.tier_labels.gold)}</label>
                 <input id="tier_gold" type="number" min="2" class="field text-left" dir="ltr" value="${settings.tiers.gold}" />
               </div>
               <div>
-                <label class="label !text-[10.5px]" for="tier_vip">الماسی</label>
+                <label class="label !text-[10.5px]" for="tier_vip">${escapeHtml(settings.tier_labels.vip)}</label>
                 <input id="tier_vip" type="number" min="3" class="field text-left" dir="ltr" value="${settings.tiers.vip}" />
               </div>
             </div>
@@ -512,7 +516,7 @@ export function adminSettingsPage(input: {
     var TEMPLATE_KEYS = ['welcome', 'invoice', 'birthday', 'churn', 'weather'];
     var SAMPLES = ${jsonForScript(
       TEMPLATE_META.reduce<Record<string, Record<string, string>>>((acc, meta) => {
-        acc[meta.key] = meta.sample;
+        acc[meta.key] = {...meta.sample, tier:settings.tier_labels.silver,cafe:settings.cafe_name};
         return acc;
       }, {})
     )};
@@ -690,6 +694,7 @@ export function adminSettingsPage(input: {
         redeem_expiry_days: Number($('#redeem_expiry_days').value),
         otp_login_enabled: document.getElementById('otp_login_enabled').checked ? 1 : 0,
         referral_reward_points: Number($('#referral_reward_points').value),
+        tier_labels: Object.fromEntries(['bronze','silver','gold','vip'].map(function(key){return [key,$('#tier_label_'+key).value.trim()];})),
         tiers: {
           silver: Number($('#tier_silver').value),
           gold: Number($('#tier_gold').value),
@@ -830,6 +835,7 @@ export function adminStaffPage(input: {
         <td><span class="badge ${member.is_active ? 'tone-success' : 'tone-danger'}">${member.is_active ? 'فعال' : 'غیرفعال'}</span></td>
         <td>
           <div class="flex items-center gap-1">
+            ${member.role === 'staff' ? `<button type="button" data-permissions-id="${member.id}" data-permissions="${escapeHtml(JSON.stringify(storedPermissions(member.permissions)))}" data-name="${escapeHtml(member.name)}" class="btn btn-ghost btn-sm" title="ویرایش دسترسی‌ها">${icon('shield','w-4 h-4')}</button>` : ''}
             <button type="button" data-reset="${member.id}" data-name="${escapeHtml(member.name)}" class="btn btn-ghost btn-sm !px-2" title="تغییر رمز">${icon('key', 'w-3.5 h-3.5')}</button>
             ${
               isSelf
@@ -916,6 +922,10 @@ export function adminStaffPage(input: {
           </div>
           <p class="hint">رمز را به کارمند اطلاع دهید؛ بعداً می‌تواند تغییر دهد.</p>
         </div>
+        <fieldset id="s-permissions" class="space-y-2 rounded-xl border border-white/10 p-3"><legend class="label">دسترسی‌های کارمند</legend>
+          ${Object.entries(STAFF_PERMISSIONS).map(([key,label])=>`<label class="flex gap-2 text-xs"><input type="checkbox" value="${key}" ${NEW_STAFF_PERMISSIONS.includes(key as keyof typeof STAFF_PERMISSIONS)?'checked':''} />${label}</label>`).join('')}
+          <p class="hint">بدون مجوز جستجو/فهرست، فقط شمارهٔ کامل برای فاکتور پذیرفته می‌شود. ادمین به همهٔ بخش‌ها دسترسی دارد.</p>
+        </fieldset>
         <div class="flex gap-2 pt-1">
           <button type="button" id="cancel-staff" class="btn btn-ghost flex-1">انصراف</button>
           <button type="submit" id="staff-submit" class="btn btn-primary flex-1">${icon('plus', 'w-4 h-4')} ایجاد</button>
@@ -925,9 +935,15 @@ export function adminStaffPage(input: {
   </div>
   `;
 
+  const permissionModal = `<div id="permissions-modal" class="hidden fixed inset-0 z-50 bg-black/70 p-5 overflow-y-auto"><div class="glass rounded-3xl p-5 max-w-md mx-auto space-y-4"><h3 id="permissions-title" class="font-bold"></h3><div id="permission-fields" class="space-y-3">${Object.entries(STAFF_PERMISSIONS).map(([key,label])=>`<label class="flex gap-2 text-sm"><input type="checkbox" value="${key}" />${label}</label>`).join('')}</div><p class="hint">تغییر مجوز در درخواست بعدی اعمال می‌شود؛ خروج و ورود دوباره لازم نیست.</p><div class="flex gap-2"><button id="save-permissions" class="btn btn-primary" type="button">ذخیره دسترسی</button><button id="close-permissions" class="btn btn-ghost" type="button">بستن</button></div></div></div>`;
   const scripts = `
   (function () {
     var modal = $('#staff-modal');
+    var permissionTarget=null;
+    document.querySelectorAll('[data-permissions-id]').forEach(function(button){button.addEventListener('click',function(){permissionTarget=button.dataset.permissionsId;var values=JSON.parse(button.dataset.permissions);$('#permissions-title').textContent='دسترسی‌های '+button.dataset.name;$('#permission-fields').querySelectorAll('input').forEach(function(input){input.checked=values.indexOf(input.value)>=0;});$('#permissions-modal').classList.remove('hidden');});});
+    $('#close-permissions').addEventListener('click',function(){$('#permissions-modal').classList.add('hidden');});
+    $('#save-permissions').addEventListener('click',async function(){if(!permissionTarget)return;var button=this;setLoading(button,true);try{var values=Array.from($('#permission-fields').querySelectorAll('input:checked')).map(function(input){return input.value;});await api('/api/admin/staff/'+permissionTarget,{method:'PUT',body:{permissions:values}});document.querySelector('[data-permissions-id="'+permissionTarget+'"]').dataset.permissions=JSON.stringify(values);$('#permissions-modal').classList.add('hidden');toast('دسترسی‌ها ذخیره شد.','success');}catch(error){toast(error.message,'error');}finally{setLoading(button,false);}});
+    $('#s-role').addEventListener('change',function(){$('#s-permissions').disabled=this.value==='admin';});
 
     function randomPassword() {
       var chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#';
@@ -961,9 +977,9 @@ export function adminStaffPage(input: {
       var btn = $('#staff-submit');
       setLoading(btn, true, 'در حال ایجاد…');
       try {
-        await api('/api/admin/staff', { method: 'POST', body: { name: name, phone: phone, role: role, password: password } });
-        toast('کارمند ایجاد شد. رمز: ' + password, 'success');
-        setTimeout(function () { window.location.reload(); }, 1600);
+        await api('/api/admin/staff', { method: 'POST', body: { name: name, phone: phone, role: role, password: password, permissions: Array.from($('#s-permissions').querySelectorAll('input:checked')).map(function(input){return input.value;}) } });
+        await confirmAction({title:'کارمند ایجاد شد',message:'رمز اولیه: '+password+' — اکنون آن را امن به کارمند تحویل دهید؛ رمز فقط هش‌شده ذخیره می‌شود.',confirmText:'رمز را ذخیره کردم',cancelText:'بستن'});
+        $('#s-password').value='';window.location.reload();
       } catch (error) {
         toast(error.message, 'error');
         setLoading(btn, false);
@@ -1056,7 +1072,7 @@ export function adminStaffPage(input: {
     role: 'admin' as Role,
     userName,
     active: 'staff',
-    body,
+    body: body + permissionModal,
     scripts,
     cafeName: settings.cafe_name,
   });
@@ -1099,9 +1115,10 @@ export function adminSmsPage(input: {
 
   const body = `
   <div class="p-4 sm:p-6 lg:p-8 max-w-6xl mx-auto">
+    <p class="hint mb-3">ارسال به ادمین به معنی ارسال پیامک توسط او نیست. <a href="/admin/fallback" class="underline">تاریخچهٔ زندهٔ پیام‌رسان‌ها</a> · <button type="button" onclick="window.location.reload()" class="underline">تازه‌سازی وضعیت پیامک‌ها</button></p>
     ${pageHeader({
       title: 'پیامک‌ها',
-      subtitle: 'تاریخچه ارسال‌ها و وضعیت تحویل',
+      subtitle: 'وضعیت پنل پیامک و ارسال به ادمین — تأیید خواندن/تحویل به مشتری نیست',
       iconName: 'chat',
       actions: `<a href="/admin/settings#templates" class="btn btn-ghost btn-sm">${icon('edit', 'w-4 h-4')} ویرایش قالب‌ها</a>`,
     })}
@@ -1144,7 +1161,7 @@ export function adminSmsPage(input: {
                   ${logs
                     .map((log) => {
                       const statusLabel =
-                        log.status === 'sent' ? 'ارسال شد' : log.status === 'failed' ? 'ناموفق' : log.status === 'pending' ? 'صف جایگزین (نه تحویل به مشترک)' : 'رد شد';
+                        log.status === 'sent' ? log.delivery_kind === 'console' ? 'آزمایشی؛ فقط ثبت لاگ' : log.delivery_kind === 'provider_accepted' ? 'پذیرفته‌شده توسط پنل پیامک' : 'ثبت ارسال قدیمی؛ تحویل تأیید نشده' : log.status === 'failed' ? 'ناموفق' : log.status === 'pending' ? 'صف جایگزین (نه تحویل به مشترک)' : 'رد شد';
                       const tone =
                         log.status === 'sent' ? 'success' : log.status === 'failed' ? 'danger' : 'muted';
                       return `<tr>
@@ -1158,6 +1175,10 @@ export function adminSmsPage(input: {
                         </td>
                         <td>
                           <span class="badge tone-${tone}">${statusLabel}</span>
+                          ${log.provider_id ? `<div class="hint">شناسهٔ سرویس: <bdi>${escapeHtml(log.provider_id)}</bdi></div>` : ''}
+                          ${safeJsonParse<Array<{channel:string;status:string;id:string;providerId?:string}>>(log.fallback_delivery ?? '[]',[]).map(job=>`<div class="text-xs mt-2"><b>${job.channel==='telegram'?'تلگرام':'بله'}:</b> ${escapeHtml(({sent:'API پیام‌رسان تأیید کرد',pending:'در صف ادمین',processing:'در حال ارسال',failed:'به ادمین ارسال نشد/نامعلوم',skipped:'لغو شد',expired:'منقضی شد'} as Record<string,string>)[job.status] ?? 'نامشخص')} ${job.providerId ? ' · شناسهٔ پیام '+escapeHtml(job.providerId) : ''}</div>`).join('')}
+                          ${log.status==='pending' && (!log.fallback_ids || log.fallback_ids==='[]') ? '<p class="hint">لاگ قدیمی است؛ وضعیت مقصد به این پیامک پیوند ندارد.</p>' : ''}
+                          ${log.status==='pending' && log.fallback_ids && log.fallback_ids!=='[]' && log.fallback_delivery==='[]' ? '<p class="hint">سابقهٔ مقصد دیگر در دسترس نیست؛ تحویل به ادمین نامعلوم است.</p>' : ''}
                           ${log.error ? `<div class="text-[9.5px] text-rose-300/60 mt-1 truncate max-w-[120px]" title="${escapeHtml(log.error)}">${escapeHtml(log.error)}</div>` : ''}
                         </td>
                         <td class="text-[10.5px] text-cream/40 whitespace-nowrap">${formatJalaliDateTime(log.sent_at)}</td>

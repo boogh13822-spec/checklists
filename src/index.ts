@@ -1,3 +1,5 @@
+import { can, LEGACY_STAFF_PERMISSIONS, validatePermissions, type StaffPermission } from './lib/permissions';
+import { customerSearchText, customerSearchPattern } from './lib/db';
 /**
  * ============================================================================
  *  باشگاه مشتریان کافه — Cloudflare Worker
@@ -135,7 +137,7 @@ import { adminLogsCsv, adminLogsPage, adminReportsPage, reportsCsv } from './ui/
  * ========================================================================== */
 
 const app = new Hono<AppEnv>();
-const APP_BUILD = 'messenger-diagnostics-v5';
+const APP_BUILD = 'customer-workflow-v6';
 
 /**
  * منطقه‌ی زمانی از متغیر محیطی TZ_NAME (پیش‌فرض Asia/Tehran).
@@ -319,6 +321,10 @@ app.use('/login', loginBodyLimit);
 app.use('/api/auth/login', loginBodyLimit);
 app.use('/api/admin/system/schema', loginBodyLimit);
 app.use('/api/admin/fallback/diagnose', loginBodyLimit);
+app.use('/api/admin/fallback/send', loginBodyLimit);
+app.use('/api/staff/customers', loginBodyLimit);
+app.use('/api/admin/staff', loginBodyLimit);
+app.use('/api/admin/staff/:id', loginBodyLimit);
 
 /* --------------------------------------------------------------------------
  *  محدودسازی نرخ عمومی API
@@ -349,6 +355,25 @@ app.use('*', async (c, next) => {
     if (path.startsWith('/api/')) return fail(c, 'ساختار دیتابیس نیاز به ارتقا دارد. مدیر از بخش بررسی دیتابیس اقدام کند.', 503, 'SCHEMA_UPGRADE_REQUIRED');
     if (c.get('user')?.role === 'admin') return c.redirect('/admin/system', 303);
     return c.html(errorPage(503, 'ساختار دیتابیس باید توسط مدیر به‌روزرسانی شود. هیچ اطلاعاتی حذف نشده است.', c.get('settings').cafe_name), 503);
+  }
+  await next();
+});
+
+/** No permission is accepted from a JWT claim or browser; attachUser reloads DB permissions. */
+app.use('*', async (c, next) => {
+  const user = c.get('user');
+  if (user?.role !== 'staff') return next();
+  const path = c.req.path;
+  let permission: StaffPermission | undefined;
+  if (path === '/api/staff/customer' || path === '/api/staff/coupons/check' || path === '/api/staff/invoices') permission = 'invoice.create';
+  if (path === '/api/staff/invoices/today' || path === '/staff/history') permission = 'invoice.history';
+  if (path.startsWith('/api/staff/shift') || path === '/staff/shift') permission = 'shift.manage';
+  if (path === '/api/staff/customers' && c.req.method === 'POST') permission = 'customer.create';
+  if (path === '/api/staff/customers' && c.req.method === 'GET') permission = 'customer.list';
+  if (path === '/api/staff/customers/search') permission = 'customer.search';
+  if (permission && !can(user, permission)) {
+    if (path.startsWith('/api/')) return fail(c, 'مجوز این عملیات برای شما فعال نیست.', 403, 'PERMISSION_DENIED');
+    return c.html(errorPage(403, 'مجوز این بخش برای شما فعال نیست؛ با مدیر تماس بگیرید.', c.get('settings').cafe_name),403);
   }
   await next();
 });
@@ -407,20 +432,21 @@ app.get('/login', (c) => {
 app.get('/staff', requirePageRole('staff', 'admin'), async (c) => {
   const settings = c.get('settings');
   const user = c.get('user')!;
-  const menu = await loadMenuItems(c.env);
+  const menu = can(user,'invoice.create') ? await loadMenuItems(c.env) : [];
+  const historyAllowed = can(user,'invoice.history');
   const tz = resolveTimeZone(c.env);
   const day = zonedDayRange(tz);
 
   const [statsRow, recentRes, openShiftRow, popular] = await Promise.all([
-    c.env.DB.prepare(
+    historyAllowed ? c.env.DB.prepare(
       `SELECT COUNT(*) AS c,
               COALESCE(SUM(amount), 0) AS s,
               COALESCE(SUM(paid_cash), 0) AS cash
        FROM invoices WHERE voided_at IS NULL AND registered_by = ? AND created_at >= ? AND created_at < ?`
     )
       .bind(user.uid, day.start, day.end)
-      .first<{ c: number; s: number; cash: number }>(),
-    c.env.DB.prepare(
+      .first<{ c: number; s: number; cash: number }>() : Promise.resolve(null),
+    historyAllowed ? c.env.DB.prepare(
       `SELECT i.id, i.amount, i.created_at, i.payment_method, u.name AS customer_name
        FROM invoices i JOIN users u ON u.id = i.user_id
        WHERE i.voided_at IS NULL AND i.registered_by = ? AND i.created_at >= ? AND i.created_at < ?
@@ -433,7 +459,7 @@ app.get('/staff', requirePageRole('staff', 'admin'), async (c) => {
         created_at: string;
         customer_name: string;
         payment_method: string | null;
-      }>(),
+      }>() : Promise.resolve({results: []}),
     getOpenShift(c.env.DB, user.uid),
     getPopularItems(c.env.DB, 8),
   ]);
@@ -447,6 +473,8 @@ app.get('/staff', requirePageRole('staff', 'admin'), async (c) => {
       recentRes.results ?? [],
       user.role === 'admin',
       {
+        actorId: user.uid,
+        permissions: user.role === 'admin' ? undefined : user.permissions,
         popular,
         openShift: openShiftRow
           ? { id: openShiftRow.id, opening_cash: openShiftRow.opening_cash, opened_at: openShiftRow.opened_at }
@@ -476,6 +504,7 @@ app.get('/staff/shift', requirePageRole('staff', 'admin'), async (c) => {
       openShift: openShiftRow,
       summary,
       history,
+      permissions: user.role === 'admin' ? undefined : user.permissions,
       canViewAll: user.role === 'admin',
     })
   );
@@ -603,7 +632,7 @@ app.get('/staff/history', requirePageRole('staff', 'admin'), async (c) => {
         count: summaryRow?.c ?? 0,
         total: summaryRow?.s ?? 0,
       },
-      { q, onlyVoided }
+      { q, onlyVoided, permissions: user.role === 'admin' ? undefined : user.permissions }
     )
   );
 });
@@ -1126,6 +1155,8 @@ app.post('/api/auth/register', async (c) => {
     return fail(c, 'داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
   }
 
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return fail(c,'داده نامعتبر است.',400,'BAD_JSON');
+  if (body.nickname !== undefined && (typeof body.nickname !== 'string' || body.nickname.length > 40)) return fail(c,'لقب باید حداکثر ۴۰ حرف باشد.',400,'INVALID_NICKNAME');
   const name = String(body.name ?? '')
     .replace(/[<>]/g, '')
     .replace(/\s+/g, ' ')
@@ -1151,6 +1182,7 @@ app.post('/api/auth/register', async (c) => {
     name,
     phone,
     birth_date: birthDate,
+    nickname: customerSearchText(String(body.nickname ?? '')),
     referral: referral || null,
     sms_opt_in: smsOptIn,
   });
@@ -1346,6 +1378,21 @@ app.get('/api/auth/me', async (c) => {
  *  API — کارمند
  * ========================================================================== */
 
+async function staffCustomerChoices(c: Context<AppEnv>) {
+  const search = c.req.path.endsWith('/search');
+  const q = customerSearchText(c.req.query('q') ?? '').slice(0,60);
+  if (search && (q.length < 2 || (/^\d+$/.test(q) && q.length < 3))) return fail(c,'برای جستجو حداقل ۲ حرف یا ۳ رقم وارد کنید.',400,'QUERY_TOO_SHORT');
+  if (!search && q) return fail(c,'برای جستجو از بخش جستجوی مجاز استفاده کنید.',400,'INVALID_QUERY');
+  const page = search ? 1 : Math.min(10000,toPositiveInt(c.req.query('page'),1));
+  const pattern = customerSearchPattern(q);
+  const where = search ? " AND (replace(replace(name,'ي','ی'),'ك','ک') LIKE ? ESCAPE '!' OR nickname LIKE ? ESCAPE '!' OR phone LIKE ? ESCAPE '!')" : '';
+  const {results} = await c.env.DB.prepare("SELECT id,name,nickname,phone FROM users WHERE role='customer' AND is_active=1" + where + ' ORDER BY id DESC LIMIT 21 OFFSET ?')
+    .bind(...(search ? [pattern,pattern,pattern] : []),(page-1)*20).all<{id:number;name:string;nickname:string;phone:string}>();
+  return ok(c,{items:(results ?? []).slice(0,20),hasMore:(results?.length ?? 0)>20,page});
+}
+app.get('/api/staff/customers/search', requireApiRole('staff','admin'), staffCustomerChoices);
+app.get('/api/staff/customers', requireApiRole('staff','admin'), staffCustomerChoices);
+
 app.get('/api/staff/customer', requireApiRole('staff', 'admin'), async (c) => {
   const settings = c.get('settings');
   const phone = normalizePhone(c.req.query('phone') ?? '');
@@ -1355,11 +1402,12 @@ app.get('/api/staff/customer', requireApiRole('staff', 'admin'), async (c) => {
   }
 
   const user = await findUserByPhone(c.env.DB, phone);
-  if (!user || user.role !== 'customer') {
+  if (!user || user.role !== 'customer' || !user.is_active) {
     return ok(c, { found: false, customer: null });
   }
 
-  const visitsRow = await c.env.DB.prepare(
+  const minimal = c.get('user')!.role === 'staff' && !can(c.get('user'),'customer.list') && !can(c.get('user'),'customer.search');
+  const visitsRow = minimal ? null : await c.env.DB.prepare(
     'SELECT COUNT(*) AS c FROM invoices WHERE user_id = ? AND voided_at IS NULL'
   )
     .bind(user.id)
@@ -1390,6 +1438,8 @@ app.get('/api/staff/customer', requireApiRole('staff', 'admin'), async (c) => {
   return ok(c, {
     found: true,
     customer: customerSummaryForApi(user, status, coupons ?? [], {
+      minimal,
+      tierLabels: settings.tier_labels,
       visitEarnedToday,
       pointsMode: settings.points_mode,
       visitPoints: settings.visit_points,
@@ -1403,6 +1453,11 @@ app.get('/api/staff/coupons/check', requireApiRole('staff', 'admin'), async (c) 
   const subtotal = toPositiveInt(c.req.query('subtotal'), 0);
   const code = (c.req.query('code') ?? '').trim();
 
+  if(c.get('user')!.role === 'staff' && !can(c.get('user'),'customer.list') && !can(c.get('user'),'customer.search')){
+    const phone=normalizePhone(c.req.query('customerPhone') ?? '');
+    const customer=/^09\d{9}$/.test(phone) ? await findUserByPhone(c.env.DB,phone) : null;
+    if(!customer || customer.role!=='customer' || customer.id!==userId)return fail(c,'شمارهٔ کامل مشتری لازم است.',400,'CUSTOMER_PHONE_REQUIRED');
+  }
   if (!userId || subtotal <= 0) {
     return ok(c, { valid: false, discount: 0, error: 'مبلغ یا مشتری نامعتبر است.' });
   }
@@ -1437,6 +1492,9 @@ app.post('/api/staff/invoices', requireApiRole('staff', 'admin'), async (c) => {
   const userId = toPositiveInt(body.userId, 0);
   if (!userId) return fail(c, 'مشتری را انتخاب کنید.', 400, 'INVALID_USER');
 
+  const restricted = c.get('user')!.role === 'staff' && !can(c.get('user'),'customer.list') && !can(c.get('user'),'customer.search');
+  const customerPhone = restricted ? normalizePhone(String(body.customerPhone ?? '')) : undefined;
+  if(restricted && !/^09\d{9}$/.test(customerPhone ?? ''))return fail(c,'شمارهٔ کامل مشتری برای ثبت فاکتور لازم است.',400,'CUSTOMER_PHONE_REQUIRED');
   const items = Array.isArray(body.items) ? (body.items as InvoiceItem[]) : [];
   if (items.length > 50) return fail(c, 'تعداد آیتم‌ها بیش از حد مجاز است.', 400, 'TOO_MANY_ITEMS');
 
@@ -1500,6 +1558,7 @@ app.post('/api/staff/invoices', requireApiRole('staff', 'admin'), async (c) => {
 
   const result = await recordInvoice(c.env, settings, {
     userId,
+    customerPhone,
     items,
     amount: amountRaw === null || !Number.isFinite(amountRaw) ? null : Math.floor(amountRaw),
     couponCode,
@@ -1558,7 +1617,7 @@ app.get('/api/admin/stats', requireApiRole('admin'), async (c) => {
   return ok(c, stats);
 });
 
-app.post('/api/admin/customers', requireApiRole('admin'), async (c) => {
+async function createCustomer(c: Context<AppEnv>) {
   const settings = c.get('settings');
 
   let body: Record<string, unknown>;
@@ -1568,6 +1627,9 @@ app.post('/api/admin/customers', requireApiRole('admin'), async (c) => {
     return fail(c, 'داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
   }
 
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return fail(c, 'داده نامعتبر است.',400,'BAD_JSON');
+  if (body.nickname !== undefined && (typeof body.nickname !== 'string' || body.nickname.length > 40)) return fail(c, 'لقب باید متن حداکثر ۴۰ حرف باشد.',400,'INVALID_NICKNAME');
+  const nickname = customerSearchText(String(body.nickname ?? ''));
   const name = String(body.name ?? '').replace(/[<>]/g, '').trim().slice(0, 60);
   const phone = normalizePhone(String(body.phone ?? ''));
   const birthDate = String(body.birth_date ?? '').slice(0, 10);
@@ -1575,12 +1637,13 @@ app.post('/api/admin/customers', requireApiRole('admin'), async (c) => {
 
   if (name.length < 2) return fail(c, 'نام را کامل وارد کنید.', 400, 'INVALID_NAME');
   if (!/^09\d{9}$/.test(phone)) return fail(c, 'شماره موبایل نامعتبر است.', 400, 'INVALID_PHONE');
-  if (!isValidBirthDate(birthDate)) return fail(c, 'تاریخ تولد نامعتبر است.', 400, 'INVALID_BIRTH_DATE');
+  if (birthDate && !isValidBirthDate(birthDate)) return fail(c, 'تاریخ تولد نامعتبر است.', 400, 'INVALID_BIRTH_DATE');
 
   const result = await registerCustomer(c.env, settings, {
     name,
     phone,
-    birth_date: birthDate,
+    birth_date: birthDate || null,
+    nickname,
     referral: referral || null,
     sms_opt_in: body.sms_opt_in === false || body.sms_opt_in === 0 ? 0 : 1,
   });
@@ -1589,8 +1652,11 @@ app.post('/api/admin/customers', requireApiRole('admin'), async (c) => {
     return fail(c, result.error, result.code === 'PHONE_EXISTS' ? 409 : 400, result.code);
   }
 
-  return ok(c, { id: result.user.id, name: result.user.name, referralCode: result.referralCode }, 201);
-});
+  return ok(c, { id: result.user.id, name: result.user.name, phone: result.user.phone, nickname: result.user.nickname, referralCode: result.referralCode }, 201);
+}
+
+app.post('/api/admin/customers', requireApiRole('admin'), createCustomer);
+app.post('/api/staff/customers', requireApiRole('staff','admin'), createCustomer);
 
 app.put('/api/admin/customers/:id', requireApiRole('admin'), async (c) => {
   const id = toPositiveInt(c.req.param('id'), 0);
@@ -1603,6 +1669,8 @@ app.put('/api/admin/customers/:id', requireApiRole('admin'), async (c) => {
     return fail(c, 'داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
   }
 
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return fail(c,'داده نامعتبر است.',400,'BAD_JSON');
+  if (body.nickname !== undefined && (typeof body.nickname !== 'string' || body.nickname.length > 40)) return fail(c,'لقب باید حداکثر ۴۰ حرف باشد.',400,'INVALID_NICKNAME');
   const user = await findUserById(c.env.DB, id);
   if (!user)
     return fail(c, 'مشتری یافت نشد.', 404, 'NOT_FOUND');
@@ -1616,7 +1684,7 @@ app.put('/api/admin/customers/:id', requireApiRole('admin'), async (c) => {
 
   if (name.length < 2) return fail(c, 'نام را کامل وارد کنید.', 400, 'INVALID_NAME');
   if (!/^09\d{9}$/.test(phone)) return fail(c, 'شماره موبایل نامعتبر است.', 400, 'INVALID_PHONE');
-  if (!isValidBirthDate(birthDate)) return fail(c, 'تاریخ تولد نامعتبر است.', 400, 'INVALID_BIRTH_DATE');
+  if (birthDate && !isValidBirthDate(birthDate)) return fail(c, 'تاریخ تولد نامعتبر است.', 400, 'INVALID_BIRTH_DATE');
 
   if (phone !== user.phone) {
     const duplicate = await findUserByPhone(c.env.DB, phone);
@@ -1625,8 +1693,8 @@ app.put('/api/admin/customers/:id', requireApiRole('admin'), async (c) => {
     }
   }
 
-  await c.env.DB.prepare('UPDATE users SET name = ?, phone = ?, birth_date = ? WHERE id = ?')
-    .bind(name, phone, birthDate, id)
+  await c.env.DB.prepare('UPDATE users SET name = ?, phone = ?, birth_date = ?, nickname = ? WHERE id = ?')
+    .bind(name, phone, birthDate || null, body.nickname === undefined ? user.nickname ?? '' : customerSearchText(String(body.nickname)), id)
     .run();
 
   return ok(c, { updated: true });
@@ -1973,7 +2041,7 @@ app.post('/api/admin/invoices/:id/correct', requireApiRole('admin'), async (c) =
   });
 
   if (created.ok === false) {
-    return fail(c, created.error, 400, created.code);
+    return fail(c, created.error, created.code === 'REQUEST_ID_CONFLICT' ? 409 : 400, created.code);
   }
 
   if (created.duplicate) return fail(c, 'این شناسه درخواست قبلاً استفاده شده است؛ نتیجه اصلاح را در تاریخچه بررسی کنید.', 409, 'REQUEST_ID_CONFLICT');
@@ -2221,6 +2289,30 @@ app.post('/api/admin/fallback/diagnose', requireApiRole('admin'), async (c) => {
   return ok(c, report);
 });
 
+/** Explicit manual send to SAVED admin destinations, not an SMS or arbitrary chat. */
+app.post('/api/admin/fallback/send', requireApiRole('admin'), async (c) => {
+  const {dbRateLimit} = await import('./lib/otp');
+  const rate=await dbRateLimit(c.env.DB,'fallback:manual:'+c.get('user')!.uid,3,60);
+  if(!rate)return fail(c,'ثبت درخواست فعلاً در دسترس نیست.',503,'RATE_LIMIT_UNAVAILABLE');
+  if(!rate.allowed){c.header('Retry-After',String(rate.retryAfter));return fail(c,'حداکثر ۳ درخواست دستی در دقیقه.',429,'RATE_LIMITED');}
+  let body: Record<string,unknown>;
+  try{body=await c.req.json();}catch{return fail(c,'JSON نامعتبر است.',400,'BAD_JSON');}
+  if(!body || typeof body !== 'object' || Array.isArray(body))return fail(c,'درخواست نامعتبر است.',400,'BAD_JSON');
+  if(body.confirmAdminOnly!==true)return fail(c,'تأیید کنید این ارسال به ادمین است، نه پیامک به مشتری.',400,'CONFIRM_REQUIRED');
+  if(!['telegram','bale','both'].includes(String(body.channel)))return fail(c,'مقصد نامعتبر است.',400,'INVALID_CHANNEL');
+  if(typeof body.requestId!=='string'|| !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(body.requestId))return fail(c,'شناسه درخواست نامعتبر است.',400,'INVALID_REQUEST_ID');
+  if(typeof body.message!=='string'||!body.message.trim()||body.message.length>2000||/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(body.message))return fail(c,'متن باید بین ۱ و ۲۰۰۰ کاراکتر باشد.',400,'INVALID_MESSAGE');
+  const phone=normalizePhone(String(body.phone ?? ''));
+  if(phone && !/^09\d{9}$/.test(phone))return fail(c,'شمارهٔ مرتبط نامعتبر است.',400,'INVALID_PHONE');
+  const config=await loadFallbackConfig(c.env);
+  if(!config.channels.length || (body.channel!=='both'&&!config.channels.some(channel=>channel.channel===body.channel)))return fail(c,'ابتدا مقصد را در همین پنل ذخیره کنید.',400,'CHANNEL_NOT_CONFIGURED');
+  let ids: string[];
+  try{ids=await enqueueFallback(c.env,{phone,userId:null,message:body.message.trim(),type:'manual',title:'پیام دستی مدیر',eventKey:'manual:'+c.get('user')!.uid+':'+body.requestId},'manual',body.channel==='both'?undefined:body.channel as 'telegram'|'bale');}
+  catch{return fail(c,'نتیجهٔ ثبت قطعی نیست؛ با همین درخواست دوباره تلاش کنید و تاریخچه را بررسی کنید. تنظیمات، کلید یا ظرفیت صف ممکن است نیاز به بررسی داشته باشد.',503,'MANUAL_QUEUE_UNAVAILABLE');}
+  await logAdminAction(c.env.DB,{adminId:c.get('user')!.uid,adminName:c.get('user')!.name,action:'fallback_manual',targetType:'messenger',targetId:body.channel as string,details:ids.join(' | ')});
+  return ok(c,{ids,message:'در صف قرار گرفت؛ نتیجهٔ API هر مقصد جداگانه در تاریخچه نمایش داده می‌شود.'},202);
+});
+
 app.post('/api/admin/fallback/test', requireApiRole('admin'), async (c) => {
   const { dbRateLimit } = await import('./lib/otp');
   const limit = await dbRateLimit(c.env.DB, 'fallback:test:' + c.get('user')!.uid, 3, 60);
@@ -2287,6 +2379,13 @@ app.put('/api/admin/settings', requireApiRole('admin'), async (c) => {
   }
 
   if (!body || typeof body !== 'object' || Array.isArray(body)) return fail(c, 'تنظیمات نامعتبر است.', 400, 'BAD_JSON');
+  if (body.tier_labels !== undefined) {
+    const labels = body.tier_labels;
+    if (!labels || typeof labels !== 'object' || Array.isArray(labels) ||
+      Object.keys(labels).sort().join(',') !== 'bronze,gold,silver,vip' ||
+      Object.values(labels).some(v => typeof v !== 'string' || !v.trim() || v.trim().length > 30 || /[<>\u0000-\u001f]/.test(v)))
+      return fail(c, 'نام هر چهار سطح باید متن غیرخالی حداکثر ۳۰ حرف باشد.', 400, 'INVALID_TIER_LABELS');
+  }
   if (body.points_mode !== undefined && !['amount', 'visit', 'invoice'].includes(String(body.points_mode)))
     return fail(c, 'روش امتیازدهی نامعتبر است.', 400, 'INVALID_POINTS_POLICY');
   for (const [key, min, max] of [['invoice_points',0,100000], ['visit_points',1,100000], ['visit_min_amount',0,100000000], ['currency_unit',1,10000000], ['points_per_currency',1,1000]] as const) {
@@ -2299,6 +2398,7 @@ app.put('/api/admin/settings', requireApiRole('admin'), async (c) => {
   const updates: Record<string, unknown> = {};
   const stage = (key: string, value: unknown) => { updates[key] = value; };
   try {
+    if (body.tier_labels !== undefined) stage('tier_labels', Object.fromEntries(Object.entries(body.tier_labels as Record<string,string>).map(([key,value]) => [key,value.trim()])));
     if (body.cafe_name !== undefined) {
       stage('cafe_name', String(body.cafe_name).trim().slice(0, 60) || 'کافه');
     }
@@ -2516,6 +2616,9 @@ app.post('/api/admin/staff', requireApiRole('admin'), async (c) => {
     return fail(c, 'داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
   }
 
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return fail(c,'داده نامعتبر است.',400,'BAD_JSON');
+  if (body.permissions !== undefined && !validatePermissions(body.permissions)) return fail(c,'دسترسی‌ها نامعتبرند.',400,'INVALID_PERMISSIONS');
+  if (body.role !== undefined && !['admin','staff'].includes(String(body.role))) return fail(c,'نقش نامعتبر است.',400,'INVALID_ROLE');
   const name = String(body.name ?? '').replace(/[<>]/g, '').trim().slice(0, 60);
   const phone = normalizePhone(String(body.phone ?? ''));
   const role = body.role === 'admin' ? 'admin' : 'staff';
@@ -2534,10 +2637,10 @@ app.post('/api/admin/staff', requireApiRole('admin'), async (c) => {
   const referralCode = generateCouponCode('REF');
 
   const result = await c.env.DB.prepare(
-    `INSERT INTO users (name, phone, role, is_active, password_hash, referral_code)
-     VALUES (?, ?, ?, 1, ?, ?)`
+    `INSERT INTO users (name, phone, role, is_active, password_hash, referral_code, permissions)
+     VALUES (?, ?, ?, 1, ?, ?, ?)`
   )
-    .bind(name, phone, role, passwordHash, referralCode)
+    .bind(name, phone, role, passwordHash, referralCode, JSON.stringify(body.permissions ?? LEGACY_STAFF_PERMISSIONS))
     .run();
 
   return ok(
@@ -2564,6 +2667,9 @@ app.put('/api/admin/staff/:id', requireApiRole('admin'), async (c) => {
     return fail(c, 'داده‌های ارسالی نامعتبر است.', 400, 'BAD_JSON');
   }
 
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return fail(c,'داده نامعتبر است.',400,'BAD_JSON');
+  if (body.permissions !== undefined && !validatePermissions(body.permissions)) return fail(c,'دسترسی‌ها نامعتبرند.',400,'INVALID_PERMISSIONS');
+  if (body.role !== undefined && !['staff','admin'].includes(String(body.role))) return fail(c,'نقش نامعتبر است.',400,'INVALID_ROLE');
   const target = await findUserById(c.env.DB, id);
   if (!target || (target.role !== 'staff' && target.role !== 'admin')) {
     return fail(c, 'کاربر یافت نشد.', 404, 'NOT_FOUND');
@@ -2582,7 +2688,7 @@ app.put('/api/admin/staff/:id', requireApiRole('admin'), async (c) => {
         return fail(c, 'حداقل یک ادمین فعال باید باقی بماند.', 400, 'LAST_ADMIN');
       }
     }
-    await c.env.DB.prepare('UPDATE users SET is_active = ? WHERE id = ?').bind(nextActive, id).run();
+
   }
 
   if (body.role !== undefined) {
@@ -2590,9 +2696,11 @@ app.put('/api/admin/staff/:id', requireApiRole('admin'), async (c) => {
     if (id === currentUser.uid && nextRole !== 'admin') {
       return fail(c, 'نمی‌توانید نقش خودتان را تغییر دهید.', 400, 'SELF_ROLE');
     }
-    await c.env.DB.prepare('UPDATE users SET role = ? WHERE id = ?').bind(nextRole, id).run();
+
   }
 
+  await c.env.DB.prepare('UPDATE users SET is_active=?,role=?,permissions=? WHERE id=?').bind(body.is_active === undefined ? target.is_active : Number(body.is_active) === 1 ? 1 : 0,body.role ?? target.role,body.permissions === undefined ? target.permissions ?? null : JSON.stringify(body.permissions),id).run();
+  await audit(c,'staff_permissions_update',{targetType:'staff',targetId:id,details:'دسترسی یا وضعیت کارمند به‌روزرسانی شد؛ اعمال در درخواست بعدی.'});
   return ok(c, { updated: true });
 });
 

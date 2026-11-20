@@ -38,6 +38,8 @@ export type UserRow = {
   id: number;
   name: string;
   phone: string;
+  nickname?: string;
+  permissions?: string | null;
   birth_date: string | null;
   points: number;
   /** مجموع امتیازهای کسب‌شده در طول عمر — مبنای سطح‌بندی */
@@ -145,6 +147,8 @@ export type InvoiceItem = {
 
 /** رکورد جدول sms_logs */
 export type SmsLogRow = {
+  fallback_ids?: string;
+  delivery_kind?: string;
   id: number;
   user_id: number | null;
   type: string;
@@ -213,6 +217,7 @@ export type AppSettings = {
   /** الزام باز بودن صندوق برای ثبت پرداخت نقدی */
   require_shift: number;
   tiers: TierThresholds;
+  tier_labels: Record<string, string>;
   cafe_name: string;
   cafe_city: string;
   weather_api_key: string;
@@ -228,6 +233,7 @@ export type AppSettings = {
 
 /** داده‌های توکن JWT */
 export type JwtPayload = {
+  permissions?: string[];
   sub: string;
   uid: number;
   role: Role;

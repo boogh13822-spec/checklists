@@ -233,6 +233,12 @@ else
   FAILED=$((FAILED + 1)); printf '%s\n' "$out"; warn "ساخت صف Fallback ناموفق بود"
 fi
 
+# Customer workflow v6 (each addition is independently repeat-safe through apply).
+apply "ALTER TABLE users ADD COLUMN nickname TEXT NOT NULL DEFAULT ''" "لقب اختیاری مشتری"
+apply "ALTER TABLE users ADD COLUMN permissions TEXT DEFAULT NULL" "مجوزهای انتخابی کارمند"
+apply "ALTER TABLE sms_logs ADD COLUMN fallback_ids TEXT NOT NULL DEFAULT '[]'" "پیوند ارسال پیامک به مقصد ادمین"
+apply "ALTER TABLE sms_logs ADD COLUMN delivery_kind TEXT NOT NULL DEFAULT 'legacy'" "تفکیک ارسال آزمایشی و پذیرش پنل"
+
 # --- ۵) پر کردن داده‌های قدیمی ------------------------------------------------
 apply "UPDATE users SET lifetime_points = points WHERE lifetime_points = 0 AND points > 0" \
   "هم‌تراز کردن lifetime_points با امتیاز فعلی مشتریان قدیمی"

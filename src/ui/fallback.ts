@@ -18,6 +18,7 @@ export const fallbackPanel = `
     </label>
   </div>
   <div class="flex flex-wrap gap-4 text-xs">
+    <label class="flex gap-2"><input id="fallback-errors" type="checkbox" checked /> اعلان خطای ارسال (از پیام‌رسان دیگرِ فعال)</label>
     <label class="flex gap-2"><input id="fallback-invoices" type="checkbox" checked /> گزارش فاکتور، اصلاح و ابطال</label>
     <label class="flex gap-2"><input id="fallback-actions" type="checkbox" checked /> گزارش امتیاز، صندوق و مدیریت</label>
   </div>
@@ -57,6 +58,11 @@ export const fallbackPanel = `
     <button id="fallback-reload" type="button" class="btn btn-ghost btn-sm">بازخوانی تنظیمات</button>
     <span id="fallback-dirty" class="text-xs text-amber-300" aria-live="polite"></span>
   </div>
+  <details class="rounded-2xl border border-white/10 p-4"><summary class="font-bold cursor-pointer text-sm">نوشتن و ارسال پیام دستی به ادمین</summary><div class="space-y-3 mt-4">
+    <p class="hint">فقط به مقصدهای ذخیره‌شدهٔ مدیر ارسال می‌شود؛ پیامک به مشتری نیست. رسیدن به API هم تأیید خواندن پیام نیست.</p>
+    <fieldset id="fb-manual-fields" class="space-y-3"><label class="label" for="fb-manual-channel">پیام‌رسان</label><select id="fb-manual-channel" class="field"><option value="both">هر دو مقصد ذخیره‌شده</option><option value="telegram">فقط تلگرام</option><option value="bale">فقط بله</option></select><label class="label" for="fb-manual-phone">شمارهٔ مرتبط (اختیاری؛ برای کپی و ارسال دستی SMS)</label><input id="fb-manual-phone" type="tel" class="field" dir="ltr" maxlength="13" /><label class="label" for="fb-manual-text">متن کامل</label><textarea id="fb-manual-text" class="field" rows="5" maxlength="2000"></textarea><p class="hint">حداکثر ۲۰۰۰ کاراکتر؛ متن ناقص ارسال نمی‌شود.</p><label class="flex gap-2 text-xs"><input id="fb-manual-confirm" type="checkbox" /> می‌دانم این پیام به ادمین می‌رسد، نه به مشتری</label></fieldset>
+    <button id="fb-manual-send" type="button" class="btn btn-primary btn-sm">ثبت در صف ارسال دستی</button><p id="fb-manual-result" class="hint whitespace-pre-line" role="status" aria-live="polite"></p>
+  </div></details>
   <div class="border-t border-white/10 pt-4 space-y-3">
     <div class="flex flex-wrap gap-3 items-center justify-between"><h3 class="font-bold text-sm">تاریخچه ارسال</h3>
       <button id="fallback-refresh" type="button" class="btn btn-ghost btn-sm">تازه‌سازی</button></div>
@@ -77,7 +83,7 @@ export const fallbackPanel = `
 export const fallbackScripts = String.raw`
 (function () {
   var channels=['telegram','bale'],page=1,ready=false,dirty=false,busy=false,historyBusy=false,historyAgain=false,timer=null,lastConfig=null;
-  var tests={},locked=[];
+  var tests={},locked=[],manualSnapshot=null,manualIds=[],lastHistoryItems=[];
   function lockConfig(on){
     if(on){locked=Array.from(el('fallback').querySelectorAll('input')).map(function(node){var state={node:node,disabled:node.disabled};node.disabled=true;return state;});}
     else{locked.forEach(function(state){state.node.disabled=state.disabled;});locked=[];channels.forEach(function(ch){var c=lastConfig&&lastConfig.channels.find(function(row){return row.channel===ch;});el('fb-'+ch+'-token').disabled=!!(c&&c.tokenSource==='env');});}
@@ -93,7 +99,7 @@ export const fallbackScripts = String.raw`
   async function loadConfig(){
     var c=await api('/api/admin/fallback');lastConfig=c;
     el('fallback-enabled').checked=c.enabled;el('fallback-notify').checked=!!c.notifyEnabled;
-    el('fallback-invoices').checked=c.notifyInvoices!==false;el('fallback-actions').checked=c.notifyActions!==false;
+    el('fallback-invoices').checked=c.notifyInvoices!==false;el('fallback-actions').checked=c.notifyActions!==false;el('fallback-errors').checked=c.notifyErrors!==false;
     channels.forEach(function(ch){
       var row=c.channels.find(function(x){return x.channel===ch;});
       el('fb-'+ch+'-selected').checked=!!row;el('fb-'+ch+'-chat').value=row?row.chatId:'';
@@ -105,7 +111,7 @@ export const fallbackScripts = String.raw`
     });
     selectedFields();state(c);ready=true;setDirty(false);el('fallback-save').disabled=false;
   }
-  function payload(){return{enabled:el('fallback-enabled').checked,notifyEnabled:el('fallback-notify').checked,notifyInvoices:el('fallback-invoices').checked,notifyActions:el('fallback-actions').checked,
+  function payload(){return{enabled:el('fallback-enabled').checked,notifyEnabled:el('fallback-notify').checked,notifyInvoices:el('fallback-invoices').checked,notifyActions:el('fallback-actions').checked,notifyErrors:el('fallback-errors').checked,
     channels:channels.filter(function(ch){return el('fb-'+ch+'-selected').checked;}).map(function(ch){return{channel:ch,chatId:el('fb-'+ch+'-chat').value.trim(),token:el('fb-'+ch+'-token').value.trim(),clearToken:el('fb-'+ch+'-clear').checked};})};}
   async function save(){
     if(!ready)throw new Error('ابتدا تنظیمات را بازخوانی کنید.');
@@ -124,7 +130,9 @@ export const fallbackScripts = String.raw`
       var stats=data.stats||{};
       el('fallback-stats').textContent='آمار کل — در صف: '+fa((stats.pending||0)+(stats.processing||0))+' | ارسال موفق: '+fa(stats.sent)+' | ناموفق: '+fa(stats.failed);
       var labels={pending:'در صف',processing:'در حال ارسال',sent:'ارسال موفق به مقصد',failed:'ناموفق',skipped:'لغوشده',expired:'مهلت تمام شده'};
-      var types={report_invoice:'گزارش فاکتور',report_action:'گزارش عملیات',invoice:'پیامک رسید خرید',otp:'کد ورود محرمانه',admin:'تست اتصال',welcome:'خوش‌آمد',birthday:'تولد',churn:'یادآوری حضور',weather:'آب‌وهوا',redeem:'تبدیل امتیاز',referral:'معرفی'};
+      var types={manual:'پیام دستی مدیر',report_error:'هشدار خطای ارسال',report_invoice:'گزارش فاکتور',report_action:'گزارش عملیات',invoice:'پیامک رسید خرید',otp:'کد ورود محرمانه',admin:'تست اتصال',welcome:'خوش‌آمد',birthday:'تولد',churn:'یادآوری حضور',weather:'آب‌وهوا',redeem:'تبدیل امتیاز',referral:'معرفی'};
+      lastHistoryItems=data.items;
+      if(manualIds.length){var tracked=data.items.filter(function(job){return manualIds.indexOf(job.id)>=0;});if(tracked.length)el('fb-manual-result').textContent=tracked.map(function(job){return(job.channel==='telegram'?'تلگرام':'بله')+': '+(labels[job.status]||job.status)+(job.provider_id?' — شناسهٔ پیام '+job.provider_id:'')+(job.error?' — '+job.error:'');}).join('\n');}
       el('fallback-history').innerHTML=data.items.length?data.items.map(function(j){
         var phone=j.content&&j.content.phone||'',text=j.content&&j.content.message||'';
         var retry=j.status==='failed'&&j.type!=='otp'&&j.expires_at>Date.now()+12000;
@@ -133,10 +141,11 @@ export const fallbackScripts = String.raw`
           '<div class="text-cream/40">'+esc(faDate(j.created_at))+'</div>'+
           (phone?'<button type="button" data-copy-phone="'+esc(phone)+'" class="font-mono select-all" dir="ltr" title="کپی شماره">'+esc(phone)+' ⧉</button>':'')+
           (j.type==='otp'?'<p class="text-amber-200">متن و شماره کد ورود در تاریخچه نمایش داده نمی‌شود.</p>':text?'<p class="whitespace-pre-wrap break-words">'+esc(text.slice(0,150))+(text.length>150?'…':'')+'</p>':'<p class="hint">محتوا در دسترس نیست؛ کلید رمزنگاری را بررسی کنید.</p>')+
+          (j.type!=='otp'&&text?'<button type="button" class="btn btn-ghost btn-sm" data-copy-message="'+esc(j.id)+'">کپی متن کامل برای ارسال دستی</button>':'')+
           (j.error?'<p class="text-amber-200 whitespace-pre-wrap break-words">'+esc(j.error)+'</p>':'')+
           '<details><summary class="cursor-pointer text-cream/50">جزئیات'+(text.length>150?' و متن کامل':'')+'</summary><div class="mt-2 space-y-2">'+
           (text.length>150?'<pre class="whitespace-pre-wrap break-words font-sans">'+esc(text)+'</pre>':'')+
-          '<p>تعداد تلاش در این نوبت: '+fa(j.attempts)+' | مقصد: <bdi>'+esc(j.chat_id)+'</bdi></p><p>شناسه: <bdi>'+esc(j.id)+'</bdi></p></div></details>'+
+          '<p>شناسهٔ پیام API: '+esc(j.provider_id||'هنوز تأیید نشده')+'</p><p>تعداد تلاش در این نوبت: '+fa(j.attempts)+' | مقصد: <bdi>'+esc(j.chat_id)+'</bdi></p><p>شناسه: <bdi>'+esc(j.id)+'</bdi></p></div></details>'+
           (retry?'<button type="button" class="btn btn-ghost btn-sm" data-retry-id="'+esc(j.id)+'" data-uncertain="'+(!/^(INVALID_TOKEN|INVALID_CHAT|FORBIDDEN|CONFIG_OR_KEY_ERROR|RATE_LIMITED):/.test(j.error||''))+'">تلاش مجدد پس از رفع خطا</button>':'')+'</article>';
       }).join(''):'<p class="hint">پیامی با این فیلتر وجود ندارد.</p>';
       channels.forEach(function(ch){if(!tests[ch])return;var job=data.items.find(function(j){return tests[ch].indexOf(j.id)>=0;});if(job){el('fb-'+ch+'-result').textContent='نتیجه تست: '+(labels[job.status]||job.status)+(job.error?' — '+job.error:'');if(!['pending','processing'].includes(job.status))delete tests[ch];}});
@@ -146,7 +155,7 @@ export const fallbackScripts = String.raw`
   }
   el('fallback-save').addEventListener('click',async function(){if(busy)return;busy=true;lockConfig(true);setLoading(this,true,'در حال ذخیره…');try{await save();toast('تنظیمات ذخیره شد.','success');await history();}catch(e){report(e);}finally{busy=false;lockConfig(false);setLoading(this,false);}});
   el('fallback-reload').addEventListener('click',async function(){if(busy)return;if(dirty&&!window.confirm('تغییرات ذخیره‌نشده کنار گذاشته شوند؟'))return;busy=true;lockConfig(true);try{await loadConfig();}catch(e){report(e);}finally{busy=false;lockConfig(false);}});
-  ['fallback-enabled','fallback-notify','fallback-invoices','fallback-actions'].forEach(function(id){el(id).addEventListener('change',function(){setDirty(true);});});
+  ['fallback-enabled','fallback-notify','fallback-invoices','fallback-actions','fallback-errors'].forEach(function(id){el(id).addEventListener('change',function(){setDirty(true);});});
   channels.forEach(function(ch){
     ['selected','chat','token','clear'].forEach(function(key){el('fb-'+ch+'-'+key).addEventListener(key==='chat'||key==='token'?'input':'change',function(){setDirty(true);selectedFields();});});
     el('fb-'+ch+'-reveal').addEventListener('click',function(){var input=el('fb-'+ch+'-token');input.type=input.type==='password'?'text':'password';this.textContent=input.type==='password'?'نمایش':'مخفی';});
@@ -168,7 +177,17 @@ export const fallbackScripts = String.raw`
       page=1;el('fallback-status').value='';el('fallback-channel').value='';await history();
     }catch(e){el('fb-'+ch+'-result').textContent=e.message;report(e);}finally{busy=false;lockConfig(false);setLoading(btn,false);}});
   });
+  el('fb-manual-send').addEventListener('click',async function(){
+    if(busy||!ready)return;var button=this;
+    if(dirty){el('fb-manual-result').textContent='ابتدا تغییرات تنظیمات مقصد را ذخیره کنید.';return;}
+    if(!manualSnapshot){var text=el('fb-manual-text').value;if(!text.trim()||text.length>2000||!el('fb-manual-confirm').checked){el('fb-manual-result').textContent='متن را وارد و ارسال فقط به ادمین را تأیید کنید.';return;}manualSnapshot={channel:el('fb-manual-channel').value,phone:el('fb-manual-phone').value,message:text,confirmAdminOnly:true,requestId:crypto.randomUUID()};}
+    busy=true;lockConfig(true);el('fb-manual-fields').disabled=true;setLoading(button,true,'در حال ثبت…');
+    try{var result=await api('/api/admin/fallback/send',{method:'POST',body:manualSnapshot});manualIds=result.ids;manualSnapshot=null;el('fb-manual-text').value='';el('fb-manual-phone').value='';el('fb-manual-confirm').checked=false;el('fb-manual-result').textContent=result.message;page=1;el('fallback-status').value='';el('fallback-channel').value='';await history();}
+    catch(error){el('fb-manual-result').textContent=error.message;if(error.status===400||error.status===409)manualSnapshot=null;else el('fb-manual-result').textContent+=' همان دکمه را برای پیگیری همان درخواست بزنید؛ ارسال تازه نسازید.';}
+    finally{busy=false;lockConfig(false);el('fb-manual-fields').disabled=!!manualSnapshot;setLoading(button,false);}
+  });
   el('fallback-history').addEventListener('click',async function(e){
+    var messageCopy=e.target.closest('[data-copy-message]');if(messageCopy){var job=lastHistoryItems.find(function(item){return item.id===messageCopy.dataset.copyMessage;});if(job&&job.type!=='otp'&&job.content){try{await navigator.clipboard.writeText(job.content.message);toast('متن کامل کپی شد.','success');}catch(_){window.prompt('متن کامل پیام:',job.content.message);}}return;}
     var copy=e.target.closest('[data-copy-phone]');if(copy){try{await navigator.clipboard.writeText(copy.dataset.copyPhone);toast('شماره کپی شد.','success');}catch(_){window.prompt('شماره را کپی کنید:',copy.dataset.copyPhone);}return;}
     var btn=e.target.closest('[data-retry-id]');if(!btn)return;
     if(!window.confirm(btn.dataset.uncertain==='true'?'ممکن است پیام قبلاً تحویل شده باشد. خطر ارسال تکراری را می‌پذیرید؟':'خطای مقصد را برطرف کرده‌اید و پیام دوباره ارسال شود؟'))return;

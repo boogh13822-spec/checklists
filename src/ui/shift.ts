@@ -29,6 +29,7 @@ export function staffShiftPage(input: {
   settings: AppSettings;
   userName: string;
   role: 'staff' | 'admin';
+  permissions?: string[];
   openShift: ShiftRow | null;
   summary: ShiftSummary | null;
   history: ShiftListItem[];
@@ -360,6 +361,7 @@ export function staffShiftPage(input: {
     role: role === 'admin' ? 'admin' : 'staff',
     userName,
     active: 'shift',
+    permissions: input.permissions,
     body,
     scripts,
     cafeName: settings.cafe_name,

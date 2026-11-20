@@ -357,7 +357,7 @@ export function customerPanelPage(
           <div class="text-lg font-extrabold mt-0.5">${escapeHtml(user.name)}</div>
           <div class="mt-2 inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[10.5px] text-cream/60">
             <span>${TIER_EMOJI[user.tier] ?? '🥉'}</span>
-            <span>سطح ${tierLabel(user.tier)}</span>
+            <span>سطح ${escapeHtml(tierLabel(user.tier, settings))}</span>
           </div>
         </div>
         <div class="text-end">
@@ -371,7 +371,7 @@ export function customerPanelPage(
         data.nextTier
           ? `<div class="relative mt-5">
               <div class="flex items-center justify-between text-[10.5px] text-cream/45 mb-1.5">
-                <span>تا سطح ${data.nextTier.label}</span>
+                <span>تا سطح ${escapeHtml(data.nextTier.label)}</span>
                 <span>${formatNumberFa(data.nextTier.need)} امتیاز مانده</span>
               </div>
               <div class="h-2 rounded-full bg-white/10 overflow-hidden">

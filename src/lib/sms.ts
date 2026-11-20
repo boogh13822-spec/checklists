@@ -12,7 +12,7 @@
  *  برای sms.ir علاوه بر کلید API، «شماره خط» (LineNumber) هم لازم است.
  */
 import type { AppSettings, Bindings } from '../types';
-import { enqueueFallback, smsPanelActive } from './fallback';
+import { enqueueFallback, enqueueDeliveryAlert, smsPanelActive } from './fallback';
 import { renderTemplate, toPersianDigits, sqliteToMs, normalizePhone } from './utils';
 
 export type SmsType =
@@ -36,6 +36,8 @@ export type SendSmsParams = {
 };
 
 export type SendSmsResult = {
+  fallbackIds?: string[];
+  deliveryKind?: string;
   status: 'sent' | 'failed' | 'skipped' | 'pending';
   messageId?: string;
   error?: string;
@@ -64,11 +66,13 @@ async function finalizeSmsResult(
   params: SendSmsParams,
   result: SendSmsResult
 ): Promise<void> {
+  const primaryFailed = result.status === 'failed';
   if (result.status === 'failed' && /^09\d{9}$/.test(normalizePhone(params.phone))) {
     try {
       const ids = await enqueueFallback(env, { ...params, message: sanitizeMessage(params.message, Infinity) }, 'primary_failed');
       if (ids.length) {
         result.status = 'pending';
+        result.fallbackIds = ids;
         result.error = 'ارسال اصلی ناموفق؛ در صف ارسال جایگزین برای ادمین قرار گرفت. ' + (result.error ?? '');
       }
     } catch (error) {
@@ -76,9 +80,9 @@ async function finalizeSmsResult(
     }
   }
   try {
-    await env.DB.prepare(
-      `INSERT INTO sms_logs (user_id, type, status, message, provider_id, error)
-       VALUES (?, ?, ?, ?, ?, ?)`
+    const log = await env.DB.prepare(
+      `INSERT INTO sms_logs (user_id, type, status, message, provider_id, error, fallback_ids, delivery_kind)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     )
       .bind(
         params.userId,
@@ -86,9 +90,14 @@ async function finalizeSmsResult(
         result.status,
         params.type === 'otp' ? '[کد ورود محرمانه — ذخیره نمی‌شود]' : sanitizeMessage(params.message),
         result.messageId ?? null,
-        result.error ?? null
+        result.error ?? null,
+        JSON.stringify(result.fallbackIds ?? []),
+        result.status === 'pending' ? 'admin_fallback' : result.deliveryKind ?? (result.status === 'failed' ? 'sms_failed' : 'none')
       )
       .run();
+    if(primaryFailed && !result.fallbackIds?.length && /^09\d{9}$/.test(normalizePhone(params.phone))) {
+      try { await enqueueDeliveryAlert(env,'sms:'+Number(log.meta?.last_row_id ?? 0),'SMS_SEND_FAILED'); } catch { console.error('SMS_ERROR_ALERT_QUEUE_FAILED'); }
+    }
   } catch (error) {
     console.error('sms_logs insert failed:', error);
   }
@@ -146,9 +155,7 @@ async function sendViaSmsIr(
   } catch (error) {
     return {
       ok: false,
-      error: `اتصال به sms.ir برقرار نشد: ${
-        error instanceof Error ? error.message : 'خطای شبکه'
-      }`,
+      error: 'SMS_NETWORK_UNKNOWN: ارتباط با sms.ir کامل نشد؛ نتیجه ارسال ممکن است نامعلوم باشد.',
     };
   }
 
@@ -177,9 +184,7 @@ async function sendViaSmsIr(
 
   return {
     ok: false,
-    error: payload.message
-      ? String(payload.message)
-      : `sms.ir کد وضعیت ${payload.status ?? 'نامشخص'} را برگرداند.`,
+    error: `sms.ir پاسخ ناموفق داد؛ کد ${Number.isInteger(payload.status) ? payload.status : 'نامشخص'}.`,
   };
 }
 
@@ -205,9 +210,7 @@ async function sendViaKavenegar(
   } catch (error) {
     return {
       ok: false,
-      error: `اتصال به کاوه‌نگار برقرار نشد: ${
-        error instanceof Error ? error.message : 'خطای شبکه'
-      }`,
+      error: 'SMS_NETWORK_UNKNOWN: ارتباط با سرویس کامل نشد؛ نتیجه ارسال ممکن است نامعلوم باشد.',
     };
   }
 
@@ -239,7 +242,7 @@ async function sendViaKavenegar(
 
   return {
     ok: false,
-    error: payload.return?.message || entry?.statustext || `کد وضعیت ${apiStatus}`,
+    error: `سرویس پاسخ ناموفق داد؛ کد ${Number.isInteger(apiStatus) ? apiStatus : 'نامشخص'}.`,
   };
 }
 
@@ -268,7 +271,7 @@ export async function sendSms(
     try {
       const ids = await enqueueFallback(env, { ...params, phone: mobile, message: sanitizeMessage(params.message, Infinity) }, 'inactive');
       if (ids.length) {
-        const result: SendSmsResult = { status: 'pending', error: 'در صف ارسال جایگزین برای ادمین؛ هنوز به مشترک ارسال نشده است.' };
+        const result: SendSmsResult = { status: 'pending', fallbackIds: ids, error: 'در صف ارسال جایگزین برای ادمین؛ هنوز به مشترک ارسال نشده است.' };
         await finalizeSmsResult(env, params, result);
         return result;
       }
@@ -287,7 +290,7 @@ export async function sendSms(
   // حالت نمایشی/توسعه: پیام فقط در لاگ ثبت می‌شود
   if (provider === 'console') {
     console.log(`[SMS:console] to=${mobile} type=${params.type} :: ${params.type === 'otp' ? '[REDACTED OTP]' : message}`);
-    const result: SendSmsResult = { status: 'sent' };
+    const result: SendSmsResult = { status: 'sent', deliveryKind:'console' };
     await finalizeSmsResult(env, params, result);
     return result;
   }
@@ -318,7 +321,7 @@ export async function sendSms(
   }
 
   const result: SendSmsResult = outcome.ok
-    ? { status: 'sent', messageId: outcome.messageId }
+    ? { status: 'sent', messageId: outcome.messageId, deliveryKind:'provider_accepted' }
     : { status: 'failed', error: outcome.error };
 
   await finalizeSmsResult(env, params, result);
@@ -359,11 +362,11 @@ export async function fetchSmsCredit(
     if (payload.status === 1 && typeof payload.data === 'number') {
       return { ok: true, credit: payload.data };
     }
-    return { ok: false, error: payload.message || 'دریافت اعتبار ناموفق بود.' };
+    return { ok: false, error: 'دریافت اعتبار ناموفق بود.' };
   } catch (error) {
     return {
       ok: false,
-      error: `اتصال به sms.ir برقرار نشد: ${error instanceof Error ? error.message : 'خطای شبکه'}`,
+      error: 'SMS_NETWORK_UNKNOWN: ارتباط با sms.ir کامل نشد؛ نتیجه ارسال ممکن است نامعلوم باشد.',
     };
   }
 }

@@ -181,7 +181,7 @@ export async function runChurnJob(
             : CHURN_DEFAULT_INTERVAL
         )
       ),
-      tier: tierLabel(row.tier),
+      tier: tierLabel(row.tier, settings),
       cafe: settings.cafe_name,
     });
 
@@ -382,7 +382,7 @@ export async function runWeatherJob(
         weather: `${weather.label} ${weather.emoji}`.trim(),
         temp: toPersianDigits(weather.temp),
         advice: weather.advice,
-        tier: tierLabel(user.tier),
+        tier: tierLabel(user.tier, settings),
       }),
     });
     if (result.status === 'sent') sent += 1;

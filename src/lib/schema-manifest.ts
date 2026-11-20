@@ -2,7 +2,7 @@
 export const SCHEMA_TABLES = [
   {
     "name": "users",
-    "sql": "CREATE TABLE IF NOT EXISTS users (\n  id                 INTEGER PRIMARY KEY AUTOINCREMENT,\n  name               TEXT    NOT NULL,\n  phone              TEXT    NOT NULL UNIQUE,\n  birth_date         TEXT,                                   \n  points             INTEGER NOT NULL DEFAULT 0,             \n  lifetime_points    INTEGER NOT NULL DEFAULT 0,             \n  tier               TEXT    NOT NULL DEFAULT 'bronze',       \n  referred_by        INTEGER,                                \n  referral_code      TEXT    UNIQUE,                         \n  last_visit_date    TEXT,                                   \n  avg_visit_interval REAL    NOT NULL DEFAULT 0,             \n  role               TEXT    NOT NULL DEFAULT 'customer',     \n  password_hash      TEXT,                                   \n  is_active          INTEGER NOT NULL DEFAULT 1,\n  first_purchase_at  TEXT,                                   \n  referral_rewarded  INTEGER NOT NULL DEFAULT 0,\n  last_churn_sms_at  TEXT,\n  sms_opt_in         INTEGER NOT NULL DEFAULT 1,              \n  token_version      INTEGER NOT NULL DEFAULT 0,              \n  created_at         TEXT    NOT NULL DEFAULT (datetime('now')),\n  FOREIGN KEY (referred_by) REFERENCES users (id) ON DELETE SET NULL\n);",
+    "sql": "CREATE TABLE IF NOT EXISTS users (\n  id                 INTEGER PRIMARY KEY AUTOINCREMENT,\n  name               TEXT    NOT NULL,\n  phone              TEXT    NOT NULL UNIQUE,\n  nickname           TEXT NOT NULL DEFAULT '',\n  permissions        TEXT DEFAULT NULL,\n  birth_date         TEXT,                                   \n  points             INTEGER NOT NULL DEFAULT 0,             \n  lifetime_points    INTEGER NOT NULL DEFAULT 0,             \n  tier               TEXT    NOT NULL DEFAULT 'bronze',       \n  referred_by        INTEGER,                                \n  referral_code      TEXT    UNIQUE,                         \n  last_visit_date    TEXT,                                   \n  avg_visit_interval REAL    NOT NULL DEFAULT 0,             \n  role               TEXT    NOT NULL DEFAULT 'customer',     \n  password_hash      TEXT,                                   \n  is_active          INTEGER NOT NULL DEFAULT 1,\n  first_purchase_at  TEXT,                                   \n  referral_rewarded  INTEGER NOT NULL DEFAULT 0,\n  last_churn_sms_at  TEXT,\n  sms_opt_in         INTEGER NOT NULL DEFAULT 1,              \n  token_version      INTEGER NOT NULL DEFAULT 0,              \n  created_at         TEXT    NOT NULL DEFAULT (datetime('now')),\n  FOREIGN KEY (referred_by) REFERENCES users (id) ON DELETE SET NULL\n);",
     "columns": [
       {
         "name": "id",
@@ -15,6 +15,14 @@ export const SCHEMA_TABLES = [
       {
         "name": "phone",
         "definition": "TEXT    NOT NULL UNIQUE"
+      },
+      {
+        "name": "nickname",
+        "definition": "TEXT NOT NULL DEFAULT ''"
+      },
+      {
+        "name": "permissions",
+        "definition": "TEXT DEFAULT NULL"
       },
       {
         "name": "birth_date",
@@ -196,7 +204,7 @@ export const SCHEMA_TABLES = [
   },
   {
     "name": "sms_logs",
-    "sql": "CREATE TABLE IF NOT EXISTS sms_logs (\n  id              INTEGER PRIMARY KEY AUTOINCREMENT,\n  user_id         INTEGER,\n  type            TEXT    NOT NULL,   \n  status          TEXT    NOT NULL,   \n  message         TEXT,\n  provider_id     TEXT,\n  error           TEXT,\n  sent_at         TEXT    NOT NULL DEFAULT (datetime('now')),\n  FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE SET NULL\n);",
+    "sql": "CREATE TABLE IF NOT EXISTS sms_logs (\n  id              INTEGER PRIMARY KEY AUTOINCREMENT,\n  user_id         INTEGER,\n  type            TEXT    NOT NULL,   \n  status          TEXT    NOT NULL,   \n  message         TEXT,\n  provider_id     TEXT,\n  fallback_ids    TEXT NOT NULL DEFAULT '[]',\n  delivery_kind   TEXT NOT NULL DEFAULT 'legacy',\n  error           TEXT,\n  sent_at         TEXT    NOT NULL DEFAULT (datetime('now')),\n  FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE SET NULL\n);",
     "columns": [
       {
         "name": "id",
@@ -221,6 +229,14 @@ export const SCHEMA_TABLES = [
       {
         "name": "provider_id",
         "definition": "TEXT"
+      },
+      {
+        "name": "fallback_ids",
+        "definition": "TEXT NOT NULL DEFAULT '[]'"
+      },
+      {
+        "name": "delivery_kind",
+        "definition": "TEXT NOT NULL DEFAULT 'legacy'"
       },
       {
         "name": "error",

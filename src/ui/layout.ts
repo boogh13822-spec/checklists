@@ -84,6 +84,7 @@ export function icon(name: string, className = 'w-5 h-5'): string {
  * ========================================================================== */
 
 export const BASE_STYLES = `
+  [hidden] { display: none !important; }
   :root {
     --coffee-950: #0b0705;
     --coffee-900: #150e09;
@@ -337,7 +338,7 @@ export const CORE_JS = `
     }
     if (!response.ok || !payload || payload.ok === false) {
       var message = payload && payload.error ? payload.error : 'خطای غیرمنتظره (کد ' + response.status + ')';
-      throw new Error(message);
+      var apiError = new Error(message);apiError.status=response.status;apiError.code=payload&&payload.code;throw apiError;
     }
     return payload.data;
   };
@@ -388,7 +389,7 @@ export const CORE_JS = `
           '<h3 class="text-lg font-bold mb-2">' + escapeHtml(options.title || 'تأیید عملیات') + '</h3>' +
           '<p class="text-sm text-cream/70 leading-7 mb-5">' + escapeHtml(options.message || 'آیا مطمئن هستید؟') + '</p>' +
           '<div class="flex gap-2 justify-end">' +
-            '<button type="button" data-act="cancel" class="btn btn-ghost btn-sm">انصراف</button>' +
+            '<button type="button" data-act="cancel" class="btn btn-ghost btn-sm">' + escapeHtml(options.cancelText || 'انصراف') + '</button>' +
             '<button type="button" data-act="ok" class="btn ' + (options.danger ? 'btn-danger' : 'btn-primary') + ' btn-sm">' + escapeHtml(options.confirmText || 'تأیید') + '</button>' +
           '</div>' +
         '</div>';
@@ -673,12 +674,13 @@ export type ShellOptions = {
   scripts?: string;
   cafeName: string;
   showNav?: boolean;
+  permissions?: string[];
 };
 
 /** پوسته‌ی اصلی اپلیکیشن (داشبورد کارمند/ادمین) */
 export function appShell(options: ShellOptions): string {
   const { title, role, userName, active, body, scripts = '', cafeName, showNav = true } = options;
-  const items = NAV_ITEMS[role] ?? [];
+  const items = (NAV_ITEMS[role] ?? []).filter(item => role !== 'staff' || options.permissions === undefined || item.key === 'invoice' || (item.key === 'history' && options.permissions.includes('invoice.history')) || (item.key === 'shift' && options.permissions.includes('shift.manage')));
 
   const desktopNav = items
     .map(

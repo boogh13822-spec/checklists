@@ -13,244 +13,6 @@ var __export = (target, all) => {
     __defProp(target, name, { get: all[name], enumerable: true });
 };
 
-// src/lib/crypto.ts
-function bytesToBase64(bytes) {
-  let binary = "";
-  const chunk = 32768;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode.apply(
-      null,
-      Array.from(bytes.subarray(i, i + chunk))
-    );
-  }
-  return btoa(binary);
-}
-function base64ToBytes(value) {
-  const binary = atob(value);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes;
-}
-async function pbkdf2(password, salt, iterations, bits) {
-  const keyMaterial = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(password),
-    "PBKDF2",
-    false,
-    ["deriveBits"]
-  );
-  const derived = await crypto.subtle.deriveBits(
-    {
-      name: "PBKDF2",
-      salt,
-      iterations,
-      hash: "SHA-256"
-    },
-    keyMaterial,
-    bits
-  );
-  return new Uint8Array(derived);
-}
-async function hashPassword(password) {
-  const salt = new Uint8Array(16);
-  crypto.getRandomValues(salt);
-  const hash = await pbkdf2(password, salt, PBKDF2_ITERATIONS, KEY_LENGTH_BITS);
-  return `pbkdf2$${PBKDF2_ITERATIONS}$${bytesToBase64(salt)}$${bytesToBase64(hash)}`;
-}
-async function verifyPassword(password, stored) {
-  if (!stored) return false;
-  const parts = stored.split("$");
-  if (parts.length !== 4 || parts[0] !== "pbkdf2") return false;
-  const iterations = parseInt(parts[1], 10);
-  if (!Number.isFinite(iterations) || iterations < 1e4) return false;
-  let salt;
-  let expected;
-  try {
-    salt = base64ToBytes(parts[2]);
-    expected = base64ToBytes(parts[3]);
-  } catch {
-    return false;
-  }
-  const actual = await pbkdf2(password, salt, iterations, expected.length * 8);
-  if (actual.length !== expected.length) return false;
-  let diff = 0;
-  for (let i = 0; i < actual.length; i += 1) {
-    diff |= actual[i] ^ expected[i];
-  }
-  return diff === 0;
-}
-function generateCouponCode(prefix = "CAFE") {
-  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  const bytes = new Uint8Array(6);
-  crypto.getRandomValues(bytes);
-  let code = "";
-  for (let i = 0; i < bytes.length; i += 1) {
-    code += alphabet[bytes[i] % alphabet.length];
-  }
-  return `${prefix}-${code}`;
-}
-async function sha256Hex(input) {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
-  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-var PBKDF2_ITERATIONS, KEY_LENGTH_BITS;
-var init_crypto = __esm({
-  "src/lib/crypto.ts"() {
-    "use strict";
-    PBKDF2_ITERATIONS = 25e3;
-    KEY_LENGTH_BITS = 256;
-  }
-});
-
-// src/lib/fallback-adapters.ts
-function networkCode(error) {
-  const e = error;
-  const code = typeof e?.cause?.code === "string" ? e.cause.code : typeof e?.code === "string" ? e.code : "";
-  if (["ENOTFOUND", "EAI_AGAIN"].includes(code)) return "DNS_FAILURE";
-  if (["CERT_HAS_EXPIRED", "DEPTH_ZERO_SELF_SIGNED_CERT", "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "ERR_TLS_CERT_ALTNAME_INVALID", "ERR_SSL_PROTOCOL_ERROR"].includes(code)) return "TLS_FAILURE";
-  if (["ECONNRESET", "ECONNREFUSED", "UND_ERR_SOCKET"].includes(code)) return "NETWORK_RESET";
-  if (["ETIMEDOUT", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT"].includes(code) || e?.name === "TimeoutError") return "NETWORK_TIMEOUT";
-  return "FETCH_FAILED";
-}
-function identifier(value, signed = false) {
-  return typeof value === "number" && Number.isSafeInteger(value) && (signed || value >= 0) || typeof value === "string" && (signed ? /^-?\d{1,64}$/ : /^\d{1,64}$/).test(value);
-}
-function validChatId(value) {
-  return /^-?[1-9]\d{0,19}$/.test(value) || /^@[A-Za-z][A-Za-z0-9_]{4,31}$/.test(value);
-}
-function validBotToken(value) {
-  return /^\d{1,20}:[A-Za-z0-9_-]{20,200}$/.test(value);
-}
-var messages, BotApiAdapter, adapters;
-var init_fallback_adapters = __esm({
-  "src/lib/fallback-adapters.ts"() {
-    "use strict";
-    messages = {
-      NETWORK_TIMEOUT: "\u0645\u0647\u0644\u062A \u0627\u0631\u062A\u0628\u0627\u0637 \u0628\u0627 \u067E\u06CC\u0627\u0645\u200C\u0631\u0633\u0627\u0646 \u062A\u0645\u0627\u0645 \u0634\u062F.",
-      DNS_FAILURE: "\u0646\u0627\u0645 \u0645\u06CC\u0632\u0628\u0627\u0646 \u067E\u06CC\u0627\u0645\u200C\u0631\u0633\u0627\u0646 \u062F\u0631 \u0633\u0631\u0648\u0631 \u0642\u0627\u0628\u0644 \u062A\u0628\u062F\u06CC\u0644 \u0628\u0647 \u0646\u0634\u0627\u0646\u06CC \u0634\u0628\u06A9\u0647 \u0646\u0628\u0648\u062F.",
-      TLS_FAILURE: "\u0628\u0631\u0642\u0631\u0627\u0631\u06CC \u0627\u062A\u0635\u0627\u0644 \u0627\u0645\u0646 TLS \u0628\u0627 \u067E\u06CC\u0627\u0645\u200C\u0631\u0633\u0627\u0646 \u0646\u0627\u0645\u0648\u0641\u0642 \u0628\u0648\u062F.",
-      NETWORK_RESET: "\u0627\u062A\u0635\u0627\u0644 \u0633\u0631\u0648\u0631 \u0628\u0627 \u067E\u06CC\u0627\u0645\u200C\u0631\u0633\u0627\u0646 \u0642\u0637\u0639 \u06CC\u0627 \u0631\u062F \u0634\u062F.",
-      FETCH_FAILED: "\u0627\u062C\u0631\u0627\u06CC \u062F\u0631\u062E\u0648\u0627\u0633\u062A \u0627\u0632 \u0633\u0631\u0648\u0631 \u0628\u0647 \u067E\u06CC\u0627\u0645\u200C\u0631\u0633\u0627\u0646 \u0634\u06A9\u0633\u062A \u062E\u0648\u0631\u062F\u061B \u0646\u0648\u0639 \u062F\u0642\u06CC\u0642 \u062E\u0637\u0627\u06CC \u0634\u0628\u06A9\u0647 \u0627\u0632 runtime \u0645\u0634\u062E\u0635 \u0646\u0634\u062F.",
-      BODY_READ_FAILED: "\u067E\u0627\u0633\u062E \u0622\u063A\u0627\u0632 \u0634\u062F \u0648\u0644\u06CC \u062E\u0648\u0627\u0646\u062F\u0646 \u06A9\u0627\u0645\u0644 \u0622\u0646 \u0634\u06A9\u0633\u062A \u062E\u0648\u0631\u062F.",
-      RUNTIME_UNAVAILABLE: "\u0627\u0628\u0632\u0627\u0631 \u0644\u0627\u0632\u0645 \u0628\u0631\u0627\u06CC \u0627\u062C\u0631\u0627\u06CC \u062F\u0631\u062E\u0648\u0627\u0633\u062A \u06CC\u0627 \u0644\u063A\u0648 \u0632\u0645\u0627\u0646\u200C\u062F\u0627\u0631 \u0622\u0646 \u062F\u0631 runtime \u062F\u0631 \u062F\u0633\u062A\u0631\u0633 \u0646\u06CC\u0633\u062A.",
-      REQUEST_SETUP_FAILED: "\u062F\u0631\u062E\u0648\u0627\u0633\u062A \u067E\u06CC\u0634 \u0627\u0632 \u0634\u0631\u0648\u0639 \u0627\u0631\u062A\u0628\u0627\u0637 \u0622\u0645\u0627\u062F\u0647 \u0646\u0634\u062F.",
-      REDIRECT_BLOCKED: "\u067E\u06CC\u0627\u0645\u200C\u0631\u0633\u0627\u0646 \u067E\u0627\u0633\u062E \u0627\u0646\u062A\u0642\u0627\u0644 \u0646\u0634\u0627\u0646\u06CC \u062F\u0627\u062F\u061B \u0628\u0631\u0627\u06CC \u062D\u0641\u0627\u0638\u062A \u0627\u0632 \u062A\u0648\u06A9\u0646\u060C \u0627\u0646\u062A\u0642\u0627\u0644 \u062F\u0646\u0628\u0627\u0644 \u0646\u0634\u062F.",
-      INVALID_RESPONSE: "\u067E\u0627\u0633\u062E \u062F\u0631\u06CC\u0627\u0641\u062A\u06CC\u060C \u067E\u0627\u0633\u062E \u0645\u0639\u062A\u0628\u0631 \u0648 \u0645\u0648\u0631\u062F \u0627\u0646\u062A\u0638\u0627\u0631 Bot API \u0646\u0628\u0648\u062F.",
-      INVALID_TOKEN: "\u062A\u0648\u06A9\u0646 \u0631\u0628\u0627\u062A \u062A\u0648\u0633\u0637 API \u067E\u0630\u06CC\u0631\u0641\u062A\u0647 \u0646\u0634\u062F.",
-      INVALID_CHAT: "API \u0645\u0642\u0635\u062F \u0631\u0627 \u0646\u067E\u0630\u06CC\u0631\u0641\u062A\u061B \u0634\u0646\u0627\u0633\u0647\u0654 \u0686\u062A \u0647\u0645\u0627\u0646 \u067E\u06CC\u0627\u0645\u200C\u0631\u0633\u0627\u0646 \u0648 \u0634\u0631\u0648\u0639 \u06AF\u0641\u062A\u200C\u0648\u06AF\u0648/\u062F\u0633\u062A\u0631\u0633\u06CC \u0631\u0628\u0627\u062A \u0631\u0627 \u0628\u0631\u0631\u0633\u06CC \u06A9\u0646\u06CC\u062F.",
-      FORBIDDEN: "API \u062F\u0633\u062A\u0631\u0633\u06CC \u0627\u06CC\u0646 \u0639\u0645\u0644\u06CC\u0627\u062A \u0631\u0627 \u0631\u062F \u06A9\u0631\u062F\u061B \u0645\u0645\u06A9\u0646 \u0627\u0633\u062A \u0631\u0628\u0627\u062A \u0645\u0633\u062F\u0648\u062F \u06CC\u0627 \u0645\u062C\u0648\u0632 \u0645\u0642\u0635\u062F \u0645\u062D\u062F\u0648\u062F \u0628\u0627\u0634\u062F.",
-      RATE_LIMITED: "\u067E\u06CC\u0627\u0645\u200C\u0631\u0633\u0627\u0646 \u0645\u062D\u062F\u0648\u062F\u06CC\u062A \u0646\u0631\u062E \u0627\u0639\u0644\u0627\u0645 \u06A9\u0631\u062F.",
-      PROVIDER_ERROR: "\u067E\u06CC\u0627\u0645\u200C\u0631\u0633\u0627\u0646 \u067E\u0627\u0633\u062E \u0646\u0627\u0645\u0648\u0641\u0642 \u062F\u0627\u062F\u061B \u0648\u0636\u0639\u06CC\u062A HTTP \u062F\u0631 \u062C\u0632\u0626\u06CC\u0627\u062A \u0622\u0645\u062F\u0647 \u0627\u0633\u062A."
-    };
-    BotApiAdapter = class {
-      constructor(channel, origin) {
-        this.channel = channel;
-        this.origin = origin;
-      }
-      channel;
-      origin;
-      async request(token, method, body, timeoutMs) {
-        const start = Date.now();
-        const d = { referenceId: crypto.randomUUID(), channel: this.channel, method, phase: "setup", code: "", elapsedMs: 0 };
-        let controller;
-        let timer;
-        const fail2 = (code, retryAfter) => {
-          d.code = code;
-          d.elapsedMs = Math.max(0, Date.now() - start);
-          console.warn("MESSENGER_REQUEST_FAILED", { ...d });
-          const unknown = method === "sendMessage" && !["INVALID_TOKEN", "INVALID_CHAT", "FORBIDDEN", "RATE_LIMITED", "RUNTIME_UNAVAILABLE", "REQUEST_SETUP_FAILED"].includes(code);
-          return {
-            ok: false,
-            error: code + ": " + messages[code] + (d.httpStatus ? " HTTP=" + d.httpStatus + "." : "") + " \u0645\u0631\u062D\u0644\u0647=" + d.phase + "\u061B \u067E\u06CC\u06AF\u06CC\u0631\u06CC=" + d.referenceId + "." + (unknown ? " \u0646\u062A\u06CC\u062C\u0647\u0654 \u0627\u0631\u0633\u0627\u0644 \u0646\u0627\u0645\u0634\u062E\u0635 \u0627\u0633\u062A\u061B \u0627\u0631\u0633\u0627\u0644 \u062E\u0648\u062F\u06A9\u0627\u0631 \u062A\u06A9\u0631\u0627\u0631 \u0646\u0634\u062F." : ""),
-            diagnostic: { ...d },
-            ...retryAfter === void 0 ? {} : { retryAfter }
-          };
-        };
-        try {
-          if (typeof fetch !== "function" || typeof AbortController !== "function") return fail2("RUNTIME_UNAVAILABLE");
-          controller = new AbortController();
-          timer = setTimeout(() => controller.abort(), timeoutMs);
-          d.phase = "request";
-          const response = await fetch(`${this.origin}/bot${token}/${method}`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", Accept: "application/json" },
-            body: JSON.stringify(body),
-            redirect: "manual",
-            signal: controller.signal
-          });
-          d.httpStatus = response.status;
-          d.phase = "response";
-          if (response.status >= 300 && response.status < 400) return fail2("REDIRECT_BLOCKED");
-          d.phase = "body";
-          const text = await response.text();
-          d.phase = "response";
-          let data = null;
-          if (text.length <= 65536) {
-            try {
-              const value = JSON.parse(text);
-              if (value && typeof value === "object" && !Array.isArray(value)) data = value;
-            } catch {
-            }
-          }
-          const code = data?.ok === false && Number.isInteger(data.error_code) ? data.error_code : response.status;
-          if (code === 429) {
-            const delay = Number(data?.parameters?.retry_after ?? response.headers.get("Retry-After"));
-            return fail2("RATE_LIMITED", Number.isFinite(delay) && delay > 0 ? Math.min(86400, Math.ceil(delay)) : 60);
-          }
-          if (!data || typeof data.ok !== "boolean") return fail2("INVALID_RESPONSE");
-          if (response.ok && data.ok) {
-            if (!data.result || typeof data.result !== "object" || Array.isArray(data.result)) return fail2("INVALID_RESPONSE");
-            const valid = method === "sendMessage" ? identifier(data.result.message_id) : identifier(data.result.id, method === "getChat");
-            if (!valid) return fail2("INVALID_RESPONSE");
-            d.code = "OK";
-            d.elapsedMs = Math.max(0, Date.now() - start);
-            return { ok: true, data, diagnostic: { ...d } };
-          }
-          return fail2(code === 401 || code === 404 ? "INVALID_TOKEN" : code === 403 ? "FORBIDDEN" : code === 400 && method !== "getMe" ? "INVALID_CHAT" : "PROVIDER_ERROR");
-        } catch (error) {
-          return fail2(controller?.signal.aborted ? "NETWORK_TIMEOUT" : d.phase === "setup" ? "REQUEST_SETUP_FAILED" : d.phase === "body" ? "BODY_READ_FAILED" : networkCode(error));
-        } finally {
-          if (timer !== void 0) clearTimeout(timer);
-        }
-      }
-      async send(token, chatId, text) {
-        const result = await this.request(token, "sendMessage", { chat_id: chatId, text }, 12e3);
-        if (!result.ok) return result;
-        return { ok: true, messageId: String(result.data.result.message_id) };
-      }
-      /** Read-only bot identity and chat lookup. Never getUpdates, setWebhook or sendMessage. */
-      async diagnose(token, chatId) {
-        const checks = [];
-        const bot = await this.request(token, "getMe", {}, 6e3);
-        checks.push({
-          stage: "bot",
-          ok: bot.ok,
-          code: bot.ok ? "BOT_REACHABLE" : bot.diagnostic.code,
-          message: bot.ok ? "\u0627\u0631\u062A\u0628\u0627\u0637 \u0633\u0631\u0648\u0631 \u0628\u0627 API \u0648 \u0627\u0639\u062A\u0628\u0627\u0631 \u062A\u0648\u06A9\u0646 \u062A\u0623\u06CC\u06CC\u062F \u0634\u062F." : messages[bot.diagnostic.code],
-          diagnostic: bot.diagnostic
-        });
-        if (bot.ok) {
-          const chat = await this.request(token, "getChat", { chat_id: chatId }, 6e3);
-          checks.push({
-            stage: "chat",
-            ok: chat.ok,
-            code: chat.ok ? "CHAT_REACHABLE" : chat.diagnostic.code,
-            message: chat.ok ? "API \u0627\u0637\u0644\u0627\u0639\u0627\u062A \u0645\u0642\u0635\u062F \u0631\u0627 \u0628\u0631\u06AF\u0631\u062F\u0627\u0646\u062F\u061B \u0627\u06CC\u0646 \u0628\u0647\u200C\u062A\u0646\u0647\u0627\u06CC\u06CC \u062A\u0636\u0645\u06CC\u0646 \u0645\u062C\u0648\u0632 \u06CC\u0627 \u062A\u062D\u0648\u06CC\u0644 \u067E\u06CC\u0627\u0645 \u0646\u06CC\u0633\u062A." : messages[chat.diagnostic.code],
-            diagnostic: chat.diagnostic
-          });
-        }
-        return { channel: this.channel, ready: checks.length === 2 && checks.every((c) => c.ok), checks, messageSent: false };
-      }
-    };
-    adapters = {
-      telegram: new BotApiAdapter("telegram", "https://api.telegram.org"),
-      bale: new BotApiAdapter("bale", "https://tapi.bale.ai")
-    };
-  }
-});
-
 // src/lib/utils.ts
 function ok(c, data, status = 200) {
   return c.json({ ok: true, data }, status);
@@ -524,7 +286,7 @@ function normalizePhone(raw2) {
 function isValidBirthDate(value) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const ms = Date.parse(`${value}T00:00:00Z`);
-  if (!Number.isFinite(ms)) return false;
+  if (!Number.isFinite(ms) || new Date(ms).toISOString().slice(0, 10) !== value || value > (/* @__PURE__ */ new Date()).toISOString().slice(0, 10)) return false;
   const year = parseInt(value.slice(0, 4), 10);
   return year >= 1300 && year <= (/* @__PURE__ */ new Date()).getUTCFullYear();
 }
@@ -602,6 +364,244 @@ var init_utils = __esm({
   }
 });
 
+// src/lib/crypto.ts
+function bytesToBase64(bytes) {
+  let binary = "";
+  const chunk = 32768;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode.apply(
+      null,
+      Array.from(bytes.subarray(i, i + chunk))
+    );
+  }
+  return btoa(binary);
+}
+function base64ToBytes(value) {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+async function pbkdf2(password, salt, iterations, bits) {
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(password),
+    "PBKDF2",
+    false,
+    ["deriveBits"]
+  );
+  const derived = await crypto.subtle.deriveBits(
+    {
+      name: "PBKDF2",
+      salt,
+      iterations,
+      hash: "SHA-256"
+    },
+    keyMaterial,
+    bits
+  );
+  return new Uint8Array(derived);
+}
+async function hashPassword(password) {
+  const salt = new Uint8Array(16);
+  crypto.getRandomValues(salt);
+  const hash = await pbkdf2(password, salt, PBKDF2_ITERATIONS, KEY_LENGTH_BITS);
+  return `pbkdf2$${PBKDF2_ITERATIONS}$${bytesToBase64(salt)}$${bytesToBase64(hash)}`;
+}
+async function verifyPassword(password, stored) {
+  if (!stored) return false;
+  const parts = stored.split("$");
+  if (parts.length !== 4 || parts[0] !== "pbkdf2") return false;
+  const iterations = parseInt(parts[1], 10);
+  if (!Number.isFinite(iterations) || iterations < 1e4) return false;
+  let salt;
+  let expected;
+  try {
+    salt = base64ToBytes(parts[2]);
+    expected = base64ToBytes(parts[3]);
+  } catch {
+    return false;
+  }
+  const actual = await pbkdf2(password, salt, iterations, expected.length * 8);
+  if (actual.length !== expected.length) return false;
+  let diff = 0;
+  for (let i = 0; i < actual.length; i += 1) {
+    diff |= actual[i] ^ expected[i];
+  }
+  return diff === 0;
+}
+function generateCouponCode(prefix = "CAFE") {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const bytes = new Uint8Array(6);
+  crypto.getRandomValues(bytes);
+  let code = "";
+  for (let i = 0; i < bytes.length; i += 1) {
+    code += alphabet[bytes[i] % alphabet.length];
+  }
+  return `${prefix}-${code}`;
+}
+async function sha256Hex(input) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
+  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+var PBKDF2_ITERATIONS, KEY_LENGTH_BITS;
+var init_crypto = __esm({
+  "src/lib/crypto.ts"() {
+    "use strict";
+    PBKDF2_ITERATIONS = 25e3;
+    KEY_LENGTH_BITS = 256;
+  }
+});
+
+// src/lib/fallback-adapters.ts
+function networkCode(error) {
+  const e = error;
+  const code = typeof e?.cause?.code === "string" ? e.cause.code : typeof e?.code === "string" ? e.code : "";
+  if (["ENOTFOUND", "EAI_AGAIN"].includes(code)) return "DNS_FAILURE";
+  if (["CERT_HAS_EXPIRED", "DEPTH_ZERO_SELF_SIGNED_CERT", "UNABLE_TO_VERIFY_LEAF_SIGNATURE", "ERR_TLS_CERT_ALTNAME_INVALID", "ERR_SSL_PROTOCOL_ERROR"].includes(code)) return "TLS_FAILURE";
+  if (["ECONNRESET", "ECONNREFUSED", "UND_ERR_SOCKET"].includes(code)) return "NETWORK_RESET";
+  if (["ETIMEDOUT", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT"].includes(code) || e?.name === "TimeoutError") return "NETWORK_TIMEOUT";
+  return "FETCH_FAILED";
+}
+function identifier(value, signed = false) {
+  return typeof value === "number" && Number.isSafeInteger(value) && (signed || value >= 0) || typeof value === "string" && (signed ? /^-?\d{1,64}$/ : /^\d{1,64}$/).test(value);
+}
+function validChatId(value) {
+  return /^-?[1-9]\d{0,19}$/.test(value) || /^@[A-Za-z][A-Za-z0-9_]{4,31}$/.test(value);
+}
+function validBotToken(value) {
+  return /^\d{1,20}:[A-Za-z0-9_-]{20,200}$/.test(value);
+}
+var messages, BotApiAdapter, adapters;
+var init_fallback_adapters = __esm({
+  "src/lib/fallback-adapters.ts"() {
+    "use strict";
+    messages = {
+      NETWORK_TIMEOUT: "\u0645\u0647\u0644\u062A \u0627\u0631\u062A\u0628\u0627\u0637 \u0628\u0627 \u067E\u06CC\u0627\u0645\u200C\u0631\u0633\u0627\u0646 \u062A\u0645\u0627\u0645 \u0634\u062F.",
+      DNS_FAILURE: "\u0646\u0627\u0645 \u0645\u06CC\u0632\u0628\u0627\u0646 \u067E\u06CC\u0627\u0645\u200C\u0631\u0633\u0627\u0646 \u062F\u0631 \u0633\u0631\u0648\u0631 \u0642\u0627\u0628\u0644 \u062A\u0628\u062F\u06CC\u0644 \u0628\u0647 \u0646\u0634\u0627\u0646\u06CC \u0634\u0628\u06A9\u0647 \u0646\u0628\u0648\u062F.",
+      TLS_FAILURE: "\u0628\u0631\u0642\u0631\u0627\u0631\u06CC \u0627\u062A\u0635\u0627\u0644 \u0627\u0645\u0646 TLS \u0628\u0627 \u067E\u06CC\u0627\u0645\u200C\u0631\u0633\u0627\u0646 \u0646\u0627\u0645\u0648\u0641\u0642 \u0628\u0648\u062F.",
+      NETWORK_RESET: "\u0627\u062A\u0635\u0627\u0644 \u0633\u0631\u0648\u0631 \u0628\u0627 \u067E\u06CC\u0627\u0645\u200C\u0631\u0633\u0627\u0646 \u0642\u0637\u0639 \u06CC\u0627 \u0631\u062F \u0634\u062F.",
+      FETCH_FAILED: "\u0627\u062C\u0631\u0627\u06CC \u062F\u0631\u062E\u0648\u0627\u0633\u062A \u0627\u0632 \u0633\u0631\u0648\u0631 \u0628\u0647 \u067E\u06CC\u0627\u0645\u200C\u0631\u0633\u0627\u0646 \u0634\u06A9\u0633\u062A \u062E\u0648\u0631\u062F\u061B \u0646\u0648\u0639 \u062F\u0642\u06CC\u0642 \u062E\u0637\u0627\u06CC \u0634\u0628\u06A9\u0647 \u0627\u0632 runtime \u0645\u0634\u062E\u0635 \u0646\u0634\u062F.",
+      BODY_READ_FAILED: "\u067E\u0627\u0633\u062E \u0622\u063A\u0627\u0632 \u0634\u062F \u0648\u0644\u06CC \u062E\u0648\u0627\u0646\u062F\u0646 \u06A9\u0627\u0645\u0644 \u0622\u0646 \u0634\u06A9\u0633\u062A \u062E\u0648\u0631\u062F.",
+      RUNTIME_UNAVAILABLE: "\u0627\u0628\u0632\u0627\u0631 \u0644\u0627\u0632\u0645 \u0628\u0631\u0627\u06CC \u0627\u062C\u0631\u0627\u06CC \u062F\u0631\u062E\u0648\u0627\u0633\u062A \u06CC\u0627 \u0644\u063A\u0648 \u0632\u0645\u0627\u0646\u200C\u062F\u0627\u0631 \u0622\u0646 \u062F\u0631 runtime \u062F\u0631 \u062F\u0633\u062A\u0631\u0633 \u0646\u06CC\u0633\u062A.",
+      REQUEST_SETUP_FAILED: "\u062F\u0631\u062E\u0648\u0627\u0633\u062A \u067E\u06CC\u0634 \u0627\u0632 \u0634\u0631\u0648\u0639 \u0627\u0631\u062A\u0628\u0627\u0637 \u0622\u0645\u0627\u062F\u0647 \u0646\u0634\u062F.",
+      REDIRECT_BLOCKED: "\u067E\u06CC\u0627\u0645\u200C\u0631\u0633\u0627\u0646 \u067E\u0627\u0633\u062E \u0627\u0646\u062A\u0642\u0627\u0644 \u0646\u0634\u0627\u0646\u06CC \u062F\u0627\u062F\u061B \u0628\u0631\u0627\u06CC \u062D\u0641\u0627\u0638\u062A \u0627\u0632 \u062A\u0648\u06A9\u0646\u060C \u0627\u0646\u062A\u0642\u0627\u0644 \u062F\u0646\u0628\u0627\u0644 \u0646\u0634\u062F.",
+      INVALID_RESPONSE: "\u067E\u0627\u0633\u062E \u062F\u0631\u06CC\u0627\u0641\u062A\u06CC\u060C \u067E\u0627\u0633\u062E \u0645\u0639\u062A\u0628\u0631 \u0648 \u0645\u0648\u0631\u062F \u0627\u0646\u062A\u0638\u0627\u0631 Bot API \u0646\u0628\u0648\u062F.",
+      INVALID_TOKEN: "\u062A\u0648\u06A9\u0646 \u0631\u0628\u0627\u062A \u062A\u0648\u0633\u0637 API \u067E\u0630\u06CC\u0631\u0641\u062A\u0647 \u0646\u0634\u062F.",
+      INVALID_CHAT: "API \u0645\u0642\u0635\u062F \u0631\u0627 \u0646\u067E\u0630\u06CC\u0631\u0641\u062A\u061B \u0634\u0646\u0627\u0633\u0647\u0654 \u0686\u062A \u0647\u0645\u0627\u0646 \u067E\u06CC\u0627\u0645\u200C\u0631\u0633\u0627\u0646 \u0648 \u0634\u0631\u0648\u0639 \u06AF\u0641\u062A\u200C\u0648\u06AF\u0648/\u062F\u0633\u062A\u0631\u0633\u06CC \u0631\u0628\u0627\u062A \u0631\u0627 \u0628\u0631\u0631\u0633\u06CC \u06A9\u0646\u06CC\u062F.",
+      FORBIDDEN: "API \u062F\u0633\u062A\u0631\u0633\u06CC \u0627\u06CC\u0646 \u0639\u0645\u0644\u06CC\u0627\u062A \u0631\u0627 \u0631\u062F \u06A9\u0631\u062F\u061B \u0645\u0645\u06A9\u0646 \u0627\u0633\u062A \u0631\u0628\u0627\u062A \u0645\u0633\u062F\u0648\u062F \u06CC\u0627 \u0645\u062C\u0648\u0632 \u0645\u0642\u0635\u062F \u0645\u062D\u062F\u0648\u062F \u0628\u0627\u0634\u062F.",
+      RATE_LIMITED: "\u067E\u06CC\u0627\u0645\u200C\u0631\u0633\u0627\u0646 \u0645\u062D\u062F\u0648\u062F\u06CC\u062A \u0646\u0631\u062E \u0627\u0639\u0644\u0627\u0645 \u06A9\u0631\u062F.",
+      PROVIDER_ERROR: "\u067E\u06CC\u0627\u0645\u200C\u0631\u0633\u0627\u0646 \u067E\u0627\u0633\u062E \u0646\u0627\u0645\u0648\u0641\u0642 \u062F\u0627\u062F\u061B \u0648\u0636\u0639\u06CC\u062A HTTP \u062F\u0631 \u062C\u0632\u0626\u06CC\u0627\u062A \u0622\u0645\u062F\u0647 \u0627\u0633\u062A."
+    };
+    BotApiAdapter = class {
+      constructor(channel, origin) {
+        this.channel = channel;
+        this.origin = origin;
+      }
+      channel;
+      origin;
+      async request(token, method, body, timeoutMs) {
+        const start = Date.now();
+        const d = { referenceId: crypto.randomUUID(), channel: this.channel, method, phase: "setup", code: "", elapsedMs: 0 };
+        let controller;
+        let timer;
+        const fail2 = (code, retryAfter) => {
+          d.code = code;
+          d.elapsedMs = Math.max(0, Date.now() - start);
+          console.warn("MESSENGER_REQUEST_FAILED", { ...d });
+          const unknown = method === "sendMessage" && !["INVALID_TOKEN", "INVALID_CHAT", "FORBIDDEN", "RATE_LIMITED", "RUNTIME_UNAVAILABLE", "REQUEST_SETUP_FAILED"].includes(code);
+          return {
+            ok: false,
+            error: code + ": " + messages[code] + (d.httpStatus ? " HTTP=" + d.httpStatus + "." : "") + " \u0645\u0631\u062D\u0644\u0647=" + d.phase + "\u061B \u067E\u06CC\u06AF\u06CC\u0631\u06CC=" + d.referenceId + "." + (unknown ? " \u0646\u062A\u06CC\u062C\u0647\u0654 \u0627\u0631\u0633\u0627\u0644 \u0646\u0627\u0645\u0634\u062E\u0635 \u0627\u0633\u062A\u061B \u0627\u0631\u0633\u0627\u0644 \u062E\u0648\u062F\u06A9\u0627\u0631 \u062A\u06A9\u0631\u0627\u0631 \u0646\u0634\u062F." : ""),
+            diagnostic: { ...d },
+            ...retryAfter === void 0 ? {} : { retryAfter }
+          };
+        };
+        try {
+          if (typeof fetch !== "function" || typeof AbortController !== "function") return fail2("RUNTIME_UNAVAILABLE");
+          controller = new AbortController();
+          timer = setTimeout(() => controller.abort(), timeoutMs);
+          d.phase = "request";
+          const response = await fetch(`${this.origin}/bot${token}/${method}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Accept: "application/json" },
+            body: JSON.stringify(body),
+            redirect: "manual",
+            signal: controller.signal
+          });
+          d.httpStatus = response.status;
+          d.phase = "response";
+          if (response.status >= 300 && response.status < 400) return fail2("REDIRECT_BLOCKED");
+          d.phase = "body";
+          const text = await response.text();
+          d.phase = "response";
+          let data = null;
+          if (text.length <= 65536) {
+            try {
+              const value = JSON.parse(text);
+              if (value && typeof value === "object" && !Array.isArray(value)) data = value;
+            } catch {
+            }
+          }
+          const code = data?.ok === false && Number.isInteger(data.error_code) ? data.error_code : response.status;
+          if (code === 429) {
+            const delay = Number(data?.parameters?.retry_after ?? response.headers.get("Retry-After"));
+            return fail2("RATE_LIMITED", Number.isFinite(delay) && delay > 0 ? Math.min(86400, Math.ceil(delay)) : 60);
+          }
+          if (!data || typeof data.ok !== "boolean") return fail2("INVALID_RESPONSE");
+          if (response.ok && data.ok) {
+            if (!data.result || typeof data.result !== "object" || Array.isArray(data.result)) return fail2("INVALID_RESPONSE");
+            const valid = method === "sendMessage" ? identifier(data.result.message_id) : identifier(data.result.id, method === "getChat");
+            if (!valid) return fail2("INVALID_RESPONSE");
+            d.code = "OK";
+            d.elapsedMs = Math.max(0, Date.now() - start);
+            return { ok: true, data, diagnostic: { ...d } };
+          }
+          return fail2(code === 401 || code === 404 ? "INVALID_TOKEN" : code === 403 ? "FORBIDDEN" : code === 400 && method !== "getMe" ? "INVALID_CHAT" : "PROVIDER_ERROR");
+        } catch (error) {
+          return fail2(controller?.signal.aborted ? "NETWORK_TIMEOUT" : d.phase === "setup" ? "REQUEST_SETUP_FAILED" : d.phase === "body" ? "BODY_READ_FAILED" : networkCode(error));
+        } finally {
+          if (timer !== void 0) clearTimeout(timer);
+        }
+      }
+      async send(token, chatId, text) {
+        const result = await this.request(token, "sendMessage", { chat_id: chatId, text }, 12e3);
+        if (!result.ok) return result;
+        return { ok: true, messageId: String(result.data.result.message_id) };
+      }
+      /** Read-only bot identity and chat lookup. Never getUpdates, setWebhook or sendMessage. */
+      async diagnose(token, chatId) {
+        const checks = [];
+        const bot = await this.request(token, "getMe", {}, 6e3);
+        checks.push({
+          stage: "bot",
+          ok: bot.ok,
+          code: bot.ok ? "BOT_REACHABLE" : bot.diagnostic.code,
+          message: bot.ok ? "\u0627\u0631\u062A\u0628\u0627\u0637 \u0633\u0631\u0648\u0631 \u0628\u0627 API \u0648 \u0627\u0639\u062A\u0628\u0627\u0631 \u062A\u0648\u06A9\u0646 \u062A\u0623\u06CC\u06CC\u062F \u0634\u062F." : messages[bot.diagnostic.code],
+          diagnostic: bot.diagnostic
+        });
+        if (bot.ok) {
+          const chat = await this.request(token, "getChat", { chat_id: chatId }, 6e3);
+          checks.push({
+            stage: "chat",
+            ok: chat.ok,
+            code: chat.ok ? "CHAT_REACHABLE" : chat.diagnostic.code,
+            message: chat.ok ? "API \u0627\u0637\u0644\u0627\u0639\u0627\u062A \u0645\u0642\u0635\u062F \u0631\u0627 \u0628\u0631\u06AF\u0631\u062F\u0627\u0646\u062F\u061B \u0627\u06CC\u0646 \u0628\u0647\u200C\u062A\u0646\u0647\u0627\u06CC\u06CC \u062A\u0636\u0645\u06CC\u0646 \u0645\u062C\u0648\u0632 \u06CC\u0627 \u062A\u062D\u0648\u06CC\u0644 \u067E\u06CC\u0627\u0645 \u0646\u06CC\u0633\u062A." : messages[chat.diagnostic.code],
+            diagnostic: chat.diagnostic
+          });
+        }
+        return { channel: this.channel, ready: checks.length === 2 && checks.every((c) => c.ok), checks, messageSent: false };
+      }
+    };
+    adapters = {
+      telegram: new BotApiAdapter("telegram", "https://api.telegram.org"),
+      bale: new BotApiAdapter("bale", "https://tapi.bale.ai")
+    };
+  }
+});
+
 // src/lib/settings.ts
 var settings_exports = {};
 __export(settings_exports, {
@@ -637,6 +637,7 @@ function coerceSettings(raw2) {
   const provider = coerceSmsProvider(raw2.sms_provider);
   return {
     sms_templates: templatesMerged,
+    tier_labels: Object.fromEntries(Object.entries(DEFAULT_SETTINGS.tier_labels).map(([key, label]) => [key, typeof raw2.tier_labels?.[key] === "string" && String(raw2.tier_labels[key]).trim() ? String(raw2.tier_labels[key]).trim().slice(0, 30) : label])),
     points_mode: raw2.points_mode === "visit" || raw2.points_mode === "invoice" ? raw2.points_mode : "amount",
     points_per_currency: toIntInRange(raw2.points_per_currency, 1, 1e3, 1),
     invoice_points: toIntInRange(raw2.invoice_points, 0, 1e5, 15),
@@ -789,6 +790,7 @@ var init_settings = __esm({
       otp_login_enabled: 1,
       require_shift: 0,
       tiers: { silver: 500, gold: 2e3, vip: 5e3 },
+      tier_labels: { bronze: "\u0628\u0631\u0646\u0632\u06CC", silver: "\u0646\u0642\u0631\u0647\u200C\u0627\u06CC", gold: "\u0637\u0644\u0627\u06CC\u06CC", vip: "\u0627\u0644\u0645\u0627\u0633\u06CC" },
       cafe_name: "\u06A9\u0627\u0641\u0647 \u0645\u0644\u062A",
       cafe_city: "\u062A\u0647\u0631\u0627\u0646",
       weather_api_key: "",
@@ -816,6 +818,7 @@ var init_settings = __esm({
       "require_shift",
       "currency_unit",
       "tiers",
+      "tier_labels",
       "cafe_name",
       "cafe_city",
       "weather_api_key",
@@ -882,6 +885,7 @@ function safeFallbackConfig(env, config) {
   return {
     enabled: config.enabled,
     notifyEnabled: config.notifyEnabled === true,
+    notifyErrors: config.notifyErrors !== false,
     notifyInvoices: config.notifyInvoices !== false,
     notifyActions: config.notifyActions !== false,
     encryptionKeyConfigured,
@@ -898,9 +902,10 @@ async function saveFallbackConfig(env, body) {
   const input = body;
   if (typeof input.enabled !== "boolean" || !Array.isArray(input.channels) || input.channels.length > 2) throw new Error("\u0633\u0648\u0626\u06CC\u0686 \u0648 \u0641\u0647\u0631\u0633\u062A \u0645\u0642\u0635\u062F\u0647\u0627 \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.");
   const previous = await loadFallbackConfig(env);
-  for (const key of ["notifyEnabled", "notifyInvoices", "notifyActions"]) {
+  for (const key of ["notifyEnabled", "notifyInvoices", "notifyActions", "notifyErrors"]) {
     if (input[key] !== void 0 && typeof input[key] !== "boolean") throw new Error("\u0633\u0648\u0626\u06CC\u0686 \u06AF\u0632\u0627\u0631\u0634 \u0645\u062F\u06CC\u0631\u06CC\u062A \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.");
   }
+  const notifyErrors = input.notifyErrors === void 0 ? previous.notifyErrors !== false : input.notifyErrors === true;
   const notifyEnabled = input.notifyEnabled === void 0 ? previous.notifyEnabled === true : input.notifyEnabled === true;
   const notifyInvoices = input.notifyInvoices === void 0 ? previous.notifyInvoices !== false : input.notifyInvoices === true;
   const notifyActions = input.notifyActions === void 0 ? previous.notifyActions !== false : input.notifyActions === true;
@@ -927,14 +932,15 @@ async function saveFallbackConfig(env, body) {
     if (!channels.length) throw new Error("\u062D\u062F\u0627\u0642\u0644 \u06CC\u06A9 \u0645\u0642\u0635\u062F \u0627\u0646\u062A\u062E\u0627\u0628 \u06A9\u0646\u06CC\u062F.");
   }
   await env.DB.batch([
-    env.DB.prepare(`INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).bind(CONFIG_KEY, JSON.stringify({ enabled: input.enabled, channels, notifyEnabled, notifyInvoices, notifyActions })),
+    env.DB.prepare(`INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).bind(CONFIG_KEY, JSON.stringify({ enabled: input.enabled, channels, notifyErrors, notifyEnabled, notifyInvoices, notifyActions })),
     // Pending work for removed destinations must not be sent or kept indefinitely.
     env.DB.prepare(`UPDATE fallback_jobs SET status='skipped',error='CONFIG_CHANGED: \u0645\u0642\u0635\u062F \u062D\u0630\u0641 \u06CC\u0627 \u0645\u0633\u06CC\u0631 \u062E\u0627\u0645\u0648\u0634 \u0634\u062F.',
       payload=CASE WHEN type='otp' THEN '' ELSE payload END,completed_at=datetime('now')
       WHERE status='pending' AND (
         NOT EXISTS (SELECT 1 FROM json_each(?) WHERE json_extract(value,'$.channel')=fallback_jobs.channel AND json_extract(value,'$.chatId')=fallback_jobs.chat_id)
-        OR (reason NOT IN ('test','event') AND ?=0)
-        OR (reason='event' AND (?=0 OR (type='report_invoice' AND ?=0) OR (type='report_action' AND ?=0))))`).bind(JSON.stringify(channels), input.enabled ? 1 : 0, notifyEnabled ? 1 : 0, notifyInvoices ? 1 : 0, notifyActions ? 1 : 0)
+        OR (reason NOT IN ('test','event','manual') AND ?=0)
+        OR (reason='event' AND type!='report_error' AND (?=0 OR (type='report_invoice' AND ?=0) OR (type='report_action' AND ?=0)))
+        OR (type='report_error' AND ?=0))`).bind(JSON.stringify(channels), input.enabled ? 1 : 0, notifyEnabled ? 1 : 0, notifyInvoices ? 1 : 0, notifyActions ? 1 : 0, notifyErrors ? 1 : 0)
   ]);
 }
 async function diagnoseFallback(env, channel) {
@@ -952,12 +958,15 @@ function smsPanelActive(env, settings) {
 }
 async function enqueueFallback(env, params, reason, testChannel) {
   const config = await loadFallbackConfig(env);
-  if (reason === "event" ? !config.notifyEnabled || (params.type === "report_invoice" ? config.notifyInvoices === false : config.notifyActions === false) : !config.enabled && reason !== "test") return [];
+  if (params.type === "report_error" ? config.notifyErrors === false : reason === "event" ? !config.notifyEnabled || (params.type === "report_invoice" ? config.notifyInvoices === false : config.notifyActions === false) : !config.enabled && reason !== "test" && reason !== "manual") return [];
   const phone = normalizePhone(params.phone);
-  if (reason !== "event" && !/^09\d{9}$/.test(phone) || phone && !/^09\d{9}$/.test(phone) || !params.message.trim()) throw new Error("INVALID_FALLBACK_MESSAGE");
+  if (reason !== "event" && reason !== "manual" && !/^09\d{9}$/.test(phone) || phone && !/^09\d{9}$/.test(phone) || !params.message.trim()) throw new Error("INVALID_FALLBACK_MESSAGE");
   if (params.message.length > 2e3) throw new Error("MESSAGE_TOO_LONG");
   const selected = config.channels.filter((c) => !testChannel || c.channel === testChannel);
-  if (!selected.length) throw new Error("\u0647\u06CC\u0686 \u0645\u0642\u0635\u062F \u0630\u062E\u06CC\u0631\u0647\u200C\u0634\u062F\u0647\u200C\u0627\u06CC \u0627\u0646\u062A\u062E\u0627\u0628 \u0646\u0634\u062F\u0647 \u0627\u0633\u062A.");
+  if (!selected.length) {
+    if (params.type === "report_error") return [];
+    throw new Error("\u0647\u06CC\u0686 \u0645\u0642\u0635\u062F \u0630\u062E\u06CC\u0631\u0647\u200C\u0634\u062F\u0647\u200C\u0627\u06CC \u0627\u0646\u062A\u062E\u0627\u0628 \u0646\u0634\u062F\u0647 \u0627\u0633\u062A.");
+  }
   const now = Date.now();
   const ids = [];
   const bindings = [];
@@ -965,7 +974,7 @@ async function enqueueFallback(env, params, reason, testChannel) {
   for (const c of selected) {
     if (!validChatId(c.chatId) || !validBotToken(await channelToken(env, c))) throw new Error("\u062A\u0646\u0638\u06CC\u0645\u0627\u062A \u0645\u0642\u0635\u062F \u06A9\u0627\u0645\u0644 \u0646\u06CC\u0633\u062A.");
     const id = params.eventKey ? "event-" + await sha256Hex(params.eventKey + ":" + c.channel + ":" + c.chatId) : crypto.randomUUID();
-    const payload = await seal(env, { phone, message: params.message, requestedAt: new Date(now).toISOString(), userId: params.userId, title: params.title }, `job:${id}`);
+    const payload = await seal(env, { phone, message: params.message, requestedAt: new Date(now).toISOString(), userId: params.userId, title: params.title, reason }, `job:${id}`);
     rows.push("SELECT ? AS id,? AS channel,? AS chat_id,? AS user_id,? AS type,? AS payload,? AS reason,? AS next_at,? AS expires_at");
     bindings.push(id, c.channel, c.chatId, params.userId, params.type, payload, reason, now, Math.min(now + (params.type === "otp" ? 11e4 : 864e5), params.expiresAt ?? Infinity));
     ids.push(id);
@@ -984,11 +993,28 @@ async function enqueueFallback(env, params, reason, testChannel) {
   }
   return ids;
 }
+async function enqueueDeliveryAlert(env, reference, code, failedChannel) {
+  const safeCode = /^[A-Z_]{3,40}$/.test(code) ? code : "DELIVERY_FAILED";
+  return enqueueFallback(env, {
+    phone: "",
+    userId: null,
+    type: "report_error",
+    title: "\u0647\u0634\u062F\u0627\u0631 \u062E\u0637\u0627\u06CC \u0627\u0631\u0633\u0627\u0644",
+    eventKey: "delivery-error:" + reference,
+    message: `\u062E\u0637\u0627\u06CC \u0627\u0631\u0633\u0627\u0644 ${failedChannel === "telegram" ? "\u062A\u0644\u06AF\u0631\u0627\u0645" : failedChannel === "bale" ? "\u0628\u0644\u0647" : "\u067E\u06CC\u0627\u0645\u06A9"}
+\u06A9\u062F: ${safeCode}
+\u067E\u06CC\u06AF\u06CC\u0631\u06CC: ${reference}
+\u062C\u0632\u0626\u06CC\u0627\u062A \u0648 \u0648\u0636\u0639\u06CC\u062A \u0647\u0631 \u0645\u0642\u0635\u062F \u062F\u0631 \u067E\u0646\u0644 \u067E\u06CC\u0627\u0645\u200C\u0647\u0627\u06CC \u0627\u062F\u0645\u06CC\u0646 \u062B\u0628\u062A \u0634\u062F\u0647 \u0627\u0633\u062A. \u067E\u06CC\u0627\u0645 \u0627\u0635\u0644\u06CC \u062E\u0648\u062F\u06A9\u0627\u0631 \u062A\u06A9\u0631\u0627\u0631 \u0646\u0634\u062F\u0647 \u0627\u0633\u062A.`
+  }, "event", failedChannel ? failedChannel === "telegram" ? "bale" : "telegram" : void 0);
+}
 function formatFallbackMessage(p, type) {
+  if (type === "manual") return [p.title || "\u067E\u06CC\u0627\u0645 \u062F\u0633\u062A\u06CC \u0645\u062F\u06CC\u0631", `\u0632\u0645\u0627\u0646: ${formatJalaliDateTime(p.requestedAt)}`, p.phone ? `\u0634\u0645\u0627\u0631\u0647\u0654 \u0645\u0631\u062A\u0628\u0637:
+${p.phone}` : "", p.message].filter(Boolean).join("\n\n");
   if (type.startsWith("report_")) return [p.title || "\u06AF\u0632\u0627\u0631\u0634 \u0645\u062F\u06CC\u0631\u06CC\u062A", `\u0632\u0645\u0627\u0646: ${formatJalaliDateTime(p.requestedAt)}`, p.phone ? `\u0634\u0645\u0627\u0631\u0647 \u0645\u0634\u062A\u0631\u06CC:
 ${p.phone}` : "", p.message].filter(Boolean).join("\n\n");
   return [
     "\u0627\u0631\u0633\u0627\u0644 \u062F\u0633\u062A\u06CC \u067E\u06CC\u0627\u0645\u06A9 \u2014 \u0627\u06CC\u0646 \u067E\u06CC\u0627\u0645 \u0641\u0642\u0637 \u0628\u0647 \u0627\u062F\u0645\u06CC\u0646 \u0631\u0633\u06CC\u062F\u0647 \u0627\u0633\u062A",
+    p.reason === "primary_failed" ? "\u26A0\uFE0F \u0627\u0631\u0633\u0627\u0644 \u0627\u0635\u0644\u06CC \u067E\u06CC\u0627\u0645\u06A9 \u0646\u0627\u0645\u0648\u0641\u0642 \u0628\u0648\u062F\u061B \u0631\u0633\u06CC\u062F\u0646 \u0627\u06CC\u0646 \u067E\u06CC\u0627\u0645 \u0628\u0647 \u0627\u062F\u0645\u06CC\u0646\u060C \u062A\u062D\u0648\u06CC\u0644 \u067E\u06CC\u0627\u0645\u06A9 \u0628\u0647 \u0645\u0634\u062A\u0631\u06CC \u0646\u06CC\u0633\u062A." : "",
     `\u0634\u0645\u0627\u0631\u0647 \u0645\u0634\u062A\u0631\u06A9:
 ${p.phone}`,
     `\u0632\u0645\u0627\u0646 \u062F\u0631\u062E\u0648\u0627\u0633\u062A: ${formatJalaliDateTime(p.requestedAt)}`,
@@ -1018,7 +1044,7 @@ async function processFallbackQueue(env, maintenance = false) {
     await env.DB.prepare(`UPDATE fallback_jobs SET status='expired',error='EXPIRED: \u0645\u0647\u0644\u062A \u0627\u0631\u0633\u0627\u0644 \u062A\u0645\u0627\u0645 \u0634\u062F.',payload=CASE WHEN type='otp' THEN '' ELSE payload END,completed_at=datetime('now')
       WHERE status='pending' AND expires_at<=?`).bind(now).run();
     const job = await env.DB.prepare(`UPDATE fallback_jobs SET status='processing',locked_at=?,attempts=attempts+1
-      WHERE id=(SELECT id FROM fallback_jobs WHERE status='pending' AND next_at<=? AND channel NOT IN (SELECT channel FROM fallback_channel_limits WHERE until_ms>?) ORDER BY CASE WHEN type='otp' THEN 0 WHEN reason='test' THEN 1 WHEN reason='event' THEN 3 ELSE 2 END,next_at,rowid LIMIT 1)
+      WHERE id=(SELECT id FROM fallback_jobs WHERE status='pending' AND next_at<=? AND channel NOT IN (SELECT channel FROM fallback_channel_limits WHERE until_ms>?) ORDER BY CASE WHEN type='otp' THEN 0 WHEN reason='test' THEN 1 WHEN type='report_error' THEN 2 WHEN reason='event' THEN 4 ELSE 3 END,next_at,rowid LIMIT 1)
       AND status='pending' RETURNING *`).bind(now, now, now).first();
     if (!job) return false;
     let status = "failed", error = null, providerId = null;
@@ -1027,7 +1053,7 @@ async function processFallbackQueue(env, maintenance = false) {
       const channel = config.channels.find((c) => c.channel === job.channel && c.chatId === job.chat_id);
       const { loadSettings: loadSettings2 } = await Promise.resolve().then(() => (init_settings(), settings_exports));
       const settings = job.reason === "inactive" ? await loadSettings2(env, true) : null;
-      if (!channel || (job.reason === "event" ? !config.notifyEnabled || (job.type === "report_invoice" ? config.notifyInvoices === false : config.notifyActions === false) : !config.enabled && job.reason !== "test") || job.reason === "inactive" && settings && smsPanelActive(env, settings)) {
+      if (!channel || (job.type === "report_error" ? config.notifyErrors === false : job.reason === "event" ? !config.notifyEnabled || (job.type === "report_invoice" ? config.notifyInvoices === false : config.notifyActions === false) : !config.enabled && job.reason !== "test" && job.reason !== "manual") || job.reason === "inactive" && settings && smsPanelActive(env, settings)) {
         status = "skipped";
         error = "CONFIG_CHANGED: \u0645\u0633\u06CC\u0631 \u062C\u0627\u06CC\u06AF\u0632\u06CC\u0646 \u062E\u0627\u0645\u0648\u0634 \u06CC\u0627 \u0645\u0642\u0635\u062F/\u067E\u0646\u0644 \u0627\u0635\u0644\u06CC \u062A\u063A\u06CC\u06CC\u0631 \u06A9\u0631\u062F\u0647 \u0627\u0633\u062A.";
       } else if (job.expires_at <= Date.now() + 12e3) {
@@ -1057,6 +1083,15 @@ async function processFallbackQueue(env, maintenance = false) {
     await env.DB.prepare(`UPDATE fallback_jobs SET status=?,error=?,provider_id=?,next_at=?,
       payload=CASE WHEN type='otp' AND ?!='pending' THEN '' ELSE payload END,
       completed_at=CASE WHEN ?='pending' THEN NULL ELSE datetime('now') END WHERE id=? AND status='processing'`).bind(status, error, providerId, nextAt, status, status, job.id).run();
+    if (status === "failed" && job.type !== "report_error") {
+      const code = /^[A-Z_]{3,40}:/.exec(error ?? "")?.[0].slice(0, -1) ?? "DELIVERY_FAILED";
+      try {
+        await env.DB.prepare("INSERT INTO admin_logs(admin_id,admin_name,action,target_type,target_id,details) VALUES(NULL,?,?,?,?,?)").bind("\u0633\u06CC\u0633\u062A\u0645", "fallback_delivery_failed", "messenger", job.id, job.channel + ": " + code).run();
+        await enqueueDeliveryAlert(env, "job:" + job.id + ":" + now, code, job.channel);
+      } catch {
+        console.error("DELIVERY_ALERT_QUEUE_FAILED", job.id);
+      }
+    }
     return true;
   } finally {
     await env.DB.prepare("UPDATE fallback_dispatch SET until_ms=?,owner=NULL WHERE id=1 AND owner=?").bind(Date.now() + 3e3, owner).run();
@@ -1107,7 +1142,7 @@ async function retryFallbackJob(env, id, confirmDuplicateRisk = false) {
   if (!certain && !confirmDuplicateRisk) throw new Error("CONFIRM_DUPLICATE_RISK");
   const config = await loadFallbackConfig(env);
   const channel = config.channels.find((c) => c.channel === job.channel && c.chatId === job.chat_id);
-  if (!channel || (job.reason === "event" ? !config.notifyEnabled || (job.type === "report_invoice" ? config.notifyInvoices === false : config.notifyActions === false) : !config.enabled && job.reason !== "test"))
+  if (!channel || (job.type === "report_error" ? config.notifyErrors === false : job.reason === "event" ? !config.notifyEnabled || (job.type === "report_invoice" ? config.notifyInvoices === false : config.notifyActions === false) : !config.enabled && job.reason !== "test" && job.reason !== "manual"))
     throw new Error("CONFIG_CHANGED");
   if (!validBotToken(await channelToken(env, channel))) throw new Error("INVALID_TOKEN");
   await unseal(env, job.payload, `job:${job.id}`);
@@ -1135,11 +1170,13 @@ function queueErrorMessage(error) {
   return error instanceof Error && error.message === "MESSAGE_TOO_LONG" ? "\u0645\u062A\u0646 \u0628\u06CC\u0634 \u0627\u0632 \u06F2\u06F0\u06F0\u06F0 \u06A9\u0627\u0631\u0627\u06A9\u062A\u0631 \u0627\u0633\u062A\u061B \u0628\u0631\u0627\u06CC \u062C\u0644\u0648\u06AF\u06CC\u0631\u06CC \u0627\u0632 \u0627\u0631\u0633\u0627\u0644 \u0646\u0627\u0642\u0635\u060C \u067E\u06CC\u0627\u0645 \u0627\u0631\u0633\u0627\u0644 \u0646\u0634\u062F." : "\u062B\u0628\u062A \u062F\u0631 \u0635\u0641 \u062C\u0627\u06CC\u06AF\u0632\u06CC\u0646 \u0646\u0627\u0645\u0648\u0641\u0642 \u0628\u0648\u062F\u061B \u062A\u0646\u0638\u06CC\u0645\u0627\u062A\u060C \u06A9\u0644\u06CC\u062F \u0648 \u0638\u0631\u0641\u06CC\u062A \u0635\u0641 \u0631\u0627 \u0628\u0631\u0631\u0633\u06CC \u06A9\u0646\u06CC\u062F.";
 }
 async function finalizeSmsResult(env, params, result) {
+  const primaryFailed = result.status === "failed";
   if (result.status === "failed" && /^09\d{9}$/.test(normalizePhone(params.phone))) {
     try {
       const ids = await enqueueFallback(env, { ...params, message: sanitizeMessage(params.message, Infinity) }, "primary_failed");
       if (ids.length) {
         result.status = "pending";
+        result.fallbackIds = ids;
         result.error = "\u0627\u0631\u0633\u0627\u0644 \u0627\u0635\u0644\u06CC \u0646\u0627\u0645\u0648\u0641\u0642\u061B \u062F\u0631 \u0635\u0641 \u0627\u0631\u0633\u0627\u0644 \u062C\u0627\u06CC\u06AF\u0632\u06CC\u0646 \u0628\u0631\u0627\u06CC \u0627\u062F\u0645\u06CC\u0646 \u0642\u0631\u0627\u0631 \u06AF\u0631\u0641\u062A. " + (result.error ?? "");
       }
     } catch (error) {
@@ -1147,17 +1184,26 @@ async function finalizeSmsResult(env, params, result) {
     }
   }
   try {
-    await env.DB.prepare(
-      `INSERT INTO sms_logs (user_id, type, status, message, provider_id, error)
-       VALUES (?, ?, ?, ?, ?, ?)`
+    const log = await env.DB.prepare(
+      `INSERT INTO sms_logs (user_id, type, status, message, provider_id, error, fallback_ids, delivery_kind)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     ).bind(
       params.userId,
       params.type,
       result.status,
       params.type === "otp" ? "[\u06A9\u062F \u0648\u0631\u0648\u062F \u0645\u062D\u0631\u0645\u0627\u0646\u0647 \u2014 \u0630\u062E\u06CC\u0631\u0647 \u0646\u0645\u06CC\u200C\u0634\u0648\u062F]" : sanitizeMessage(params.message),
       result.messageId ?? null,
-      result.error ?? null
+      result.error ?? null,
+      JSON.stringify(result.fallbackIds ?? []),
+      result.status === "pending" ? "admin_fallback" : result.deliveryKind ?? (result.status === "failed" ? "sms_failed" : "none")
     ).run();
+    if (primaryFailed && !result.fallbackIds?.length && /^09\d{9}$/.test(normalizePhone(params.phone))) {
+      try {
+        await enqueueDeliveryAlert(env, "sms:" + Number(log.meta?.last_row_id ?? 0), "SMS_SEND_FAILED");
+      } catch {
+        console.error("SMS_ERROR_ALERT_QUEUE_FAILED");
+      }
+    }
   } catch (error) {
     console.error("sms_logs insert failed:", error);
   }
@@ -1202,7 +1248,7 @@ async function sendViaSmsIr(apiKey, sender, mobile, message) {
   } catch (error) {
     return {
       ok: false,
-      error: `\u0627\u062A\u0635\u0627\u0644 \u0628\u0647 sms.ir \u0628\u0631\u0642\u0631\u0627\u0631 \u0646\u0634\u062F: ${error instanceof Error ? error.message : "\u062E\u0637\u0627\u06CC \u0634\u0628\u06A9\u0647"}`
+      error: "SMS_NETWORK_UNKNOWN: \u0627\u0631\u062A\u0628\u0627\u0637 \u0628\u0627 sms.ir \u06A9\u0627\u0645\u0644 \u0646\u0634\u062F\u061B \u0646\u062A\u06CC\u062C\u0647 \u0627\u0631\u0633\u0627\u0644 \u0645\u0645\u06A9\u0646 \u0627\u0633\u062A \u0646\u0627\u0645\u0639\u0644\u0648\u0645 \u0628\u0627\u0634\u062F."
     };
   }
   if (response.status === 401 || response.status === 403) {
@@ -1223,7 +1269,7 @@ async function sendViaSmsIr(apiKey, sender, mobile, message) {
   }
   return {
     ok: false,
-    error: payload.message ? String(payload.message) : `sms.ir \u06A9\u062F \u0648\u0636\u0639\u06CC\u062A ${payload.status ?? "\u0646\u0627\u0645\u0634\u062E\u0635"} \u0631\u0627 \u0628\u0631\u06AF\u0631\u062F\u0627\u0646\u062F.`
+    error: `sms.ir \u067E\u0627\u0633\u062E \u0646\u0627\u0645\u0648\u0641\u0642 \u062F\u0627\u062F\u061B \u06A9\u062F ${Number.isInteger(payload.status) ? payload.status : "\u0646\u0627\u0645\u0634\u062E\u0635"}.`
   };
 }
 async function sendViaKavenegar(apiKey, sender, mobile, message) {
@@ -1241,7 +1287,7 @@ async function sendViaKavenegar(apiKey, sender, mobile, message) {
   } catch (error) {
     return {
       ok: false,
-      error: `\u0627\u062A\u0635\u0627\u0644 \u0628\u0647 \u06A9\u0627\u0648\u0647\u200C\u0646\u06AF\u0627\u0631 \u0628\u0631\u0642\u0631\u0627\u0631 \u0646\u0634\u062F: ${error instanceof Error ? error.message : "\u062E\u0637\u0627\u06CC \u0634\u0628\u06A9\u0647"}`
+      error: "SMS_NETWORK_UNKNOWN: \u0627\u0631\u062A\u0628\u0627\u0637 \u0628\u0627 \u0633\u0631\u0648\u06CC\u0633 \u06A9\u0627\u0645\u0644 \u0646\u0634\u062F\u061B \u0646\u062A\u06CC\u062C\u0647 \u0627\u0631\u0633\u0627\u0644 \u0645\u0645\u06A9\u0646 \u0627\u0633\u062A \u0646\u0627\u0645\u0639\u0644\u0648\u0645 \u0628\u0627\u0634\u062F."
     };
   }
   if (response.status === 401 || response.status === 403) {
@@ -1266,7 +1312,7 @@ async function sendViaKavenegar(apiKey, sender, mobile, message) {
   }
   return {
     ok: false,
-    error: payload.return?.message || entry?.statustext || `\u06A9\u062F \u0648\u0636\u0639\u06CC\u062A ${apiStatus}`
+    error: `\u0633\u0631\u0648\u06CC\u0633 \u067E\u0627\u0633\u062E \u0646\u0627\u0645\u0648\u0641\u0642 \u062F\u0627\u062F\u061B \u06A9\u062F ${Number.isInteger(apiStatus) ? apiStatus : "\u0646\u0627\u0645\u0634\u062E\u0635"}.`
   };
 }
 async function sendSms(env, settings, params) {
@@ -1287,7 +1333,7 @@ async function sendSms(env, settings, params) {
     try {
       const ids = await enqueueFallback(env, { ...params, phone: mobile, message: sanitizeMessage(params.message, Infinity) }, "inactive");
       if (ids.length) {
-        const result2 = { status: "pending", error: "\u062F\u0631 \u0635\u0641 \u0627\u0631\u0633\u0627\u0644 \u062C\u0627\u06CC\u06AF\u0632\u06CC\u0646 \u0628\u0631\u0627\u06CC \u0627\u062F\u0645\u06CC\u0646\u061B \u0647\u0646\u0648\u0632 \u0628\u0647 \u0645\u0634\u062A\u0631\u06A9 \u0627\u0631\u0633\u0627\u0644 \u0646\u0634\u062F\u0647 \u0627\u0633\u062A." };
+        const result2 = { status: "pending", fallbackIds: ids, error: "\u062F\u0631 \u0635\u0641 \u0627\u0631\u0633\u0627\u0644 \u062C\u0627\u06CC\u06AF\u0632\u06CC\u0646 \u0628\u0631\u0627\u06CC \u0627\u062F\u0645\u06CC\u0646\u061B \u0647\u0646\u0648\u0632 \u0628\u0647 \u0645\u0634\u062A\u0631\u06A9 \u0627\u0631\u0633\u0627\u0644 \u0646\u0634\u062F\u0647 \u0627\u0633\u062A." };
         await finalizeSmsResult(env, params, result2);
         return result2;
       }
@@ -1304,7 +1350,7 @@ async function sendSms(env, settings, params) {
   }
   if (provider === "console") {
     console.log(`[SMS:console] to=${mobile} type=${params.type} :: ${params.type === "otp" ? "[REDACTED OTP]" : message}`);
-    const result2 = { status: "sent" };
+    const result2 = { status: "sent", deliveryKind: "console" };
     await finalizeSmsResult(env, params, result2);
     return result2;
   }
@@ -1330,7 +1376,7 @@ async function sendSms(env, settings, params) {
   } else {
     outcome = await sendViaKavenegar(apiKey, sender, mobile, message);
   }
-  const result = outcome.ok ? { status: "sent", messageId: outcome.messageId } : { status: "failed", error: outcome.error };
+  const result = outcome.ok ? { status: "sent", messageId: outcome.messageId, deliveryKind: "provider_accepted" } : { status: "failed", error: outcome.error };
   await finalizeSmsResult(env, params, result);
   return result;
 }
@@ -1358,11 +1404,11 @@ async function fetchSmsCredit(env, settings) {
     if (payload.status === 1 && typeof payload.data === "number") {
       return { ok: true, credit: payload.data };
     }
-    return { ok: false, error: payload.message || "\u062F\u0631\u06CC\u0627\u0641\u062A \u0627\u0639\u062A\u0628\u0627\u0631 \u0646\u0627\u0645\u0648\u0641\u0642 \u0628\u0648\u062F." };
+    return { ok: false, error: "\u062F\u0631\u06CC\u0627\u0641\u062A \u0627\u0639\u062A\u0628\u0627\u0631 \u0646\u0627\u0645\u0648\u0641\u0642 \u0628\u0648\u062F." };
   } catch (error) {
     return {
       ok: false,
-      error: `\u0627\u062A\u0635\u0627\u0644 \u0628\u0647 sms.ir \u0628\u0631\u0642\u0631\u0627\u0631 \u0646\u0634\u062F: ${error instanceof Error ? error.message : "\u062E\u0637\u0627\u06CC \u0634\u0628\u06A9\u0647"}`
+      error: "SMS_NETWORK_UNKNOWN: \u0627\u0631\u062A\u0628\u0627\u0637 \u0628\u0627 sms.ir \u06A9\u0627\u0645\u0644 \u0646\u0634\u062F\u061B \u0646\u062A\u06CC\u062C\u0647 \u0627\u0631\u0633\u0627\u0644 \u0645\u0645\u06A9\u0646 \u0627\u0633\u062A \u0646\u0627\u0645\u0639\u0644\u0648\u0645 \u0628\u0627\u0634\u062F."
     };
   }
 }
@@ -1546,8 +1592,8 @@ function calculateTier(points, settings) {
   if (p >= settings.tiers.silver) return "silver";
   return "bronze";
 }
-function tierLabel(tier) {
-  return TIER_LABELS[tier] ?? "\u0628\u0631\u0646\u0632\u06CC";
+function tierLabel(tier, settings) {
+  return settings?.tier_labels?.[tier] ?? TIER_LABELS[tier] ?? "\u0628\u0631\u0646\u0632\u06CC";
 }
 async function findUserByPhone(db, phone) {
   return db.prepare("SELECT * FROM users WHERE phone = ? LIMIT 1").bind(normalizePhone(phone)).first();
@@ -1622,15 +1668,16 @@ async function registerCustomer(env, settings, input) {
   try {
     const smsOptIn = input.sms_opt_in === 0 ? 0 : 1;
     const result = await env.DB.prepare(
-      `INSERT INTO users (name, phone, birth_date, points, tier, referred_by, role, referral_code, sms_opt_in)
-       VALUES (?, ?, ?, 0, 'bronze', ?, 'customer', ?, ?)`
+      `INSERT INTO users (name, phone, birth_date, points, tier, referred_by, role, referral_code, sms_opt_in, nickname)
+       VALUES (?, ?, ?, 0, 'bronze', ?, 'customer', ?, ?, ?)`
     ).bind(
       input.name,
       phone,
       input.birth_date,
       referrer ? referrer.id : null,
       referralCode,
-      smsOptIn
+      smsOptIn,
+      input.nickname ?? ""
     ).run();
     const userId = Number(result.meta?.last_row_id ?? 0);
     const user = await findUserById(env.DB, userId);
@@ -1638,16 +1685,20 @@ async function registerCustomer(env, settings, input) {
       return { ok: false, error: "\u062E\u0637\u0627 \u062F\u0631 \u0627\u06CC\u062C\u0627\u062F \u062D\u0633\u0627\u0628 \u06A9\u0627\u0631\u0628\u0631\u06CC.", code: "DB_ERROR" };
     }
     if (smsOptIn === 1) {
-      await sendSms(env, settings, {
-        userId: user.id,
-        phone: user.phone,
-        type: "welcome",
-        message: renderSms(settings, "welcome", {
-          name: user.name,
-          referral_code: user.referral_code ?? referralCode,
-          points: 0
-        })
-      });
+      try {
+        await sendSms(env, settings, {
+          userId: user.id,
+          phone: user.phone,
+          type: "welcome",
+          message: renderSms(settings, "welcome", {
+            name: user.name,
+            referral_code: user.referral_code ?? referralCode,
+            points: 0
+          })
+        });
+      } catch {
+        console.error("CUSTOMER_WELCOME_FAILED", user.id);
+      }
     }
     return {
       ok: true,
@@ -1656,6 +1707,7 @@ async function registerCustomer(env, settings, input) {
       referralCode: user.referral_code ?? referralCode
     };
   } catch (error) {
+    if (/UNIQUE constraint failed: users.phone/i.test(String(error))) return { ok: false, error: "\u0627\u06CC\u0646 \u0634\u0645\u0627\u0631\u0647 \u0645\u0648\u0628\u0627\u06CC\u0644 \u0642\u0628\u0644\u0627\u064B \u062B\u0628\u062A \u0634\u062F\u0647 \u0627\u0633\u062A.", code: "PHONE_EXISTS" };
     console.error("registerCustomer failed:", error);
     return { ok: false, error: "\u062E\u0637\u0627\u06CC \u067E\u0627\u06CC\u06AF\u0627\u0647 \u062F\u0627\u062F\u0647 \u062F\u0631 \u062B\u0628\u062A\u200C\u0646\u0627\u0645.", code: "DB_ERROR" };
   }
@@ -1807,6 +1859,7 @@ async function recordInvoice(env, settings, input) {
   if (!customer) {
     return { ok: false, error: "\u0645\u0634\u062A\u0631\u06CC \u06CC\u0627\u0641\u062A \u0646\u0634\u062F.", code: "USER_NOT_FOUND" };
   }
+  if (input.customerPhone !== void 0 && customer.phone !== normalizePhone(input.customerPhone)) return { ok: false, error: "\u0634\u0645\u0627\u0631\u0647\u0654 \u06A9\u0627\u0645\u0644 \u0628\u0627 \u0645\u0634\u062A\u0631\u06CC \u0627\u0646\u062A\u062E\u0627\u0628\u200C\u0634\u062F\u0647 \u0645\u0637\u0627\u0628\u0642\u062A \u0646\u062F\u0627\u0631\u062F.", code: "INVALID_USER" };
   if (customer.role !== "customer") {
     return { ok: false, error: "\u0641\u0642\u0637 \u0628\u0631\u0627\u06CC \u0645\u0634\u062A\u0631\u06CC\u0627\u0646 \u0645\u06CC\u200C\u062A\u0648\u0627\u0646 \u0641\u0627\u06A9\u062A\u0648\u0631 \u062B\u0628\u062A \u06A9\u0631\u062F.", code: "INVALID_ROLE" };
   }
@@ -1823,7 +1876,7 @@ async function recordInvoice(env, settings, input) {
       "SELECT * FROM invoices WHERE client_request_id = ? LIMIT 1"
     ).bind(requestId).first();
     if (existing) {
-      if (existing.user_id !== customer.id) return { ok: false, error: "\u0634\u0646\u0627\u0633\u0647 \u062F\u0631\u062E\u0648\u0627\u0633\u062A \u0628\u0631\u0627\u06CC \u0645\u0634\u062A\u0631\u06CC \u062F\u06CC\u06AF\u0631\u06CC \u0627\u0633\u062A\u0641\u0627\u062F\u0647 \u0634\u062F\u0647 \u0627\u0633\u062A.", code: "REQUEST_ID_CONFLICT" };
+      if (existing.user_id !== customer.id || existing.registered_by !== input.registeredBy) return { ok: false, error: "\u0634\u0646\u0627\u0633\u0647 \u062F\u0631\u062E\u0648\u0627\u0633\u062A \u0645\u062A\u0639\u0644\u0642 \u0628\u0647 \u0645\u0634\u062A\u0631\u06CC \u06CC\u0627 \u062B\u0628\u062A\u200C\u06A9\u0646\u0646\u062F\u0647\u0654 \u062F\u06CC\u06AF\u0631\u06CC \u0627\u0633\u062A.", code: "REQUEST_ID_CONFLICT" };
       return invoiceResultFromRow(env.DB, existing, customer, settings);
     }
   }
@@ -1966,7 +2019,7 @@ async function recordInvoice(env, settings, input) {
         "SELECT * FROM invoices WHERE client_request_id = ? LIMIT 1"
       ).bind(requestId).first();
       if (existing) {
-        if (existing.user_id !== customer.id) return { ok: false, error: "\u0634\u0646\u0627\u0633\u0647 \u062F\u0631\u062E\u0648\u0627\u0633\u062A \u0628\u0631\u0627\u06CC \u0645\u0634\u062A\u0631\u06CC \u062F\u06CC\u06AF\u0631\u06CC \u0627\u0633\u062A\u0641\u0627\u062F\u0647 \u0634\u062F\u0647 \u0627\u0633\u062A.", code: "REQUEST_ID_CONFLICT" };
+        if (existing.user_id !== customer.id || existing.registered_by !== input.registeredBy) return { ok: false, error: "\u0634\u0646\u0627\u0633\u0647 \u062F\u0631\u062E\u0648\u0627\u0633\u062A \u0645\u062A\u0639\u0644\u0642 \u0628\u0647 \u0645\u0634\u062A\u0631\u06CC \u06CC\u0627 \u062B\u0628\u062A\u200C\u06A9\u0646\u0646\u062F\u0647\u0654 \u062F\u06CC\u06AF\u0631\u06CC \u0627\u0633\u062A.", code: "REQUEST_ID_CONFLICT" };
         return invoiceResultFromRow(env.DB, existing, customer, settings);
       }
     }
@@ -2032,7 +2085,7 @@ async function sendInvoiceReceipt(env, settings, invoiceId) {
         amount: formatNumberFa(row.amount),
         points: toPersianDigits(row.points_earned),
         total_points: toPersianDigits(row.points),
-        tier: tierLabel(row.tier),
+        tier: tierLabel(row.tier, settings),
         discount: formatNumberFa(row.discount),
         code: row.coupon_code ?? ""
       })
@@ -2195,7 +2248,7 @@ async function getDashboardStats(db, settings, dayStartUtc, dayEndUtc, monthStar
 }
 async function exportCustomers(db) {
   const { results } = await db.prepare(
-    `SELECT u.id, u.name, u.phone, u.birth_date, u.points, u.tier, u.last_visit_date,
+    `SELECT u.id, u.name, u.nickname, u.phone, u.birth_date, u.points, u.tier, u.last_visit_date,
               u.avg_visit_interval, u.created_at, u.referral_code, u.is_active,
               (SELECT COUNT(*) FROM invoices i WHERE i.user_id = u.id AND i.voided_at IS NULL) AS visits,
               (SELECT COALESCE(SUM(amount), 0) FROM invoices i WHERE i.user_id = u.id AND i.voided_at IS NULL) AS total_spent
@@ -2206,17 +2259,23 @@ async function exportCustomers(db) {
   ).all();
   return results ?? [];
 }
+function customerSearchText(value) {
+  return toLatinDigits(value.normalize("NFKC")).replace(/[يى]/g, "\u06CC").replace(/ك/g, "\u06A9").replace(/[\u0000-\u001f\u007f\u200c]/g, " ").replace(/\s+/g, " ").trim();
+}
+function customerSearchPattern(value) {
+  return "%" + customerSearchText(value).replace(/[!%_]/g, "!$&") + "%";
+}
 async function listCustomers(db, params) {
   const page = Math.max(1, Math.floor(params.page ?? 1));
   const pageSize = Math.min(100, Math.max(5, Math.floor(params.pageSize ?? 20)));
   const offset = (page - 1) * pageSize;
   const where = [`u.role = 'customer'`];
   const binds = [];
-  const q = String(params.q ?? "").trim().slice(0, 60);
+  const q = customerSearchText(String(params.q ?? "")).slice(0, 60);
   if (q) {
-    where.push("(u.name LIKE ? OR u.phone LIKE ? OR u.referral_code LIKE ?)");
-    const like = `%${q}%`;
-    binds.push(like, like, like);
+    where.push("(replace(replace(u.name,'\u064A','\u06CC'),'\u0643','\u06A9') LIKE ? ESCAPE '!' OR u.phone LIKE ? ESCAPE '!' OR u.referral_code LIKE ? ESCAPE '!' OR u.nickname LIKE ? ESCAPE '!')");
+    const like = customerSearchPattern(q);
+    binds.push(like, like, like, like);
   }
   if (params.tier && ["bronze", "silver", "gold", "vip"].includes(params.tier)) {
     where.push("u.tier = ?");
@@ -2243,7 +2302,7 @@ async function listCustomers(db, params) {
   const whereSql = where.join(" AND ");
   const countRow = await db.prepare(`SELECT COUNT(*) AS c FROM users u WHERE ${whereSql}`).bind(...binds).first();
   const { results } = await db.prepare(
-    `SELECT u.id, u.name, u.phone, u.birth_date, u.points, u.tier, u.last_visit_date,
+    `SELECT u.id, u.name, u.nickname, u.phone, u.birth_date, u.points, u.tier, u.last_visit_date,
               u.avg_visit_interval, u.created_at, u.referral_code, u.is_active,
               (SELECT COUNT(*) FROM invoices i WHERE i.user_id = u.id AND i.voided_at IS NULL) AS visits,
               (SELECT COALESCE(SUM(amount), 0) FROM invoices i WHERE i.user_id = u.id AND i.voided_at IS NULL) AS total_spent
@@ -2407,7 +2466,7 @@ async function listInvoices(db, params) {
 }
 async function listStaff(db) {
   const { results } = await db.prepare(
-    `SELECT u.id, u.name, u.phone, u.role, u.is_active, u.created_at,
+    `SELECT u.id, u.name, u.phone, u.role, u.is_active, u.created_at, u.permissions,
               (SELECT COUNT(*) FROM invoices i WHERE i.registered_by = u.id AND i.voided_at IS NULL) AS invoices_count
        FROM users u
        WHERE u.role IN ('staff', 'admin')
@@ -2432,7 +2491,9 @@ async function listSmsLogs(db, params) {
   const whereSql = where.join(" AND ");
   const totalRow = await db.prepare(`SELECT COUNT(*) AS c FROM sms_logs l WHERE ${whereSql}`).bind(...binds).first();
   const { results } = await db.prepare(
-    `SELECT l.*, u.name AS user_name, u.phone AS user_phone
+    `SELECT l.*, u.name AS user_name, u.phone AS user_phone,
+         (SELECT json_group_array(json_object('channel',f.channel,'status',f.status,'id',f.id,'providerId',f.provider_id)) FROM fallback_jobs f
+          WHERE f.id IN (SELECT value FROM json_each(CASE WHEN json_valid(l.fallback_ids) THEN l.fallback_ids ELSE '[]' END))) AS fallback_delivery
        FROM sms_logs l
        LEFT JOIN users u ON u.id = l.user_id
        WHERE ${whereSql}
@@ -2670,9 +2731,9 @@ async function getCustomerPanelData(db, userId, settings) {
   ).bind(userId).first();
   const refRow = await db.prepare("SELECT COUNT(*) AS c FROM users WHERE referred_by = ?").bind(userId).first();
   const order2 = [
-    { key: "silver", label: "\u0646\u0642\u0631\u0647\u200C\u0627\u06CC", threshold: settings.tiers.silver },
-    { key: "gold", label: "\u0637\u0644\u0627\u06CC\u06CC", threshold: settings.tiers.gold },
-    { key: "vip", label: "\u0627\u0644\u0645\u0627\u0633\u06CC", threshold: settings.tiers.vip }
+    { key: "silver", label: tierLabel("silver", settings), threshold: settings.tiers.silver },
+    { key: "gold", label: tierLabel("gold", settings), threshold: settings.tiers.gold },
+    { key: "vip", label: tierLabel("vip", settings), threshold: settings.tiers.vip }
   ];
   const next = order2.find((tier) => user.lifetime_points < tier.threshold) ?? null;
   const currentFloor = [...order2].reverse().find((tier) => user.lifetime_points >= tier.threshold)?.threshold ?? 0;
@@ -3209,7 +3270,35 @@ var init_otp = __esm({
   }
 });
 
+// src/lib/permissions.ts
+var STAFF_PERMISSIONS = {
+  "customer.create": "\u062B\u0628\u062A \u0645\u0634\u062A\u0631\u06CC \u062C\u062F\u06CC\u062F",
+  "customer.search": "\u062C\u0633\u062A\u062C\u0648\u06CC \u0644\u0642\u0628\u060C \u0646\u0627\u0645 \u0648 \u0628\u062E\u0634\u06CC \u0627\u0632 \u0634\u0645\u0627\u0631\u0647",
+  "customer.list": "\u0645\u0634\u0627\u0647\u062F\u0647\u0654 \u0641\u0647\u0631\u0633\u062A \u0645\u0634\u062A\u0631\u06CC\u0627\u0646 (\u0641\u0642\u0637 \u062E\u0648\u0627\u0646\u062F\u0646\u06CC)",
+  "invoice.create": "\u062B\u0628\u062A \u0641\u0627\u06A9\u062A\u0648\u0631 \u0648 \u06CC\u0627\u0641\u062A\u0646 \u0645\u0634\u062A\u0631\u06CC \u0628\u0627 \u0634\u0645\u0627\u0631\u0647\u0654 \u06A9\u0627\u0645\u0644",
+  "invoice.history": "\u0645\u0634\u0627\u0647\u062F\u0647\u0654 \u0641\u0627\u06A9\u062A\u0648\u0631\u0647\u0627\u06CC \u062E\u0648\u062F",
+  "shift.manage": "\u0645\u062F\u06CC\u0631\u06CC\u062A \u0635\u0646\u062F\u0648\u0642 \u062E\u0648\u062F"
+};
+var LEGACY_STAFF_PERMISSIONS = ["invoice.create", "invoice.history", "shift.manage"];
+var NEW_STAFF_PERMISSIONS = ["customer.create", ...LEGACY_STAFF_PERMISSIONS];
+function validatePermissions(value) {
+  return Array.isArray(value) && value.length <= Object.keys(STAFF_PERMISSIONS).length && value.every((p) => typeof p === "string" && Object.prototype.hasOwnProperty.call(STAFF_PERMISSIONS, p)) && new Set(value).size === value.length;
+}
+function storedPermissions(value) {
+  if (value == null) return [...LEGACY_STAFF_PERMISSIONS];
+  try {
+    const parsed = JSON.parse(value);
+    return validatePermissions(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+function can(user, permission) {
+  return user?.role === "admin" || user?.role === "staff" && !!user.permissions?.includes(permission);
+}
+
 // src/index.ts
+init_db();
 init_fallback();
 
 // src/ui/layout.ts
@@ -3262,6 +3351,7 @@ function icon(name, className = "w-5 h-5") {
   return `<svg class="${className}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${path}</svg>`;
 }
 var BASE_STYLES = `
+  [hidden] { display: none !important; }
   :root {
     --coffee-950: #0b0705;
     --coffee-900: #150e09;
@@ -3510,7 +3600,7 @@ var CORE_JS = `
     }
     if (!response.ok || !payload || payload.ok === false) {
       var message = payload && payload.error ? payload.error : '\u062E\u0637\u0627\u06CC \u063A\u06CC\u0631\u0645\u0646\u062A\u0638\u0631\u0647 (\u06A9\u062F ' + response.status + ')';
-      throw new Error(message);
+      var apiError = new Error(message);apiError.status=response.status;apiError.code=payload&&payload.code;throw apiError;
     }
     return payload.data;
   };
@@ -3561,7 +3651,7 @@ var CORE_JS = `
           '<h3 class="text-lg font-bold mb-2">' + escapeHtml(options.title || '\u062A\u0623\u06CC\u06CC\u062F \u0639\u0645\u0644\u06CC\u0627\u062A') + '</h3>' +
           '<p class="text-sm text-cream/70 leading-7 mb-5">' + escapeHtml(options.message || '\u0622\u06CC\u0627 \u0645\u0637\u0645\u0626\u0646 \u0647\u0633\u062A\u06CC\u062F\u061F') + '</p>' +
           '<div class="flex gap-2 justify-end">' +
-            '<button type="button" data-act="cancel" class="btn btn-ghost btn-sm">\u0627\u0646\u0635\u0631\u0627\u0641</button>' +
+            '<button type="button" data-act="cancel" class="btn btn-ghost btn-sm">' + escapeHtml(options.cancelText || '\u0627\u0646\u0635\u0631\u0627\u0641') + '</button>' +
             '<button type="button" data-act="ok" class="btn ' + (options.danger ? 'btn-danger' : 'btn-primary') + ' btn-sm">' + escapeHtml(options.confirmText || '\u062A\u0623\u06CC\u06CC\u062F') + '</button>' +
           '</div>' +
         '</div>';
@@ -3833,7 +3923,7 @@ var NAV_ITEMS = {
 };
 function appShell(options) {
   const { title, role, userName, active, body, scripts = "", cafeName, showNav = true } = options;
-  const items = NAV_ITEMS[role] ?? [];
+  const items = (NAV_ITEMS[role] ?? []).filter((item) => role !== "staff" || options.permissions === void 0 || item.key === "invoice" || item.key === "history" && options.permissions.includes("invoice.history") || item.key === "shift" && options.permissions.includes("shift.manage"));
   const desktopNav = items.map(
     (item) => `
         <a href="${item.href}" class="nav-item ${active === item.key ? "active" : ""}">
@@ -4090,6 +4180,7 @@ var fallbackPanel = `
     </label>
   </div>
   <div class="flex flex-wrap gap-4 text-xs">
+    <label class="flex gap-2"><input id="fallback-errors" type="checkbox" checked /> \u0627\u0639\u0644\u0627\u0646 \u062E\u0637\u0627\u06CC \u0627\u0631\u0633\u0627\u0644 (\u0627\u0632 \u067E\u06CC\u0627\u0645\u200C\u0631\u0633\u0627\u0646 \u062F\u06CC\u06AF\u0631\u0650 \u0641\u0639\u0627\u0644)</label>
     <label class="flex gap-2"><input id="fallback-invoices" type="checkbox" checked /> \u06AF\u0632\u0627\u0631\u0634 \u0641\u0627\u06A9\u062A\u0648\u0631\u060C \u0627\u0635\u0644\u0627\u062D \u0648 \u0627\u0628\u0637\u0627\u0644</label>
     <label class="flex gap-2"><input id="fallback-actions" type="checkbox" checked /> \u06AF\u0632\u0627\u0631\u0634 \u0627\u0645\u062A\u06CC\u0627\u0632\u060C \u0635\u0646\u062F\u0648\u0642 \u0648 \u0645\u062F\u06CC\u0631\u06CC\u062A</label>
   </div>
@@ -4129,6 +4220,11 @@ var fallbackPanel = `
     <button id="fallback-reload" type="button" class="btn btn-ghost btn-sm">\u0628\u0627\u0632\u062E\u0648\u0627\u0646\u06CC \u062A\u0646\u0638\u06CC\u0645\u0627\u062A</button>
     <span id="fallback-dirty" class="text-xs text-amber-300" aria-live="polite"></span>
   </div>
+  <details class="rounded-2xl border border-white/10 p-4"><summary class="font-bold cursor-pointer text-sm">\u0646\u0648\u0634\u062A\u0646 \u0648 \u0627\u0631\u0633\u0627\u0644 \u067E\u06CC\u0627\u0645 \u062F\u0633\u062A\u06CC \u0628\u0647 \u0627\u062F\u0645\u06CC\u0646</summary><div class="space-y-3 mt-4">
+    <p class="hint">\u0641\u0642\u0637 \u0628\u0647 \u0645\u0642\u0635\u062F\u0647\u0627\u06CC \u0630\u062E\u06CC\u0631\u0647\u200C\u0634\u062F\u0647\u0654 \u0645\u062F\u06CC\u0631 \u0627\u0631\u0633\u0627\u0644 \u0645\u06CC\u200C\u0634\u0648\u062F\u061B \u067E\u06CC\u0627\u0645\u06A9 \u0628\u0647 \u0645\u0634\u062A\u0631\u06CC \u0646\u06CC\u0633\u062A. \u0631\u0633\u06CC\u062F\u0646 \u0628\u0647 API \u0647\u0645 \u062A\u0623\u06CC\u06CC\u062F \u062E\u0648\u0627\u0646\u062F\u0646 \u067E\u06CC\u0627\u0645 \u0646\u06CC\u0633\u062A.</p>
+    <fieldset id="fb-manual-fields" class="space-y-3"><label class="label" for="fb-manual-channel">\u067E\u06CC\u0627\u0645\u200C\u0631\u0633\u0627\u0646</label><select id="fb-manual-channel" class="field"><option value="both">\u0647\u0631 \u062F\u0648 \u0645\u0642\u0635\u062F \u0630\u062E\u06CC\u0631\u0647\u200C\u0634\u062F\u0647</option><option value="telegram">\u0641\u0642\u0637 \u062A\u0644\u06AF\u0631\u0627\u0645</option><option value="bale">\u0641\u0642\u0637 \u0628\u0644\u0647</option></select><label class="label" for="fb-manual-phone">\u0634\u0645\u0627\u0631\u0647\u0654 \u0645\u0631\u062A\u0628\u0637 (\u0627\u062E\u062A\u06CC\u0627\u0631\u06CC\u061B \u0628\u0631\u0627\u06CC \u06A9\u067E\u06CC \u0648 \u0627\u0631\u0633\u0627\u0644 \u062F\u0633\u062A\u06CC SMS)</label><input id="fb-manual-phone" type="tel" class="field" dir="ltr" maxlength="13" /><label class="label" for="fb-manual-text">\u0645\u062A\u0646 \u06A9\u0627\u0645\u0644</label><textarea id="fb-manual-text" class="field" rows="5" maxlength="2000"></textarea><p class="hint">\u062D\u062F\u0627\u06A9\u062B\u0631 \u06F2\u06F0\u06F0\u06F0 \u06A9\u0627\u0631\u0627\u06A9\u062A\u0631\u061B \u0645\u062A\u0646 \u0646\u0627\u0642\u0635 \u0627\u0631\u0633\u0627\u0644 \u0646\u0645\u06CC\u200C\u0634\u0648\u062F.</p><label class="flex gap-2 text-xs"><input id="fb-manual-confirm" type="checkbox" /> \u0645\u06CC\u200C\u062F\u0627\u0646\u0645 \u0627\u06CC\u0646 \u067E\u06CC\u0627\u0645 \u0628\u0647 \u0627\u062F\u0645\u06CC\u0646 \u0645\u06CC\u200C\u0631\u0633\u062F\u060C \u0646\u0647 \u0628\u0647 \u0645\u0634\u062A\u0631\u06CC</label></fieldset>
+    <button id="fb-manual-send" type="button" class="btn btn-primary btn-sm">\u062B\u0628\u062A \u062F\u0631 \u0635\u0641 \u0627\u0631\u0633\u0627\u0644 \u062F\u0633\u062A\u06CC</button><p id="fb-manual-result" class="hint whitespace-pre-line" role="status" aria-live="polite"></p>
+  </div></details>
   <div class="border-t border-white/10 pt-4 space-y-3">
     <div class="flex flex-wrap gap-3 items-center justify-between"><h3 class="font-bold text-sm">\u062A\u0627\u0631\u06CC\u062E\u0686\u0647 \u0627\u0631\u0633\u0627\u0644</h3>
       <button id="fallback-refresh" type="button" class="btn btn-ghost btn-sm">\u062A\u0627\u0632\u0647\u200C\u0633\u0627\u0632\u06CC</button></div>
@@ -4148,7 +4244,7 @@ var fallbackPanel = `
 var fallbackScripts = String.raw`
 (function () {
   var channels=['telegram','bale'],page=1,ready=false,dirty=false,busy=false,historyBusy=false,historyAgain=false,timer=null,lastConfig=null;
-  var tests={},locked=[];
+  var tests={},locked=[],manualSnapshot=null,manualIds=[],lastHistoryItems=[];
   function lockConfig(on){
     if(on){locked=Array.from(el('fallback').querySelectorAll('input')).map(function(node){var state={node:node,disabled:node.disabled};node.disabled=true;return state;});}
     else{locked.forEach(function(state){state.node.disabled=state.disabled;});locked=[];channels.forEach(function(ch){var c=lastConfig&&lastConfig.channels.find(function(row){return row.channel===ch;});el('fb-'+ch+'-token').disabled=!!(c&&c.tokenSource==='env');});}
@@ -4164,7 +4260,7 @@ var fallbackScripts = String.raw`
   async function loadConfig(){
     var c=await api('/api/admin/fallback');lastConfig=c;
     el('fallback-enabled').checked=c.enabled;el('fallback-notify').checked=!!c.notifyEnabled;
-    el('fallback-invoices').checked=c.notifyInvoices!==false;el('fallback-actions').checked=c.notifyActions!==false;
+    el('fallback-invoices').checked=c.notifyInvoices!==false;el('fallback-actions').checked=c.notifyActions!==false;el('fallback-errors').checked=c.notifyErrors!==false;
     channels.forEach(function(ch){
       var row=c.channels.find(function(x){return x.channel===ch;});
       el('fb-'+ch+'-selected').checked=!!row;el('fb-'+ch+'-chat').value=row?row.chatId:'';
@@ -4176,7 +4272,7 @@ var fallbackScripts = String.raw`
     });
     selectedFields();state(c);ready=true;setDirty(false);el('fallback-save').disabled=false;
   }
-  function payload(){return{enabled:el('fallback-enabled').checked,notifyEnabled:el('fallback-notify').checked,notifyInvoices:el('fallback-invoices').checked,notifyActions:el('fallback-actions').checked,
+  function payload(){return{enabled:el('fallback-enabled').checked,notifyEnabled:el('fallback-notify').checked,notifyInvoices:el('fallback-invoices').checked,notifyActions:el('fallback-actions').checked,notifyErrors:el('fallback-errors').checked,
     channels:channels.filter(function(ch){return el('fb-'+ch+'-selected').checked;}).map(function(ch){return{channel:ch,chatId:el('fb-'+ch+'-chat').value.trim(),token:el('fb-'+ch+'-token').value.trim(),clearToken:el('fb-'+ch+'-clear').checked};})};}
   async function save(){
     if(!ready)throw new Error('ابتدا تنظیمات را بازخوانی کنید.');
@@ -4195,7 +4291,9 @@ var fallbackScripts = String.raw`
       var stats=data.stats||{};
       el('fallback-stats').textContent='آمار کل — در صف: '+fa((stats.pending||0)+(stats.processing||0))+' | ارسال موفق: '+fa(stats.sent)+' | ناموفق: '+fa(stats.failed);
       var labels={pending:'در صف',processing:'در حال ارسال',sent:'ارسال موفق به مقصد',failed:'ناموفق',skipped:'لغوشده',expired:'مهلت تمام شده'};
-      var types={report_invoice:'گزارش فاکتور',report_action:'گزارش عملیات',invoice:'پیامک رسید خرید',otp:'کد ورود محرمانه',admin:'تست اتصال',welcome:'خوش‌آمد',birthday:'تولد',churn:'یادآوری حضور',weather:'آب‌وهوا',redeem:'تبدیل امتیاز',referral:'معرفی'};
+      var types={manual:'پیام دستی مدیر',report_error:'هشدار خطای ارسال',report_invoice:'گزارش فاکتور',report_action:'گزارش عملیات',invoice:'پیامک رسید خرید',otp:'کد ورود محرمانه',admin:'تست اتصال',welcome:'خوش‌آمد',birthday:'تولد',churn:'یادآوری حضور',weather:'آب‌وهوا',redeem:'تبدیل امتیاز',referral:'معرفی'};
+      lastHistoryItems=data.items;
+      if(manualIds.length){var tracked=data.items.filter(function(job){return manualIds.indexOf(job.id)>=0;});if(tracked.length)el('fb-manual-result').textContent=tracked.map(function(job){return(job.channel==='telegram'?'تلگرام':'بله')+': '+(labels[job.status]||job.status)+(job.provider_id?' — شناسهٔ پیام '+job.provider_id:'')+(job.error?' — '+job.error:'');}).join('\n');}
       el('fallback-history').innerHTML=data.items.length?data.items.map(function(j){
         var phone=j.content&&j.content.phone||'',text=j.content&&j.content.message||'';
         var retry=j.status==='failed'&&j.type!=='otp'&&j.expires_at>Date.now()+12000;
@@ -4204,10 +4302,11 @@ var fallbackScripts = String.raw`
           '<div class="text-cream/40">'+esc(faDate(j.created_at))+'</div>'+
           (phone?'<button type="button" data-copy-phone="'+esc(phone)+'" class="font-mono select-all" dir="ltr" title="کپی شماره">'+esc(phone)+' ⧉</button>':'')+
           (j.type==='otp'?'<p class="text-amber-200">متن و شماره کد ورود در تاریخچه نمایش داده نمی‌شود.</p>':text?'<p class="whitespace-pre-wrap break-words">'+esc(text.slice(0,150))+(text.length>150?'…':'')+'</p>':'<p class="hint">محتوا در دسترس نیست؛ کلید رمزنگاری را بررسی کنید.</p>')+
+          (j.type!=='otp'&&text?'<button type="button" class="btn btn-ghost btn-sm" data-copy-message="'+esc(j.id)+'">کپی متن کامل برای ارسال دستی</button>':'')+
           (j.error?'<p class="text-amber-200 whitespace-pre-wrap break-words">'+esc(j.error)+'</p>':'')+
           '<details><summary class="cursor-pointer text-cream/50">جزئیات'+(text.length>150?' و متن کامل':'')+'</summary><div class="mt-2 space-y-2">'+
           (text.length>150?'<pre class="whitespace-pre-wrap break-words font-sans">'+esc(text)+'</pre>':'')+
-          '<p>تعداد تلاش در این نوبت: '+fa(j.attempts)+' | مقصد: <bdi>'+esc(j.chat_id)+'</bdi></p><p>شناسه: <bdi>'+esc(j.id)+'</bdi></p></div></details>'+
+          '<p>شناسهٔ پیام API: '+esc(j.provider_id||'هنوز تأیید نشده')+'</p><p>تعداد تلاش در این نوبت: '+fa(j.attempts)+' | مقصد: <bdi>'+esc(j.chat_id)+'</bdi></p><p>شناسه: <bdi>'+esc(j.id)+'</bdi></p></div></details>'+
           (retry?'<button type="button" class="btn btn-ghost btn-sm" data-retry-id="'+esc(j.id)+'" data-uncertain="'+(!/^(INVALID_TOKEN|INVALID_CHAT|FORBIDDEN|CONFIG_OR_KEY_ERROR|RATE_LIMITED):/.test(j.error||''))+'">تلاش مجدد پس از رفع خطا</button>':'')+'</article>';
       }).join(''):'<p class="hint">پیامی با این فیلتر وجود ندارد.</p>';
       channels.forEach(function(ch){if(!tests[ch])return;var job=data.items.find(function(j){return tests[ch].indexOf(j.id)>=0;});if(job){el('fb-'+ch+'-result').textContent='نتیجه تست: '+(labels[job.status]||job.status)+(job.error?' — '+job.error:'');if(!['pending','processing'].includes(job.status))delete tests[ch];}});
@@ -4217,7 +4316,7 @@ var fallbackScripts = String.raw`
   }
   el('fallback-save').addEventListener('click',async function(){if(busy)return;busy=true;lockConfig(true);setLoading(this,true,'در حال ذخیره…');try{await save();toast('تنظیمات ذخیره شد.','success');await history();}catch(e){report(e);}finally{busy=false;lockConfig(false);setLoading(this,false);}});
   el('fallback-reload').addEventListener('click',async function(){if(busy)return;if(dirty&&!window.confirm('تغییرات ذخیره‌نشده کنار گذاشته شوند؟'))return;busy=true;lockConfig(true);try{await loadConfig();}catch(e){report(e);}finally{busy=false;lockConfig(false);}});
-  ['fallback-enabled','fallback-notify','fallback-invoices','fallback-actions'].forEach(function(id){el(id).addEventListener('change',function(){setDirty(true);});});
+  ['fallback-enabled','fallback-notify','fallback-invoices','fallback-actions','fallback-errors'].forEach(function(id){el(id).addEventListener('change',function(){setDirty(true);});});
   channels.forEach(function(ch){
     ['selected','chat','token','clear'].forEach(function(key){el('fb-'+ch+'-'+key).addEventListener(key==='chat'||key==='token'?'input':'change',function(){setDirty(true);selectedFields();});});
     el('fb-'+ch+'-reveal').addEventListener('click',function(){var input=el('fb-'+ch+'-token');input.type=input.type==='password'?'text':'password';this.textContent=input.type==='password'?'نمایش':'مخفی';});
@@ -4239,7 +4338,17 @@ var fallbackScripts = String.raw`
       page=1;el('fallback-status').value='';el('fallback-channel').value='';await history();
     }catch(e){el('fb-'+ch+'-result').textContent=e.message;report(e);}finally{busy=false;lockConfig(false);setLoading(btn,false);}});
   });
+  el('fb-manual-send').addEventListener('click',async function(){
+    if(busy||!ready)return;var button=this;
+    if(dirty){el('fb-manual-result').textContent='ابتدا تغییرات تنظیمات مقصد را ذخیره کنید.';return;}
+    if(!manualSnapshot){var text=el('fb-manual-text').value;if(!text.trim()||text.length>2000||!el('fb-manual-confirm').checked){el('fb-manual-result').textContent='متن را وارد و ارسال فقط به ادمین را تأیید کنید.';return;}manualSnapshot={channel:el('fb-manual-channel').value,phone:el('fb-manual-phone').value,message:text,confirmAdminOnly:true,requestId:crypto.randomUUID()};}
+    busy=true;lockConfig(true);el('fb-manual-fields').disabled=true;setLoading(button,true,'در حال ثبت…');
+    try{var result=await api('/api/admin/fallback/send',{method:'POST',body:manualSnapshot});manualIds=result.ids;manualSnapshot=null;el('fb-manual-text').value='';el('fb-manual-phone').value='';el('fb-manual-confirm').checked=false;el('fb-manual-result').textContent=result.message;page=1;el('fallback-status').value='';el('fallback-channel').value='';await history();}
+    catch(error){el('fb-manual-result').textContent=error.message;if(error.status===400||error.status===409)manualSnapshot=null;else el('fb-manual-result').textContent+=' همان دکمه را برای پیگیری همان درخواست بزنید؛ ارسال تازه نسازید.';}
+    finally{busy=false;lockConfig(false);el('fb-manual-fields').disabled=!!manualSnapshot;setLoading(button,false);}
+  });
   el('fallback-history').addEventListener('click',async function(e){
+    var messageCopy=e.target.closest('[data-copy-message]');if(messageCopy){var job=lastHistoryItems.find(function(item){return item.id===messageCopy.dataset.copyMessage;});if(job&&job.type!=='otp'&&job.content){try{await navigator.clipboard.writeText(job.content.message);toast('متن کامل کپی شد.','success');}catch(_){window.prompt('متن کامل پیام:',job.content.message);}}return;}
     var copy=e.target.closest('[data-copy-phone]');if(copy){try{await navigator.clipboard.writeText(copy.dataset.copyPhone);toast('شماره کپی شد.','success');}catch(_){window.prompt('شماره را کپی کنید:',copy.dataset.copyPhone);}return;}
     var btn=e.target.closest('[data-retry-id]');if(!btn)return;
     if(!window.confirm(btn.dataset.uncertain==='true'?'ممکن است پیام قبلاً تحویل شده باشد. خطر ارسال تکراری را می‌پذیرید؟':'خطای مقصد را برطرف کرده‌اید و پیام دوباره ارسال شود؟'))return;
@@ -6689,7 +6798,7 @@ var sign2 = Jwt.sign;
 var SCHEMA_TABLES = [
   {
     "name": "users",
-    "sql": "CREATE TABLE IF NOT EXISTS users (\n  id                 INTEGER PRIMARY KEY AUTOINCREMENT,\n  name               TEXT    NOT NULL,\n  phone              TEXT    NOT NULL UNIQUE,\n  birth_date         TEXT,                                   \n  points             INTEGER NOT NULL DEFAULT 0,             \n  lifetime_points    INTEGER NOT NULL DEFAULT 0,             \n  tier               TEXT    NOT NULL DEFAULT 'bronze',       \n  referred_by        INTEGER,                                \n  referral_code      TEXT    UNIQUE,                         \n  last_visit_date    TEXT,                                   \n  avg_visit_interval REAL    NOT NULL DEFAULT 0,             \n  role               TEXT    NOT NULL DEFAULT 'customer',     \n  password_hash      TEXT,                                   \n  is_active          INTEGER NOT NULL DEFAULT 1,\n  first_purchase_at  TEXT,                                   \n  referral_rewarded  INTEGER NOT NULL DEFAULT 0,\n  last_churn_sms_at  TEXT,\n  sms_opt_in         INTEGER NOT NULL DEFAULT 1,              \n  token_version      INTEGER NOT NULL DEFAULT 0,              \n  created_at         TEXT    NOT NULL DEFAULT (datetime('now')),\n  FOREIGN KEY (referred_by) REFERENCES users (id) ON DELETE SET NULL\n);",
+    "sql": "CREATE TABLE IF NOT EXISTS users (\n  id                 INTEGER PRIMARY KEY AUTOINCREMENT,\n  name               TEXT    NOT NULL,\n  phone              TEXT    NOT NULL UNIQUE,\n  nickname           TEXT NOT NULL DEFAULT '',\n  permissions        TEXT DEFAULT NULL,\n  birth_date         TEXT,                                   \n  points             INTEGER NOT NULL DEFAULT 0,             \n  lifetime_points    INTEGER NOT NULL DEFAULT 0,             \n  tier               TEXT    NOT NULL DEFAULT 'bronze',       \n  referred_by        INTEGER,                                \n  referral_code      TEXT    UNIQUE,                         \n  last_visit_date    TEXT,                                   \n  avg_visit_interval REAL    NOT NULL DEFAULT 0,             \n  role               TEXT    NOT NULL DEFAULT 'customer',     \n  password_hash      TEXT,                                   \n  is_active          INTEGER NOT NULL DEFAULT 1,\n  first_purchase_at  TEXT,                                   \n  referral_rewarded  INTEGER NOT NULL DEFAULT 0,\n  last_churn_sms_at  TEXT,\n  sms_opt_in         INTEGER NOT NULL DEFAULT 1,              \n  token_version      INTEGER NOT NULL DEFAULT 0,              \n  created_at         TEXT    NOT NULL DEFAULT (datetime('now')),\n  FOREIGN KEY (referred_by) REFERENCES users (id) ON DELETE SET NULL\n);",
     "columns": [
       {
         "name": "id",
@@ -6702,6 +6811,14 @@ var SCHEMA_TABLES = [
       {
         "name": "phone",
         "definition": "TEXT    NOT NULL UNIQUE"
+      },
+      {
+        "name": "nickname",
+        "definition": "TEXT NOT NULL DEFAULT ''"
+      },
+      {
+        "name": "permissions",
+        "definition": "TEXT DEFAULT NULL"
       },
       {
         "name": "birth_date",
@@ -6883,7 +7000,7 @@ var SCHEMA_TABLES = [
   },
   {
     "name": "sms_logs",
-    "sql": "CREATE TABLE IF NOT EXISTS sms_logs (\n  id              INTEGER PRIMARY KEY AUTOINCREMENT,\n  user_id         INTEGER,\n  type            TEXT    NOT NULL,   \n  status          TEXT    NOT NULL,   \n  message         TEXT,\n  provider_id     TEXT,\n  error           TEXT,\n  sent_at         TEXT    NOT NULL DEFAULT (datetime('now')),\n  FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE SET NULL\n);",
+    "sql": "CREATE TABLE IF NOT EXISTS sms_logs (\n  id              INTEGER PRIMARY KEY AUTOINCREMENT,\n  user_id         INTEGER,\n  type            TEXT    NOT NULL,   \n  status          TEXT    NOT NULL,   \n  message         TEXT,\n  provider_id     TEXT,\n  fallback_ids    TEXT NOT NULL DEFAULT '[]',\n  delivery_kind   TEXT NOT NULL DEFAULT 'legacy',\n  error           TEXT,\n  sent_at         TEXT    NOT NULL DEFAULT (datetime('now')),\n  FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE SET NULL\n);",
     "columns": [
       {
         "name": "id",
@@ -6908,6 +7025,14 @@ var SCHEMA_TABLES = [
       {
         "name": "provider_id",
         "definition": "TEXT"
+      },
+      {
+        "name": "fallback_ids",
+        "definition": "TEXT NOT NULL DEFAULT '[]'"
+      },
+      {
+        "name": "delivery_kind",
+        "definition": "TEXT NOT NULL DEFAULT 'legacy'"
       },
       {
         "name": "error",
@@ -7403,7 +7528,7 @@ var SCHEMA_INDEXES = [
 
 // src/lib/schema.ts
 init_db();
-var SCHEMA_VERSION = "site-recovery-v4";
+var SCHEMA_VERSION = "customer-workflow-v6";
 var readyCache = /* @__PURE__ */ new WeakMap();
 var controlRows = [
   { table: "fallback_dispatch", key: "state:fallback_dispatch", condition: "id=1", sql: "INSERT OR IGNORE INTO fallback_dispatch(id,until_ms) VALUES(1,0)" },
@@ -7822,7 +7947,7 @@ var attachUser = async (c, next) => {
     await next();
     return;
   }
-  c.set("user", { ...payload, role: user.role, name: user.name });
+  c.set("user", { ...payload, role: user.role, name: user.name, permissions: user.role === "staff" ? storedPermissions(user.permissions) : [] });
   await next();
 };
 function unauthorized(c) {
@@ -8010,7 +8135,7 @@ async function runChurnJob(env, settings, force = false) {
           row.visits >= settings.churn_min_visits && row.avg_visit_interval > 0 ? row.avg_visit_interval : CHURN_DEFAULT_INTERVAL
         )
       ),
-      tier: tierLabel(row.tier),
+      tier: tierLabel(row.tier, settings),
       cafe: settings.cafe_name
     });
     const result = await sendSms(env, settings, {
@@ -8171,7 +8296,7 @@ async function runWeatherJob(env, settings, force = false) {
         weather: `${weather.label} ${weather.emoji}`.trim(),
         temp: toPersianDigits(weather.temp),
         advice: weather.advice,
-        tier: tierLabel(user.tier)
+        tier: tierLabel(user.tier, settings)
       })
     });
     if (result.status === "sent") sent += 1;
@@ -8843,7 +8968,7 @@ function customerPanelPage(settings, data, opts = {}) {
           <div class="text-lg font-extrabold mt-0.5">${escapeHtml(user.name)}</div>
           <div class="mt-2 inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[10.5px] text-cream/60">
             <span>${TIER_EMOJI[user.tier] ?? "\u{1F949}"}</span>
-            <span>\u0633\u0637\u062D ${tierLabel(user.tier)}</span>
+            <span>\u0633\u0637\u062D ${escapeHtml(tierLabel(user.tier, settings))}</span>
           </div>
         </div>
         <div class="text-end">
@@ -8855,7 +8980,7 @@ function customerPanelPage(settings, data, opts = {}) {
 
       ${data.nextTier ? `<div class="relative mt-5">
               <div class="flex items-center justify-between text-[10.5px] text-cream/45 mb-1.5">
-                <span>\u062A\u0627 \u0633\u0637\u062D ${data.nextTier.label}</span>
+                <span>\u062A\u0627 \u0633\u0637\u062D ${escapeHtml(data.nextTier.label)}</span>
                 <span>${formatNumberFa(data.nextTier.need)} \u0627\u0645\u062A\u06CC\u0627\u0632 \u0645\u0627\u0646\u062F\u0647</span>
               </div>
               <div class="h-2 rounded-full bg-white/10 overflow-hidden">
@@ -9141,6 +9266,7 @@ function registerPage(settings, presetReferral, presetPhone = "") {
             </div>
           </div>
 
+          <div><label class="label" for="nickname">\u0644\u0642\u0628 (\u0627\u062E\u062A\u06CC\u0627\u0631\u06CC)</label><input id="nickname" class="field" maxlength="40" autocomplete="off" placeholder="\u0645\u062B\u0644\u0627\u064B \u0622\u0642\u0627\u06CC \u0642\u0647\u0648\u0647" /></div>
           <div>
             <label class="label" for="phone">\u0634\u0645\u0627\u0631\u0647 \u0645\u0648\u0628\u0627\u06CC\u0644 <span class="text-rose-400">*</span></label>
             <div class="relative">
@@ -9233,10 +9359,10 @@ function registerPage(settings, presetReferral, presetPhone = "") {
           <div class="text-3xl mb-3">\u2615</div>
           <h3 class="font-bold text-sm mb-2">\u0633\u0637\u062D\u200C\u0647\u0627\u06CC \u0639\u0636\u0648\u06CC\u062A</h3>
           <div class="space-y-2 text-[11.5px] text-cream/55">
-            <div class="flex items-center justify-between"><span>\u{1F949} \u0628\u0631\u0646\u0632\u06CC</span><span>\u0634\u0631\u0648\u0639</span></div>
-            <div class="flex items-center justify-between"><span>\u{1F948} \u0646\u0642\u0631\u0647\u200C\u0627\u06CC</span><span>${toPersianDigits(settings.tiers.silver)} \u0627\u0645\u062A\u06CC\u0627\u0632</span></div>
-            <div class="flex items-center justify-between"><span>\u{1F947} \u0637\u0644\u0627\u06CC\u06CC</span><span>${toPersianDigits(settings.tiers.gold)} \u0627\u0645\u062A\u06CC\u0627\u0632</span></div>
-            <div class="flex items-center justify-between"><span>\u{1F48E} \u0627\u0644\u0645\u0627\u0633\u06CC</span><span>${toPersianDigits(settings.tiers.vip)} \u0627\u0645\u062A\u06CC\u0627\u0632</span></div>
+            <div class="flex items-center justify-between"><span>\u{1F949} ${escapeHtml(settings.tier_labels.bronze)}</span><span>\u0634\u0631\u0648\u0639</span></div>
+            <div class="flex items-center justify-between"><span>\u{1F948} ${escapeHtml(settings.tier_labels.silver)}</span><span>${toPersianDigits(settings.tiers.silver)} \u0627\u0645\u062A\u06CC\u0627\u0632</span></div>
+            <div class="flex items-center justify-between"><span>\u{1F947} ${escapeHtml(settings.tier_labels.gold)}</span><span>${toPersianDigits(settings.tiers.gold)} \u0627\u0645\u062A\u06CC\u0627\u0632</span></div>
+            <div class="flex items-center justify-between"><span>\u{1F48E} ${escapeHtml(settings.tier_labels.vip)}</span><span>${toPersianDigits(settings.tiers.vip)} \u0627\u0645\u062A\u06CC\u0627\u0632</span></div>
           </div>
         </div>
 
@@ -9269,7 +9395,7 @@ function registerPage(settings, presetReferral, presetPhone = "") {
             <div class="w-8 h-8 rounded-lg gold-bg text-coffee-950 flex items-center justify-center">${icon("coffee", "w-4 h-4")}</div>
             <span class="text-[11px] font-semibold">${cafe}</span>
           </div>
-          <span class="badge tone-warning">\u{1F949} \u0628\u0631\u0646\u0632\u06CC</span>
+          <span class="badge tone-warning">\u{1F949} ${escapeHtml(settings.tier_labels.bronze)}</span>
         </div>
         <div class="text-[10px] text-cream/40 mb-1">\u0646\u0627\u0645 \u0645\u0634\u062A\u0631\u06CC</div>
         <div id="s-name" class="font-bold text-sm mb-3">\u2014</div>
@@ -9345,6 +9471,7 @@ function registerPage(settings, presetReferral, presetPhone = "") {
             name: name,
             phone: phone,
             birth_date: birth,
+            nickname: $('#nickname').value.trim(),
             referral: referral,
             sms_opt_in: smsOptIn ? 1 : 0
           }
@@ -9534,6 +9661,8 @@ function loginPage(settings, next, expired = false, notice = "", feedback) {
 init_db();
 init_utils();
 function staffPage(settings, user, menu, todayStats, todayInvoices, isAdmin = false, options = {}) {
+  const permissions = options.permissions ?? (isAdmin ? Object.keys(STAFF_PERMISSIONS) : LEGACY_STAFF_PERMISSIONS);
+  const allowed = (permission) => permissions.includes(permission);
   const categories = Array.from(new Set(menu.map((item) => item.category?.trim() || "\u0633\u0627\u06CC\u0631")));
   const popularFromHistory = (options.popular ?? []).filter(
     (name) => menu.some((item) => item.name === name)
@@ -9582,7 +9711,7 @@ function staffPage(settings, user, menu, todayStats, todayInvoices, isAdmin = fa
       </div>`
   })}
 
-    ${shiftBanner}
+    ${allowed("shift.manage") ? shiftBanner : ""}
 
     <div class="grid xl:grid-cols-[1.6fr_1fr] gap-5 items-start">
 
@@ -9594,23 +9723,29 @@ function staffPage(settings, user, menu, todayStats, todayInvoices, isAdmin = fa
           <div class="px-5 py-4 border-b border-white/10 flex items-center gap-2">
             <span class="w-8 h-8 rounded-xl bg-gold/10 border border-gold/20 text-gold flex items-center justify-center">${icon("search", "w-4 h-4")}</span>
             <h2 class="font-bold text-sm">\u062C\u0633\u062A\u062C\u0648\u06CC \u0645\u0634\u062A\u0631\u06CC</h2>
-            <span class="badge tone-muted me-auto">\u0628\u0627 \u0634\u0645\u0627\u0631\u0647 \u0645\u0648\u0628\u0627\u06CC\u0644</span>
+            <span class="badge tone-muted me-auto">${allowed("customer.search") ? "\u0634\u0645\u0627\u0631\u0647\u060C \u0644\u0642\u0628 \u06CC\u0627 \u0646\u0627\u0645" : "\u0641\u0642\u0637 \u0634\u0645\u0627\u0631\u0647\u0654 \u06A9\u0627\u0645\u0644"}</span>
           </div>
 
           <div class="p-5">
             <div class="flex gap-2">
               <div class="relative flex-1">
                 <span class="absolute right-3 top-1/2 -translate-y-1/2 text-cream/30">${icon("phone", "w-4 h-4")}</span>
-                <input id="phone-input" type="tel" inputmode="numeric" dir="ltr" maxlength="13"
+                <input id="phone-input" type="text" dir="auto" maxlength="60"
                   class="field !pr-10 !py-3 text-left tracking-[.18em] text-base"
                   placeholder="09123456789" autocomplete="off" />
               </div>
-              <button type="button" id="search-btn" class="btn btn-primary !px-5">
+              <button type="button" id="search-btn" ${!allowed("invoice.create") && !allowed("customer.search") ? "hidden" : ""} class="btn btn-primary !px-5">
                 ${icon("search", "w-5 h-5")}
                 <span class="hidden sm:inline">\u062C\u0633\u062A\u062C\u0648</span>
               </button>
             </div>
 
+            ${!allowed("invoice.create") && !allowed("customer.create") && !allowed("customer.search") && !allowed("customer.list") ? '<p class="hint">\u0645\u062C\u0648\u0632 \u062B\u0628\u062A \u0645\u0634\u062A\u0631\u06CC \u0648 \u0641\u0627\u06A9\u062A\u0648\u0631 \u0646\u062F\u0627\u0631\u06CC\u062F\u061B \u0627\u0632 \u0628\u062E\u0634\u200C\u0647\u0627\u06CC \u0645\u062C\u0627\u0632 \u0645\u0646\u0648 \u0627\u0633\u062A\u0641\u0627\u062F\u0647 \u06A9\u0646\u06CC\u062F \u06CC\u0627 \u0628\u0627 \u0645\u062F\u06CC\u0631 \u062A\u0645\u0627\u0633 \u0628\u06AF\u06CC\u0631\u06CC\u062F.</p>' : ""}
+            <div id="customer-choices" class="space-y-2 mt-3" role="status"></div>
+            <div ${allowed("customer.list") ? "" : "hidden"} class="flex gap-2 mt-3"><button id="customer-list" type="button" class="btn btn-ghost btn-sm">\u0641\u0647\u0631\u0633\u062A \u0645\u0634\u062A\u0631\u06CC\u0627\u0646</button><button id="customer-list-prev" type="button" class="btn btn-ghost btn-sm" disabled>\u0642\u0628\u0644\u06CC</button><button id="customer-list-next" type="button" class="btn btn-ghost btn-sm" disabled>\u0628\u0639\u062F\u06CC</button></div>
+            <details id="quick-customer" ${allowed("customer.create") ? "" : "hidden"} class="mt-4 rounded-xl border border-white/10 p-3"><summary class="cursor-pointer font-bold text-sm">\u062B\u0628\u062A \u0645\u0634\u062A\u0631\u06CC \u062C\u062F\u06CC\u062F ${allowed("invoice.create") ? "\u0648 \u0627\u062F\u0627\u0645\u0647 \u0628\u0647 \u0641\u0627\u06A9\u062A\u0648\u0631" : ""}</summary>
+              <div class="space-y-3 mt-3"><p class="hint">\u0634\u0645\u0627\u0631\u0647 \u0631\u0627 \u062F\u0631 \u06A9\u0627\u062F\u0631 \u0628\u0627\u0644\u0627 \u0648\u0627\u0631\u062F \u06A9\u0646\u06CC\u062F. \u062A\u0648\u0644\u062F \u0648 \u0645\u0639\u0631\u0641 \u0631\u0627 \u0628\u0639\u062F\u0627\u064B \u0645\u062F\u06CC\u0631 \u0645\u06CC\u200C\u062A\u0648\u0627\u0646\u062F \u062A\u06A9\u0645\u06CC\u0644 \u06A9\u0646\u062F.</p><label class="label" for="quick-name">\u0646\u0627\u0645 \u0645\u0634\u062A\u0631\u06CC</label><input id="quick-name" class="field" maxlength="60" /><label class="label" for="quick-nickname">\u0644\u0642\u0628 (\u0627\u062E\u062A\u06CC\u0627\u0631\u06CC)</label><input id="quick-nickname" class="field" maxlength="40" /><label class="flex gap-2 text-xs"><input id="quick-sms" type="checkbox" /> \u0645\u0634\u062A\u0631\u06CC \u0631\u0636\u0627\u06CC\u062A \u062F\u0631\u06CC\u0627\u0641\u062A \u067E\u06CC\u0627\u0645\u06A9 \u062F\u0627\u0631\u062F</label><button id="quick-save" type="button" class="btn btn-primary btn-sm">\u062B\u0628\u062A \u0645\u0634\u062A\u0631\u06CC ${allowed("invoice.create") ? "\u0648 \u0627\u0646\u062A\u062E\u0627\u0628 \u0628\u0631\u0627\u06CC \u0641\u0627\u06A9\u062A\u0648\u0631" : ""}</button><p id="quick-result" class="hint" role="status"></p></div>
+            </details>
             <div id="search-state" class="mt-4"></div>
 
             <div id="customer-card" class="hidden mt-4">
@@ -9658,14 +9793,14 @@ function staffPage(settings, user, menu, todayStats, todayInvoices, isAdmin = fa
                   <div class="text-sm font-semibold mb-0.5">\u0645\u0634\u062A\u0631\u06CC \u06CC\u0627\u0641\u062A \u0646\u0634\u062F</div>
                   <p class="text-[11px] text-cream/50 leading-6">\u0627\u06CC\u0646 \u0634\u0645\u0627\u0631\u0647 \u062F\u0631 \u0628\u0627\u0634\u06AF\u0627\u0647 \u062B\u0628\u062A \u0646\u0634\u062F\u0647 \u0627\u0633\u062A. \u0645\u06CC\u200C\u062A\u0648\u0627\u0646\u06CC\u062F \u0647\u0645\u06CC\u0646 \u062D\u0627\u0644\u0627 \u0639\u0636\u0648 \u06A9\u0646\u06CC\u062F.</p>
                 </div>
-                <button type="button" id="go-register" class="btn btn-primary btn-sm self-center">${icon("plus", "w-4 h-4")} \u062B\u0628\u062A\u200C\u0646\u0627\u0645</button>
+                <button type="button" id="go-register" ${allowed("customer.create") ? "" : "hidden"} class="btn btn-primary btn-sm self-center">${icon("plus", "w-4 h-4")} \u062B\u0628\u062A\u200C\u0646\u0627\u0645</button>
               </div>
             </div>
           </div>
         </section>
 
         <!-- Items -->
-        <section class="glass rounded-3xl overflow-hidden">
+        <section data-invoice-only ${allowed("invoice.create") ? "" : "hidden"} class="glass rounded-3xl overflow-hidden">
           <div class="px-5 py-4 border-b border-white/10 flex items-center gap-2">
             <span class="w-8 h-8 rounded-xl bg-gold/10 border border-gold/20 text-gold flex items-center justify-center">${icon("coffee", "w-4 h-4")}</span>
             <h2 class="font-bold text-sm">\u0627\u0646\u062A\u062E\u0627\u0628 \u0622\u06CC\u062A\u0645\u200C\u0647\u0627</h2>
@@ -9726,7 +9861,7 @@ function staffPage(settings, user, menu, todayStats, todayInvoices, isAdmin = fa
       </div>
 
       <!-- LEFT: summary -->
-      <div class="xl:sticky xl:top-6 space-y-4">
+      <div data-invoice-only ${allowed("invoice.create") ? "" : "hidden"} class="xl:sticky xl:top-6 space-y-4">
         <section class="glass rounded-3xl overflow-hidden">
           <div class="px-5 py-4 border-b border-white/10 flex items-center gap-2">
             <span class="w-8 h-8 rounded-xl bg-gold/10 border border-gold/20 text-gold flex items-center justify-center">${icon("wallet", "w-4 h-4")}</span>
@@ -9773,6 +9908,7 @@ function staffPage(settings, user, menu, todayStats, todayInvoices, isAdmin = fa
               <div id="sum-points-note" class="text-[10px] text-cream/30 text-start leading-5"></div>
             </div>
 
+            <p id="invoice-request-state" class="hint text-amber-200" role="status" aria-live="polite"></p>
             <!-- \u067E\u0631\u062F\u0627\u062E\u062A -->
             <div class="border-t border-white/10 pt-4">
               <div class="flex items-center justify-between mb-2">
@@ -9843,7 +9979,7 @@ function staffPage(settings, user, menu, todayStats, todayInvoices, isAdmin = fa
         </section>
 
         <!-- Recent -->
-        <section class="glass rounded-3xl overflow-hidden">
+        <section ${allowed("invoice.history") ? "" : "hidden"} class="glass rounded-3xl overflow-hidden">
           <div class="px-5 py-4 border-b border-white/10 flex items-center gap-2">
             <span class="w-8 h-8 rounded-xl bg-gold/10 border border-gold/20 text-gold flex items-center justify-center">${icon("clock", "w-4 h-4")}</span>
             <h2 class="font-bold text-sm">\u0622\u062E\u0631\u06CC\u0646 \u0641\u0627\u06A9\u062A\u0648\u0631\u0647\u0627\u06CC \u0634\u0645\u0627</h2>
@@ -9905,7 +10041,9 @@ function staffPage(settings, user, menu, todayStats, todayInvoices, isAdmin = fa
     var INVOICE_POINTS = ${Number(settings.invoice_points) || 0};
     var VISIT_POINTS = ${Number(settings.visit_points) || 0};
     var VISIT_MIN_AMOUNT = ${Number(settings.visit_min_amount) || 0};
-    var TIER_LABELS = { bronze: '\u0628\u0631\u0646\u0632\u06CC', silver: '\u0646\u0642\u0631\u0647\u200C\u0627\u06CC', gold: '\u0637\u0644\u0627\u06CC\u06CC', vip: '\u0627\u0644\u0645\u0627\u0633\u06CC' };
+    var TIER_LABELS = ${jsonForScript(settings.tier_labels)};
+    var CAN_INVOICE=${allowed("invoice.create")},CAN_CREATE=${allowed("customer.create")},CAN_SEARCH=${allowed("customer.search")},CAN_LIST=${allowed("customer.list")};
+    var lookupSequence=0,choicePage=1,choiceSequence=0,creatingCustomer=false;
     var TIER_CLASSES = { bronze: 'tone-warning', silver: 'tone-muted', gold: 'tone-warning', vip: 'tone-info' };
 
     var customer = null;
@@ -9914,7 +10052,8 @@ function staffPage(settings, user, menu, todayStats, todayInvoices, isAdmin = fa
     var menuVisibleLimit = 40;
     var activeCategory = '__popular__';
     var appliedCoupon = null;
-    var requestId = null;
+    var requestId = null, pendingInvoice=null,lockedInvoice=[];
+    var pendingStorageKey='cc.invoice.pending:${options.actorId ?? 0}';
     var appliedDiscount = 0;
     var searchQuery = '';
     var payMode = 'cash';
@@ -10232,16 +10371,19 @@ function staffPage(settings, user, menu, todayStats, todayInvoices, isAdmin = fa
 
     function setCustomer(data) {
       customer = data;
+      resetCoupon();
+      phoneInput.value=data.phone;
+      $('#customer-choices').textContent='';
       $('#not-found').classList.add('hidden');
       $('#customer-card').classList.remove('hidden');
       $('#c-avatar').textContent = (data.name || '\u061F').slice(0, 1);
-      $('#c-name').textContent = data.name;
+      $('#c-name').textContent = data.name+(data.nickname?' \xB7 '+data.nickname:'');
       $('#c-phone').textContent = fa(data.phone);
       $('#c-points').textContent = fa(data.points);
-      $('#c-last').textContent = data.last_visit_date ? formatJalaliClient(data.last_visit_date) : '\u0628\u062F\u0648\u0646 \u062E\u0631\u06CC\u062F';
-      $('#c-avg').textContent = data.avg_visit_interval > 0 ? fa(Math.round(data.avg_visit_interval)) + ' \u0631\u0648\u0632' : '\u2014';
+      $('#c-last').textContent = data.last_visit_date === undefined ? '\u0645\u062D\u062F\u0648\u062F' : data.last_visit_date ? formatJalaliClient(data.last_visit_date) : '\u0628\u062F\u0648\u0646 \u062E\u0631\u06CC\u062F';
+      $('#c-avg').textContent = data.avg_visit_interval === undefined ? '\u0645\u062D\u062F\u0648\u062F' : data.avg_visit_interval > 0 ? fa(Math.round(data.avg_visit_interval)) + ' \u0631\u0648\u0632' : '\u2014';
       var tierBadge = $('#c-tier');
-      tierBadge.textContent = TIER_LABELS[data.tier] || '\u0628\u0631\u0646\u0632\u06CC';
+      tierBadge.textContent = data.tier_label || TIER_LABELS[data.tier] || TIER_LABELS.bronze;
       tierBadge.className = 'badge ' + (TIER_CLASSES[data.tier] || 'tone-muted');
       var status = $('#c-status');
       status.textContent = data.status_label || '\u0641\u0639\u0627\u0644';
@@ -10285,7 +10427,12 @@ function staffPage(settings, user, menu, todayStats, todayInvoices, isAdmin = fa
     }
 
     async function searchCustomer() {
+      if(submitting||creatingCustomer||pendingInvoice)return;
+      var sequence=++lookupSequence;
+      customer=null;$('#customer-card').classList.add('hidden');$('#not-found').classList.add('hidden');resetCoupon();refreshTotals();
       var phone = normalizePhone(phoneInput.value);
+      if(CAN_SEARCH && (!CAN_INVOICE || !/^09\\d{9}$/.test(phone))){await loadChoices(true,phoneInput.value);return;}
+      if(!CAN_INVOICE)return;
       if (!/^09\\d{9}$/.test(phone)) {
         toast('\u0634\u0645\u0627\u0631\u0647 \u0645\u0648\u0628\u0627\u06CC\u0644 \u0645\u0639\u062A\u0628\u0631 \u0648\u0627\u0631\u062F \u06A9\u0646\u06CC\u062F (\u06F0\u06F9xxxxxxxxx).', 'error');
         phoneInput.focus();
@@ -10296,6 +10443,7 @@ function staffPage(settings, user, menu, todayStats, todayInvoices, isAdmin = fa
         '<div class="flex items-center gap-2 text-[11px] text-cream/40"><span class="w-4 h-4 rounded-full border-2 border-gold border-t-transparent spin"></span> \u062F\u0631 \u062D\u0627\u0644 \u062C\u0633\u062A\u062C\u0648\u2026</div>';
       try {
         var data = await api('/api/staff/customer?phone=' + encodeURIComponent(phone));
+        if(sequence!==lookupSequence)return;
         $('#search-state').innerHTML = '';
         if (data.found) {
           setCustomer(data.customer);
@@ -10343,19 +10491,43 @@ function staffPage(settings, user, menu, todayStats, todayInvoices, isAdmin = fa
       refreshTotals();
     }
 
+    async function loadChoices(search,query){
+      var sequence=++choiceSequence;
+      try{var data=await api(search?'/api/staff/customers/search?q='+encodeURIComponent(query):'/api/staff/customers?page='+choicePage);if(sequence!==choiceSequence)return;
+        $('#customer-choices').textContent='';data.items.forEach(function(item){var button=document.createElement('button');button.type='button';button.className='btn btn-ghost text-right w-full';button.textContent=item.name+(item.nickname?' \xB7 '+item.nickname:'')+' \u2014 '+item.phone;button.disabled=!CAN_INVOICE;button.addEventListener('click',function(){phoneInput.value=item.phone;searchCustomer();});$('#customer-choices').appendChild(button);});
+        if(!data.items.length)$('#customer-choices').textContent='\u0646\u062A\u06CC\u062C\u0647\u200C\u0627\u06CC \u067E\u06CC\u062F\u0627 \u0646\u0634\u062F.';
+        $('#customer-list-prev').disabled=search||choicePage<=1;$('#customer-list-next').disabled=search||!data.hasMore;
+      }catch(error){toast(error.message,'error');}
+    }
+    $('#customer-list').addEventListener('click',function(){if(CAN_LIST){choicePage=1;loadChoices(false);}});
+    $('#customer-list-prev').addEventListener('click',function(){if(CAN_LIST&&choicePage>1){choicePage--;loadChoices(false);}});
+    $('#customer-list-next').addEventListener('click',function(){if(CAN_LIST){choicePage++;loadChoices(false);}});
+    $('#quick-save').addEventListener('click',async function(){
+      if(!CAN_CREATE||creatingCustomer||submitting||pendingInvoice)return;var phone=normalizePhone(phoneInput.value),name=$('#quick-name').value.trim();
+      if(!/^09\\d{9}$/.test(phone)||name.length<2){$('#quick-result').textContent='\u0646\u0627\u0645 \u06A9\u0627\u0645\u0644 \u0648 \u0634\u0645\u0627\u0631\u0647\u0654 \u0645\u0639\u062A\u0628\u0631 \u0631\u0627 \u0648\u0627\u0631\u062F \u06A9\u0646\u06CC\u062F.';return;}
+      creatingCustomer=true;var button=this;setLoading(button,true,'\u062F\u0631 \u062D\u0627\u0644 \u062B\u0628\u062A\u2026');phoneInput.disabled=true;$('#search-btn').disabled=true;
+      try{await api('/api/staff/customers',{method:'POST',body:{name:name,phone:phone,nickname:$('#quick-nickname').value.trim(),sms_opt_in:$('#quick-sms').checked,birth_date:''}});
+        $('#quick-result').textContent='\u0645\u0634\u062A\u0631\u06CC \u062B\u0628\u062A \u0634\u062F.';$('#quick-name').value='';$('#quick-nickname').value='';$('#quick-sms').checked=false;$('#quick-customer').open=false;
+        creatingCustomer=false;phoneInput.value=phone;
+        if(CAN_INVOICE){await searchCustomer();if(customer){$('#manual-amount').focus();$('#quick-result').textContent='\u0645\u0634\u062A\u0631\u06CC \u0627\u0646\u062A\u062E\u0627\u0628 \u0634\u062F\u061B \u0641\u0627\u06A9\u062A\u0648\u0631 \u0631\u0627 \u062F\u0631 \u0647\u0645\u06CC\u0646 \u0635\u0641\u062D\u0647 \u062B\u0628\u062A \u06A9\u0646\u06CC\u062F.';}}
+        else{phoneInput.value='';toast('\u0645\u0634\u062A\u0631\u06CC \u062B\u0628\u062A \u0634\u062F.','success');}
+      }catch(error){$('#quick-result').textContent=error.code==='PHONE_EXISTS'?'\u0627\u06CC\u0646 \u0634\u0645\u0627\u0631\u0647 \u0642\u0628\u0644\u0627\u064B \u062B\u0628\u062A \u0634\u062F\u0647 \u0627\u0633\u062A\u061B \u0628\u0631\u0627\u06CC \u0645\u0634\u062A\u0631\u06CC \u0642\u0628\u0644\u06CC \u062C\u0633\u062A\u062C\u0648 \u0631\u0627 \u0628\u0632\u0646\u06CC\u062F.':error.message;}
+      finally{creatingCustomer=false;phoneInput.disabled=false;$('#search-btn').disabled=false;setLoading(button,false);}
+    });
     // Events
     $('#search-btn').addEventListener('click', searchCustomer);
     phoneInput.addEventListener('keydown', function (event) {
       if (event.key === 'Enter') { event.preventDefault(); searchCustomer(); }
     });
     phoneInput.addEventListener('input', function () {
+      lookupSequence++;choiceSequence++;customer=null;$('#customer-card').classList.add('hidden');$('#not-found').classList.add('hidden');$('#customer-choices').textContent='';resetCoupon();refreshTotals();
       var clean = phoneInput.value.replace(/[\u06F0-\u06F9]/g, function (d) { return String('\u06F0\u06F1\u06F2\u06F3\u06F4\u06F5\u06F6\u06F7\u06F8\u06F9'.indexOf(d)); });
       if (clean !== phoneInput.value) phoneInput.value = clean;
     });
     $('#clear-customer').addEventListener('click', clearCustomer);
     $('#go-register').addEventListener('click', function () {
       var phone = normalizePhone(phoneInput.value);
-      window.location.href = '/register' + (/^09\\d{9}$/.test(phone) ? '?phone=' + encodeURIComponent(phone) : '');
+      if(CAN_CREATE){$('#quick-customer').open=true;$('#quick-name').focus();}
     });
 
     $('#category-tabs').addEventListener('click', function (event) {
@@ -10513,7 +10685,7 @@ function staffPage(settings, user, menu, todayStats, todayInvoices, isAdmin = fa
       setLoading(btn, true, '');
       try {
         var data = await api('/api/staff/coupons/check?code=' + encodeURIComponent(code) +
-          '&userId=' + customer.id + '&subtotal=' + base);
+          '&userId=' + customer.id + '&customerPhone='+encodeURIComponent(customer.phone)+'&subtotal=' + base);
         if (!data.valid) {
           appliedCoupon = null;
           appliedDiscount = 0;
@@ -10542,8 +10714,13 @@ function staffPage(settings, user, menu, todayStats, todayInvoices, isAdmin = fa
       $('#apply-coupon').click();
     });
 
+    function lockInvoice(on){
+      if(on&&!lockedInvoice.length){lockedInvoice=Array.from(document.querySelectorAll('[data-invoice-only] input,[data-invoice-only] select,[data-invoice-only] button,#phone-input,#search-btn,#quick-save,#go-register,#customer-list,#customer-list-prev,#customer-list-next,#clear-customer')).filter(function(node){return node.id!=='submit-invoice';}).map(function(node){var state={node:node,disabled:node.disabled};node.disabled=true;return state;});}
+      if(!on){lockedInvoice.forEach(function(state){state.node.disabled=state.disabled;});lockedInvoice=[];}
+    }
     async function submitInvoice() {
-      if (submitting) return;
+      if (submitting||!CAN_INVOICE) return;
+      if(!pendingInvoice){
       if (!customer) { toast('\u0627\u0628\u062A\u062F\u0627 \u0645\u0634\u062A\u0631\u06CC \u0631\u0627 \u062C\u0633\u062A\u062C\u0648 \u0648 \u0627\u0646\u062A\u062E\u0627\u0628 \u06A9\u0646\u06CC\u062F.', 'error'); phoneInput.focus(); return; }
       var totals = refreshTotals();
       if (totals.base <= 0) { toast('\u0645\u0628\u0644\u063A \u0641\u0627\u06A9\u062A\u0648\u0631 \u0628\u0627\u06CC\u062F \u0628\u06CC\u0634\u062A\u0631 \u0627\u0632 \u0635\u0641\u0631 \u0628\u0627\u0634\u062F.', 'error'); return; }
@@ -10564,26 +10741,14 @@ function staffPage(settings, user, menu, todayStats, todayInvoices, isAdmin = fa
         var item = cartItems[name];
         return { name: item.name, qty: selected[name], price: item.price };
       });
-      var btn = $('#submit-invoice');
-      submitting = true;
-      setLoading(btn, true, '\u062F\u0631 \u062D\u0627\u0644 \u062B\u0628\u062A\u2026');
-      if (!requestId) {
-        requestId = (window.crypto && window.crypto.randomUUID)
-          ? window.crypto.randomUUID()
-          : String(Date.now()) + '-' + Math.random().toString(16).slice(2);
+      requestId = crypto.randomUUID();
+      pendingInvoice={userId:customer.id,customerPhone:customer.phone,items:items,amount:items.length?null:totals.base,couponCode:appliedCoupon?appliedCoupon.code:null,clientRequestId:requestId,payment:{cash:payment.cash,card:payment.card,online:payment.online}};
+      try{sessionStorage.setItem(pendingStorageKey,JSON.stringify(pendingInvoice));}catch(_){toast('\u0630\u062E\u06CC\u0631\u0647\u0654 \u067E\u06CC\u06AF\u06CC\u0631\u06CC \u0645\u0631\u0648\u0631\u06AF\u0631 \u0645\u0645\u06A9\u0646 \u0646\u0634\u062F\u061B \u062A\u0627 \u062A\u0639\u06CC\u06CC\u0646 \u0646\u062A\u06CC\u062C\u0647 \u0627\u06CC\u0646 \u0635\u0641\u062D\u0647 \u0631\u0627 \u0646\u0628\u0646\u062F\u06CC\u062F.','error');}
       }
+      var btn=$('#submit-invoice');submitting=true;lockInvoice(true);setLoading(btn,true,'\u062F\u0631 \u062D\u0627\u0644 \u062B\u0628\u062A/\u067E\u06CC\u06AF\u06CC\u0631\u06CC\u2026');
       try {
-        var result = await api('/api/staff/invoices', {
-          method: 'POST',
-          body: {
-            userId: customer.id,
-            items: items,
-            amount: items.length ? null : totals.base,
-            couponCode: appliedCoupon ? appliedCoupon.code : null,
-            clientRequestId: requestId,
-            payment: { cash: payment.cash, card: payment.card, online: payment.online }
-          }
-        });
+        var result = await api('/api/staff/invoices', {method:'POST',body:pendingInvoice});
+        pendingInvoice=null;try{sessionStorage.removeItem(pendingStorageKey);}catch(_){}
         requestId = null;
         $('#r-payment').textContent = paymentLabel(result.paymentMethod) +
           (result.change > 0 ? ' (' + moneyFa(result.change) + ' \u0628\u0627\u0642\u06CC\u0645\u0627\u0646\u062F\u0647)' : '');
@@ -10609,6 +10774,7 @@ function staffPage(settings, user, menu, todayStats, todayInvoices, isAdmin = fa
         $('#receipt-modal').classList.remove('hidden');
         toast('\u0641\u0627\u06A9\u062A\u0648\u0631 \u0628\u0627 \u0645\u0648\u0641\u0642\u06CC\u062A \u062B\u0628\u062A \u0634\u062F.', 'success');
 
+        if(!result.duplicate){
         // \u0628\u0647\u200C\u0631\u0648\u0632\u0631\u0633\u0627\u0646\u06CC \u0622\u0645\u0627\u0631 \u0627\u0645\u0631\u0648\u0632
         var countEl = $('#today-count');
         var totalEl = $('#today-total');
@@ -10623,13 +10789,15 @@ function staffPage(settings, user, menu, todayStats, todayInvoices, isAdmin = fa
           '<div class="text-[10px] text-cream/35">\u0647\u0645\u06CC\u0646 \u062D\u0627\u0644\u0627</div></div>' +
           '<div class="text-[12px] font-bold text-amber-200 whitespace-nowrap">' + moneyFa(result.amount) + '</div>';
         list.prepend(row);
+        }
       } catch (error) {
         toast(error.message, 'error');
-        // \u0627\u06AF\u0631 \u062F\u0631\u062E\u0648\u0627\u0633\u062A \u0646\u06CC\u0645\u0647\u200C\u06A9\u0627\u0631\u0647 \u0645\u0627\u0646\u062F\u060C \u0634\u0646\u0627\u0633\u0647 \u06CC\u06A9\u062A\u0627 \u0622\u0632\u0627\u062F \u0645\u06CC\u200C\u0634\u0648\u062F \u062A\u0627 \u062A\u0644\u0627\u0634 \u0628\u0639\u062F\u06CC \u0641\u0627\u06A9\u062A\u0648\u0631 \u062A\u0627\u0632\u0647 \u0628\u0633\u0627\u0632\u062F
-        requestId = null;
+        if(error.status>=400&&error.status<500){pendingInvoice=null;requestId=null;try{sessionStorage.removeItem(pendingStorageKey);}catch(_){}}
+        else $('#invoice-request-state').textContent='\u0646\u062A\u06CC\u062C\u0647\u0654 \u062B\u0628\u062A \u0642\u0628\u0644\u06CC \u0646\u0627\u0645\u0639\u0644\u0648\u0645 \u0627\u0633\u062A\u061B \u062F\u06A9\u0645\u0647\u0654 \u062B\u0628\u062A/\u067E\u06CC\u06AF\u06CC\u0631\u06CC \u0641\u0642\u0637 \u0647\u0645\u0627\u0646 \u062F\u0631\u062E\u0648\u0627\u0633\u062A \u0631\u0627 \u062F\u0648\u0628\u0627\u0631\u0647 \u0628\u0631\u0631\u0633\u06CC \u0645\u06CC\u200C\u06A9\u0646\u062F. \u0633\u0628\u062F \u062C\u062F\u06CC\u062F \u0646\u0633\u0627\u0632\u06CC\u062F.';
       } finally {
         submitting = false;
         setLoading(btn, false);
+        if(pendingInvoice)btn.textContent='\u067E\u06CC\u06AF\u06CC\u0631\u06CC \u0647\u0645\u0627\u0646 \u0641\u0627\u06A9\u062A\u0648\u0631';else{$('#invoice-request-state').textContent='';lockInvoice(false);}
       }
     }
 
@@ -10674,13 +10842,17 @@ function staffPage(settings, user, menu, todayStats, todayInvoices, isAdmin = fa
     renderMenu();
     refreshTotals();
     phoneInput.focus();
+    if(CAN_INVOICE){try{var saved=sessionStorage.getItem(pendingStorageKey),parsed=saved&&saved.length<20000?JSON.parse(saved):null;if(parsed&&typeof parsed==='object'&&Number.isSafeInteger(parsed.userId)&&typeof parsed.clientRequestId==='string'){pendingInvoice=parsed;lockInvoice(true);$('#invoice-request-state').textContent='\u06CC\u06A9 \u062F\u0631\u062E\u0648\u0627\u0633\u062A \u062A\u0639\u06CC\u06CC\u0646\u200C\u062A\u06A9\u0644\u06CC\u0641\u200C\u0646\u0634\u062F\u0647 \u0627\u0632 \u0647\u0645\u06CC\u0646 \u062D\u0633\u0627\u0628 \u0628\u0627\u0642\u06CC \u0645\u0627\u0646\u062F\u0647\u061B \u0628\u0631\u0627\u06CC \u067E\u06CC\u06AF\u06CC\u0631\u06CC \u0647\u0645\u0627\u0646 \u0641\u0627\u06A9\u062A\u0648\u0631 \u062F\u06A9\u0645\u0647 \u0631\u0627 \u0628\u0632\u0646\u06CC\u062F. \u0627\u0631\u0633\u0627\u0644 \u062E\u0648\u062F\u06A9\u0627\u0631 \u0627\u0646\u062C\u0627\u0645 \u0646\u0645\u06CC\u200C\u0634\u0648\u062F.';$('#submit-invoice').textContent='\u067E\u06CC\u06AF\u06CC\u0631\u06CC \u0647\u0645\u0627\u0646 \u0641\u0627\u06A9\u062A\u0648\u0631';}}catch(_){}}
+    var preset=new URLSearchParams(window.location.search).get('phone');
+    if(preset&&CAN_INVOICE&&!pendingInvoice){phoneInput.value=preset;searchCustomer();window.history.replaceState(null,'',window.location.pathname);}
   })();
   `;
   return appShell({
     title: "\u062B\u0628\u062A \u0641\u0627\u06A9\u062A\u0648\u0631",
-    role: "staff",
+    role: isAdmin ? "admin" : "staff",
+    permissions,
     userName: user.name,
-    active: "invoice",
+    active: isAdmin ? "invoices" : "invoice",
     body,
     scripts,
     cafeName: settings.cafe_name
@@ -10773,12 +10945,14 @@ function staffHistoryPage(settings, user, invoices, summary, options = {}) {
     role: "staff",
     userName: user.name,
     active: "history",
+    permissions: options.permissions,
     body,
     cafeName: settings.cafe_name
   });
 }
 function customerSummaryForApi(user, status, coupons, extra = {}) {
-  return {
+  const result = {
+    nickname: user.nickname ?? "",
     id: user.id,
     name: user.name,
     phone: user.phone,
@@ -10789,7 +10963,7 @@ function customerSummaryForApi(user, status, coupons, extra = {}) {
     avg_visit_interval: user.avg_visit_interval,
     status_label: status.label,
     status_tone: status.tone,
-    tier_label: tierLabel(user.tier),
+    tier_label: tierLabel(user.tier, extra.tierLabels ? { tier_labels: extra.tierLabels } : void 0),
     sms_opt_in: user.sms_opt_in,
     visit_earned_today: extra.visitEarnedToday === true,
     points_mode: extra.pointsMode ?? "amount",
@@ -10800,6 +10974,10 @@ function customerSummaryForApi(user, status, coupons, extra = {}) {
       label: c.kind === "percent" ? `${c.value}\u066A` : `${formatMoney(c.value)} \u062A\u0648\u0645\u0627\u0646`
     }))
   };
+  if (extra.minimal) {
+    for (const key of ["last_visit_date", "avg_visit_interval", "lifetime_points", "sms_opt_in", "status_label", "status_tone"]) delete result[key];
+  }
+  return result;
 }
 
 // src/ui/shift.ts
@@ -11106,6 +11284,7 @@ function staffShiftPage(input) {
     role: role === "admin" ? "admin" : "staff",
     userName,
     active: "shift",
+    permissions: input.permissions,
     body,
     scripts,
     cafeName: settings.cafe_name
@@ -11371,9 +11550,9 @@ function adminShiftDetailPage(input) {
 init_db();
 init_settings();
 init_utils();
-function tierBadge(tier) {
+function tierBadge(tier, settings) {
   const meta = TIER_META[tier] ?? TIER_META.bronze;
-  return `<span class="badge ${meta.badge}">${meta.icon} ${meta.label}</span>`;
+  return `<span class="badge ${meta.badge}">${meta.icon} ${escapeHtml(tierLabel(tier, settings))}</span>`;
 }
 function statCard(options) {
   const accents = {
@@ -11660,12 +11839,12 @@ function adminCustomersPage(input) {
           <a href="/admin/customers/${customer.id}" class="flex items-center gap-2.5 group">
             <span class="w-8 h-8 rounded-full bg-gradient-to-br from-amber-300 to-amber-800 text-coffee-950 text-[12px] font-bold flex items-center justify-center shrink-0">${escapeHtml(customer.name.slice(0, 1))}</span>
             <span class="min-w-0">
-              <span class="block text-[12.5px] font-medium group-hover:text-gold transition truncate">${escapeHtml(customer.name)}</span>
+              <span class="block text-[12.5px] font-medium group-hover:text-gold transition truncate">${escapeHtml(customer.name)}${customer.nickname ? " \xB7 " + escapeHtml(customer.nickname) : ""}</span>
               <span class="block text-[10.5px] text-cream/35 font-mono" dir="ltr">${escapeHtml(customer.phone)}</span>
             </span>
           </a>
         </td>
-        <td>${tierBadge(customer.tier)}</td>
+        <td>${tierBadge(customer.tier, settings)}</td>
         <td class="font-bold text-amber-200">${formatNumberFa(customer.points)}</td>
         <td class="text-[12px]">${formatNumberFa(customer.visits)}</td>
         <td class="text-[12px] text-cream/60">${formatNumberFa(customer.total_spent)}</td>
@@ -11685,8 +11864,8 @@ function adminCustomersPage(input) {
           <span class="w-10 h-10 rounded-full bg-gradient-to-br from-amber-300 to-amber-800 text-coffee-950 font-bold flex items-center justify-center shrink-0">${escapeHtml(customer.name.slice(0, 1))}</span>
           <div class="min-w-0 flex-1">
             <div class="flex items-center justify-between gap-2">
-              <div class="text-[13px] font-semibold truncate">${escapeHtml(customer.name)}</div>
-              ${tierBadge(customer.tier)}
+              <div class="text-[13px] font-semibold truncate">${escapeHtml(customer.name)}${customer.nickname ? " \xB7 " + escapeHtml(customer.nickname) : ""}</div>
+              ${tierBadge(customer.tier, settings)}
             </div>
             <div class="text-[11px] text-cream/40 font-mono mt-0.5" dir="ltr">${escapeHtml(customer.phone)}</div>
             <div class="flex items-center gap-3 mt-2.5 text-[10.5px] text-cream/45">
@@ -11724,7 +11903,7 @@ function adminCustomersPage(input) {
         <select name="tier" class="field sm:w-auto" onchange="this.form.submit()">
           <option value="">\u0647\u0645\u0647 \u0633\u0637\u062D\u200C\u0647\u0627</option>
           ${["bronze", "silver", "gold", "vip"].map(
-    (tier) => `<option value="${tier}" ${params.tier === tier ? "selected" : ""}>${TIER_META[tier].label}</option>`
+    (tier) => `<option value="${tier}" ${params.tier === tier ? "selected" : ""}>${escapeHtml(tierLabel(tier, settings))}</option>`
   ).join("")}
         </select>
         <select name="status" class="field sm:w-auto" onchange="this.form.submit()">
@@ -11781,7 +11960,7 @@ function adminCustomersPage(input) {
           <input id="add-phone" type="tel" inputmode="numeric" dir="ltr" class="field text-left tracking-wider" placeholder="09xxxxxxxxx" maxlength="13" required />
         </div>
         <div>
-          <label class="label">\u062A\u0627\u0631\u06CC\u062E \u062A\u0648\u0644\u062F</label>
+          <label class="flex gap-2 text-xs"><input id="add-birth-known" type="checkbox" /> \u062A\u0627\u0631\u06CC\u062E \u062A\u0648\u0644\u062F \u0645\u0639\u0644\u0648\u0645 \u0627\u0633\u062A (\u0627\u062E\u062A\u06CC\u0627\u0631\u06CC)</label>
           <div class="grid grid-cols-3 gap-2">
             <select id="add-day" class="field"></select>
             <select id="add-month" class="field">
@@ -11790,6 +11969,8 @@ function adminCustomersPage(input) {
             <select id="add-year" class="field"></select>
           </div>
         </div>
+        <div><label class="label" for="add-nickname">\u0644\u0642\u0628 (\u0627\u062E\u062A\u06CC\u0627\u0631\u06CC)</label><input id="add-nickname" class="field" maxlength="40" /></div>
+        <label class="flex gap-2 text-sm"><input id="add-invoice-now" type="checkbox" checked /> \u067E\u0633 \u0627\u0632 \u062B\u0628\u062A\u060C \u0627\u062F\u0627\u0645\u0647 \u0628\u0647 \u0641\u0627\u06A9\u062A\u0648\u0631 \u0647\u0645\u06CC\u0646 \u0645\u0634\u062A\u0631\u06CC</label>
         <div>
           <label class="label">\u06A9\u062F \u0645\u0639\u0631\u0641 <span class="text-cream/30">(\u0627\u062E\u062A\u06CC\u0627\u0631\u06CC)</span></label>
           <input id="add-referral" type="text" dir="ltr" class="field text-left tracking-wider" placeholder="REF-XXXXXX" maxlength="30" />
@@ -11806,6 +11987,8 @@ function adminCustomersPage(input) {
   (function () {
     var modal = $('#add-modal');
     initJalaliPickers($('#add-day'), $('#add-month'), $('#add-year'), '', 90);
+    function addBirthState(){['day','month','year'].forEach(function(key){$('#add-'+key).disabled=!$('#add-birth-known').checked;});}
+    $('#add-birth-known').addEventListener('change',addBirthState);addBirthState();
 
     $('#open-add').addEventListener('click', function () { modal.classList.remove('hidden'); $('#add-name').focus(); });
     $('#close-add').addEventListener('click', function () { modal.classList.add('hidden'); });
@@ -11826,7 +12009,7 @@ function adminCustomersPage(input) {
       event.preventDefault();
       var name = $('#add-name').value.trim();
       var phone = normalizePhone($('#add-phone').value);
-      var birth = readJalaliPickers($('#add-day'), $('#add-month'), $('#add-year'));
+      var birth = $('#add-birth-known').checked ? readJalaliPickers($('#add-day'), $('#add-month'), $('#add-year')) : '';
       var referral = $('#add-referral').value.trim();
       if (name.length < 2) { toast('\u0646\u0627\u0645 \u0631\u0627 \u06A9\u0627\u0645\u0644 \u0648\u0627\u0631\u062F \u06A9\u0646\u06CC\u062F.', 'error'); return; }
       if (!/^09\\d{9}$/.test(phone)) { toast('\u0634\u0645\u0627\u0631\u0647 \u0645\u0648\u0628\u0627\u06CC\u0644 \u0645\u0639\u062A\u0628\u0631 \u0646\u06CC\u0633\u062A.', 'error'); return; }
@@ -11834,10 +12017,11 @@ function adminCustomersPage(input) {
       var btn = $('#add-submit');
       setLoading(btn, true, '\u062F\u0631 \u062D\u0627\u0644 \u062B\u0628\u062A\u2026');
       try {
-        await api('/api/admin/customers', { method: 'POST', body: { name: name, phone: phone, birth_date: birth, referral: referral } });
+        await api('/api/admin/customers', { method: 'POST', body: { name: name, phone: phone, birth_date: birth, referral: referral, nickname: $('#add-nickname').value.trim() } });
         toast('\u0645\u0634\u062A\u0631\u06CC \u0628\u0627 \u0645\u0648\u0641\u0642\u06CC\u062A \u0627\u0636\u0627\u0641\u0647 \u0634\u062F.', 'success');
         modal.classList.add('hidden');
-        setTimeout(function () { window.location.reload(); }, 900);
+        if ($('#add-invoice-now').checked) window.location.href='/staff?phone='+encodeURIComponent(phone);
+        else setTimeout(function () { window.location.reload(); }, 900);
       } catch (error) {
         toast(error.message, 'error');
         setLoading(btn, false);
@@ -11877,7 +12061,7 @@ function adminCustomerDetailPage(input) {
         <div class="flex-1 min-w-0">
           <div class="flex items-center gap-2 flex-wrap">
             <h1 class="text-xl font-extrabold">${escapeHtml(user.name)}</h1>
-            ${tierBadge(user.tier)}
+            ${tierBadge(user.tier, settings)}
             <span class="badge tone-${status.tone}">${status.label}</span>
             ${user.is_active === 0 ? '<span class="badge tone-danger">\u063A\u06CC\u0631\u0641\u0639\u0627\u0644</span>' : ""}
           </div>
@@ -11923,8 +12107,9 @@ function adminCustomerDetailPage(input) {
               <input id="e-phone" type="tel" dir="ltr" class="field text-left tracking-wider" maxlength="13" value="${escapeHtml(user.phone)}" />
             </div>
           </div>
+          <div><label class="label" for="e-nickname">\u0644\u0642\u0628 (\u0627\u062E\u062A\u06CC\u0627\u0631\u06CC)</label><input id="e-nickname" class="field" maxlength="40" value="${escapeHtml(user.nickname ?? "")}" /></div>
           <div>
-            <label class="label">\u062A\u0627\u0631\u06CC\u062E \u062A\u0648\u0644\u062F</label>
+            <label class="flex gap-2 text-xs"><input id="e-birth-known" type="checkbox" ${user.birth_date ? "checked" : ""} /> \u062A\u0627\u0631\u06CC\u062E \u062A\u0648\u0644\u062F \u0645\u0639\u0644\u0648\u0645 \u0627\u0633\u062A (\u0627\u062E\u062A\u06CC\u0627\u0631\u06CC)</label>
             <div class="grid grid-cols-3 gap-2">
               <select id="e-day" class="field"></select>
               <select id="e-month" class="field">
@@ -11952,7 +12137,7 @@ function adminCustomerDetailPage(input) {
             <p class="hint">\u0639\u062F\u062F \u0645\u062B\u0628\u062A \u0628\u0631\u0627\u06CC \u0627\u0641\u0632\u0648\u062F\u0646 \u0648 \u0639\u062F\u062F \u0645\u0646\u0641\u06CC \u0628\u0631\u0627\u06CC \u06A9\u0633\u0631 \u0627\u0645\u062A\u06CC\u0627\u0632. \u0627\u0645\u062A\u06CC\u0627\u0632 \u0645\u0646\u0641\u06CC \u0627\u0639\u0645\u0627\u0644 \u0646\u0645\u06CC\u200C\u0634\u0648\u062F.</p>
           </div>
           <div class="rounded-xl bg-black/25 border border-white/10 p-3 text-[11px] text-cream/50 leading-6">
-            \u0633\u0637\u062D \u0641\u0639\u0644\u06CC: <span class="text-cream font-semibold">${tierLabel(user.tier)}</span>
+            \u0633\u0637\u062D \u0641\u0639\u0644\u06CC: <span class="text-cream font-semibold">${escapeHtml(tierLabel(user.tier, settings))}</span>
             \u2014 \u067E\u0633 \u0627\u0632 \u062A\u0646\u0638\u06CC\u0645\u060C \u0633\u0637\u062D \u0628\u0647\u200C\u0635\u0648\u0631\u062A \u062E\u0648\u062F\u06A9\u0627\u0631 \u0628\u0627\u0632\u0645\u062D\u0627\u0633\u0628\u0647 \u0645\u06CC\u200C\u0634\u0648\u062F.
           </div>
           <div class="text-[11px] text-cream/40 leading-6">
@@ -12064,17 +12249,19 @@ function adminCustomerDetailPage(input) {
   (function () {
     var userId = ${user.id};
     initJalaliPickers($('#e-day'), $('#e-month'), $('#e-year'), ${jsonForScript(user.birth_date ?? "")}, 90);
+    function eBirthState(){['day','month','year'].forEach(function(key){$('#e-'+key).disabled=!$('#e-birth-known').checked;});}
+    $('#e-birth-known').addEventListener('change',eBirthState);eBirthState();
 
     $('#edit-form').addEventListener('submit', async function (event) {
       event.preventDefault();
       var name = $('#e-name').value.trim();
       var phone = $('#e-phone').value.trim();
-      var birth = readJalaliPickers($('#e-day'), $('#e-month'), $('#e-year'));
+      var birth = $('#e-birth-known').checked ? readJalaliPickers($('#e-day'), $('#e-month'), $('#e-year')) : '';
       if (name.length < 2) { toast('\u0646\u0627\u0645 \u0631\u0627 \u06A9\u0627\u0645\u0644 \u0648\u0627\u0631\u062F \u06A9\u0646\u06CC\u062F.', 'error'); return; }
       var btn = $('#save-btn');
       setLoading(btn, true, '\u062F\u0631 \u062D\u0627\u0644 \u0630\u062E\u06CC\u0631\u0647\u2026');
       try {
-        await api('/api/admin/customers/' + userId, { method: 'PUT', body: { name: name, phone: phone, birth_date: birth } });
+        await api('/api/admin/customers/' + userId, { method: 'PUT', body: { name: name, phone: phone, birth_date: birth, nickname: $('#e-nickname').value.trim() } });
         toast('\u0627\u0637\u0644\u0627\u0639\u0627\u062A \u0630\u062E\u06CC\u0631\u0647 \u0634\u062F.', 'success');
         setTimeout(function () { window.location.reload(); }, 800);
       } catch (error) {
@@ -13102,18 +13289,20 @@ function adminSettingsPage(input) {
           </div>
 
           <div>
+            <div class="label">\u0646\u0627\u0645 \u0633\u0637\u062D\u200C\u0647\u0627 (\u062A\u0631\u062A\u06CC\u0628 \u0648 \u0627\u0645\u062A\u06CC\u0627\u0632 \u0645\u0634\u062A\u0631\u06CC \u062A\u063A\u06CC\u06CC\u0631 \u0646\u0645\u06CC\u200C\u06A9\u0646\u062F)</div>
+            <div class="grid sm:grid-cols-4 gap-3 mb-4">${["bronze", "silver", "gold", "vip"].map((key, index) => `<label class="label">\u0633\u0637\u062D ${toPersianDigits(index + 1)}<input id="tier_label_${key}" class="field mt-1" maxlength="30" value="${escapeHtml(settings.tier_labels[key])}" /></label>`).join("")}</div>
             <div class="label">\u0622\u0633\u062A\u0627\u0646\u0647\u200C\u0647\u0627\u06CC \u0633\u0637\u062D (\u0628\u0631 \u0627\u0633\u0627\u0633 \u0645\u062C\u0645\u0648\u0639 \u0627\u0645\u062A\u06CC\u0627\u0632 \u06A9\u0633\u0628\u200C\u0634\u062F\u0647)</div>
             <div class="grid grid-cols-3 gap-4">
               <div>
-                <label class="label !text-[10.5px]" for="tier_silver">\u0646\u0642\u0631\u0647\u200C\u0627\u06CC</label>
+                <label class="label !text-[10.5px]" for="tier_silver">${escapeHtml(settings.tier_labels.silver)}</label>
                 <input id="tier_silver" type="number" min="1" class="field text-left" dir="ltr" value="${settings.tiers.silver}" />
               </div>
               <div>
-                <label class="label !text-[10.5px]" for="tier_gold">\u0637\u0644\u0627\u06CC\u06CC</label>
+                <label class="label !text-[10.5px]" for="tier_gold">${escapeHtml(settings.tier_labels.gold)}</label>
                 <input id="tier_gold" type="number" min="2" class="field text-left" dir="ltr" value="${settings.tiers.gold}" />
               </div>
               <div>
-                <label class="label !text-[10.5px]" for="tier_vip">\u0627\u0644\u0645\u0627\u0633\u06CC</label>
+                <label class="label !text-[10.5px]" for="tier_vip">${escapeHtml(settings.tier_labels.vip)}</label>
                 <input id="tier_vip" type="number" min="3" class="field text-left" dir="ltr" value="${settings.tiers.vip}" />
               </div>
             </div>
@@ -13326,7 +13515,7 @@ function adminSettingsPage(input) {
     var TEMPLATE_KEYS = ['welcome', 'invoice', 'birthday', 'churn', 'weather'];
     var SAMPLES = ${jsonForScript(
     TEMPLATE_META.reduce((acc, meta) => {
-      acc[meta.key] = meta.sample;
+      acc[meta.key] = { ...meta.sample, tier: settings.tier_labels.silver, cafe: settings.cafe_name };
       return acc;
     }, {})
   )};
@@ -13504,6 +13693,7 @@ function adminSettingsPage(input) {
         redeem_expiry_days: Number($('#redeem_expiry_days').value),
         otp_login_enabled: document.getElementById('otp_login_enabled').checked ? 1 : 0,
         referral_reward_points: Number($('#referral_reward_points').value),
+        tier_labels: Object.fromEntries(['bronze','silver','gold','vip'].map(function(key){return [key,$('#tier_label_'+key).value.trim()];})),
         tiers: {
           silver: Number($('#tier_silver').value),
           gold: Number($('#tier_gold').value),
@@ -13631,6 +13821,7 @@ function adminStaffPage(input) {
         <td><span class="badge ${member.is_active ? "tone-success" : "tone-danger"}">${member.is_active ? "\u0641\u0639\u0627\u0644" : "\u063A\u06CC\u0631\u0641\u0639\u0627\u0644"}</span></td>
         <td>
           <div class="flex items-center gap-1">
+            ${member.role === "staff" ? `<button type="button" data-permissions-id="${member.id}" data-permissions="${escapeHtml(JSON.stringify(storedPermissions(member.permissions)))}" data-name="${escapeHtml(member.name)}" class="btn btn-ghost btn-sm" title="\u0648\u06CC\u0631\u0627\u06CC\u0634 \u062F\u0633\u062A\u0631\u0633\u06CC\u200C\u0647\u0627">${icon("shield", "w-4 h-4")}</button>` : ""}
             <button type="button" data-reset="${member.id}" data-name="${escapeHtml(member.name)}" class="btn btn-ghost btn-sm !px-2" title="\u062A\u063A\u06CC\u06CC\u0631 \u0631\u0645\u0632">${icon("key", "w-3.5 h-3.5")}</button>
             ${isSelf ? "" : `<button type="button" data-toggle="${member.id}" data-active="${member.is_active}" class="btn btn-ghost btn-sm !px-2" title="${member.is_active ? "\u063A\u06CC\u0631\u0641\u0639\u0627\u0644 \u06A9\u0631\u062F\u0646" : "\u0641\u0639\u0627\u0644 \u06A9\u0631\u062F\u0646"}">
                     ${icon(member.is_active ? "close" : "check", "w-3.5 h-3.5")}
@@ -13711,6 +13902,10 @@ function adminStaffPage(input) {
           </div>
           <p class="hint">\u0631\u0645\u0632 \u0631\u0627 \u0628\u0647 \u06A9\u0627\u0631\u0645\u0646\u062F \u0627\u0637\u0644\u0627\u0639 \u062F\u0647\u06CC\u062F\u061B \u0628\u0639\u062F\u0627\u064B \u0645\u06CC\u200C\u062A\u0648\u0627\u0646\u062F \u062A\u063A\u06CC\u06CC\u0631 \u062F\u0647\u062F.</p>
         </div>
+        <fieldset id="s-permissions" class="space-y-2 rounded-xl border border-white/10 p-3"><legend class="label">\u062F\u0633\u062A\u0631\u0633\u06CC\u200C\u0647\u0627\u06CC \u06A9\u0627\u0631\u0645\u0646\u062F</legend>
+          ${Object.entries(STAFF_PERMISSIONS).map(([key, label]) => `<label class="flex gap-2 text-xs"><input type="checkbox" value="${key}" ${NEW_STAFF_PERMISSIONS.includes(key) ? "checked" : ""} />${label}</label>`).join("")}
+          <p class="hint">\u0628\u062F\u0648\u0646 \u0645\u062C\u0648\u0632 \u062C\u0633\u062A\u062C\u0648/\u0641\u0647\u0631\u0633\u062A\u060C \u0641\u0642\u0637 \u0634\u0645\u0627\u0631\u0647\u0654 \u06A9\u0627\u0645\u0644 \u0628\u0631\u0627\u06CC \u0641\u0627\u06A9\u062A\u0648\u0631 \u067E\u0630\u06CC\u0631\u0641\u062A\u0647 \u0645\u06CC\u200C\u0634\u0648\u062F. \u0627\u062F\u0645\u06CC\u0646 \u0628\u0647 \u0647\u0645\u0647\u0654 \u0628\u062E\u0634\u200C\u0647\u0627 \u062F\u0633\u062A\u0631\u0633\u06CC \u062F\u0627\u0631\u062F.</p>
+        </fieldset>
         <div class="flex gap-2 pt-1">
           <button type="button" id="cancel-staff" class="btn btn-ghost flex-1">\u0627\u0646\u0635\u0631\u0627\u0641</button>
           <button type="submit" id="staff-submit" class="btn btn-primary flex-1">${icon("plus", "w-4 h-4")} \u0627\u06CC\u062C\u0627\u062F</button>
@@ -13719,9 +13914,15 @@ function adminStaffPage(input) {
     </div>
   </div>
   `;
+  const permissionModal = `<div id="permissions-modal" class="hidden fixed inset-0 z-50 bg-black/70 p-5 overflow-y-auto"><div class="glass rounded-3xl p-5 max-w-md mx-auto space-y-4"><h3 id="permissions-title" class="font-bold"></h3><div id="permission-fields" class="space-y-3">${Object.entries(STAFF_PERMISSIONS).map(([key, label]) => `<label class="flex gap-2 text-sm"><input type="checkbox" value="${key}" />${label}</label>`).join("")}</div><p class="hint">\u062A\u063A\u06CC\u06CC\u0631 \u0645\u062C\u0648\u0632 \u062F\u0631 \u062F\u0631\u062E\u0648\u0627\u0633\u062A \u0628\u0639\u062F\u06CC \u0627\u0639\u0645\u0627\u0644 \u0645\u06CC\u200C\u0634\u0648\u062F\u061B \u062E\u0631\u0648\u062C \u0648 \u0648\u0631\u0648\u062F \u062F\u0648\u0628\u0627\u0631\u0647 \u0644\u0627\u0632\u0645 \u0646\u06CC\u0633\u062A.</p><div class="flex gap-2"><button id="save-permissions" class="btn btn-primary" type="button">\u0630\u062E\u06CC\u0631\u0647 \u062F\u0633\u062A\u0631\u0633\u06CC</button><button id="close-permissions" class="btn btn-ghost" type="button">\u0628\u0633\u062A\u0646</button></div></div></div>`;
   const scripts = `
   (function () {
     var modal = $('#staff-modal');
+    var permissionTarget=null;
+    document.querySelectorAll('[data-permissions-id]').forEach(function(button){button.addEventListener('click',function(){permissionTarget=button.dataset.permissionsId;var values=JSON.parse(button.dataset.permissions);$('#permissions-title').textContent='\u062F\u0633\u062A\u0631\u0633\u06CC\u200C\u0647\u0627\u06CC '+button.dataset.name;$('#permission-fields').querySelectorAll('input').forEach(function(input){input.checked=values.indexOf(input.value)>=0;});$('#permissions-modal').classList.remove('hidden');});});
+    $('#close-permissions').addEventListener('click',function(){$('#permissions-modal').classList.add('hidden');});
+    $('#save-permissions').addEventListener('click',async function(){if(!permissionTarget)return;var button=this;setLoading(button,true);try{var values=Array.from($('#permission-fields').querySelectorAll('input:checked')).map(function(input){return input.value;});await api('/api/admin/staff/'+permissionTarget,{method:'PUT',body:{permissions:values}});document.querySelector('[data-permissions-id="'+permissionTarget+'"]').dataset.permissions=JSON.stringify(values);$('#permissions-modal').classList.add('hidden');toast('\u062F\u0633\u062A\u0631\u0633\u06CC\u200C\u0647\u0627 \u0630\u062E\u06CC\u0631\u0647 \u0634\u062F.','success');}catch(error){toast(error.message,'error');}finally{setLoading(button,false);}});
+    $('#s-role').addEventListener('change',function(){$('#s-permissions').disabled=this.value==='admin';});
 
     function randomPassword() {
       var chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#';
@@ -13755,9 +13956,9 @@ function adminStaffPage(input) {
       var btn = $('#staff-submit');
       setLoading(btn, true, '\u062F\u0631 \u062D\u0627\u0644 \u0627\u06CC\u062C\u0627\u062F\u2026');
       try {
-        await api('/api/admin/staff', { method: 'POST', body: { name: name, phone: phone, role: role, password: password } });
-        toast('\u06A9\u0627\u0631\u0645\u0646\u062F \u0627\u06CC\u062C\u0627\u062F \u0634\u062F. \u0631\u0645\u0632: ' + password, 'success');
-        setTimeout(function () { window.location.reload(); }, 1600);
+        await api('/api/admin/staff', { method: 'POST', body: { name: name, phone: phone, role: role, password: password, permissions: Array.from($('#s-permissions').querySelectorAll('input:checked')).map(function(input){return input.value;}) } });
+        await confirmAction({title:'\u06A9\u0627\u0631\u0645\u0646\u062F \u0627\u06CC\u062C\u0627\u062F \u0634\u062F',message:'\u0631\u0645\u0632 \u0627\u0648\u0644\u06CC\u0647: '+password+' \u2014 \u0627\u06A9\u0646\u0648\u0646 \u0622\u0646 \u0631\u0627 \u0627\u0645\u0646 \u0628\u0647 \u06A9\u0627\u0631\u0645\u0646\u062F \u062A\u062D\u0648\u06CC\u0644 \u062F\u0647\u06CC\u062F\u061B \u0631\u0645\u0632 \u0641\u0642\u0637 \u0647\u0634\u200C\u0634\u062F\u0647 \u0630\u062E\u06CC\u0631\u0647 \u0645\u06CC\u200C\u0634\u0648\u062F.',confirmText:'\u0631\u0645\u0632 \u0631\u0627 \u0630\u062E\u06CC\u0631\u0647 \u06A9\u0631\u062F\u0645',cancelText:'\u0628\u0633\u062A\u0646'});
+        $('#s-password').value='';window.location.reload();
       } catch (error) {
         toast(error.message, 'error');
         setLoading(btn, false);
@@ -13849,7 +14050,7 @@ function adminStaffPage(input) {
     role: "admin",
     userName,
     active: "staff",
-    body,
+    body: body + permissionModal,
     scripts,
     cafeName: settings.cafe_name
   });
@@ -13875,9 +14076,10 @@ function adminSmsPage(input) {
   };
   const body = `
   <div class="p-4 sm:p-6 lg:p-8 max-w-6xl mx-auto">
+    <p class="hint mb-3">\u0627\u0631\u0633\u0627\u0644 \u0628\u0647 \u0627\u062F\u0645\u06CC\u0646 \u0628\u0647 \u0645\u0639\u0646\u06CC \u0627\u0631\u0633\u0627\u0644 \u067E\u06CC\u0627\u0645\u06A9 \u062A\u0648\u0633\u0637 \u0627\u0648 \u0646\u06CC\u0633\u062A. <a href="/admin/fallback" class="underline">\u062A\u0627\u0631\u06CC\u062E\u0686\u0647\u0654 \u0632\u0646\u062F\u0647\u0654 \u067E\u06CC\u0627\u0645\u200C\u0631\u0633\u0627\u0646\u200C\u0647\u0627</a> \xB7 <button type="button" onclick="window.location.reload()" class="underline">\u062A\u0627\u0632\u0647\u200C\u0633\u0627\u0632\u06CC \u0648\u0636\u0639\u06CC\u062A \u067E\u06CC\u0627\u0645\u06A9\u200C\u0647\u0627</button></p>
     ${pageHeader({
     title: "\u067E\u06CC\u0627\u0645\u06A9\u200C\u0647\u0627",
-    subtitle: "\u062A\u0627\u0631\u06CC\u062E\u0686\u0647 \u0627\u0631\u0633\u0627\u0644\u200C\u0647\u0627 \u0648 \u0648\u0636\u0639\u06CC\u062A \u062A\u062D\u0648\u06CC\u0644",
+    subtitle: "\u0648\u0636\u0639\u06CC\u062A \u067E\u0646\u0644 \u067E\u06CC\u0627\u0645\u06A9 \u0648 \u0627\u0631\u0633\u0627\u0644 \u0628\u0647 \u0627\u062F\u0645\u06CC\u0646 \u2014 \u062A\u0623\u06CC\u06CC\u062F \u062E\u0648\u0627\u0646\u062F\u0646/\u062A\u062D\u0648\u06CC\u0644 \u0628\u0647 \u0645\u0634\u062A\u0631\u06CC \u0646\u06CC\u0633\u062A",
     iconName: "chat",
     actions: `<a href="/admin/settings#templates" class="btn btn-ghost btn-sm">${icon("edit", "w-4 h-4")} \u0648\u06CC\u0631\u0627\u06CC\u0634 \u0642\u0627\u0644\u0628\u200C\u0647\u0627</a>`
   })}
@@ -13912,7 +14114,7 @@ function adminSmsPage(input) {
                 <thead><tr><th>\u06AF\u06CC\u0631\u0646\u062F\u0647</th><th>\u0646\u0648\u0639</th><th>\u0645\u062A\u0646</th><th>\u0648\u0636\u0639\u06CC\u062A</th><th>\u0632\u0645\u0627\u0646</th></tr></thead>
                 <tbody>
                   ${logs.map((log) => {
-    const statusLabel = log.status === "sent" ? "\u0627\u0631\u0633\u0627\u0644 \u0634\u062F" : log.status === "failed" ? "\u0646\u0627\u0645\u0648\u0641\u0642" : log.status === "pending" ? "\u0635\u0641 \u062C\u0627\u06CC\u06AF\u0632\u06CC\u0646 (\u0646\u0647 \u062A\u062D\u0648\u06CC\u0644 \u0628\u0647 \u0645\u0634\u062A\u0631\u06A9)" : "\u0631\u062F \u0634\u062F";
+    const statusLabel = log.status === "sent" ? log.delivery_kind === "console" ? "\u0622\u0632\u0645\u0627\u06CC\u0634\u06CC\u061B \u0641\u0642\u0637 \u062B\u0628\u062A \u0644\u0627\u06AF" : log.delivery_kind === "provider_accepted" ? "\u067E\u0630\u06CC\u0631\u0641\u062A\u0647\u200C\u0634\u062F\u0647 \u062A\u0648\u0633\u0637 \u067E\u0646\u0644 \u067E\u06CC\u0627\u0645\u06A9" : "\u062B\u0628\u062A \u0627\u0631\u0633\u0627\u0644 \u0642\u062F\u06CC\u0645\u06CC\u061B \u062A\u062D\u0648\u06CC\u0644 \u062A\u0623\u06CC\u06CC\u062F \u0646\u0634\u062F\u0647" : log.status === "failed" ? "\u0646\u0627\u0645\u0648\u0641\u0642" : log.status === "pending" ? "\u0635\u0641 \u062C\u0627\u06CC\u06AF\u0632\u06CC\u0646 (\u0646\u0647 \u062A\u062D\u0648\u06CC\u0644 \u0628\u0647 \u0645\u0634\u062A\u0631\u06A9)" : "\u0631\u062F \u0634\u062F";
     const tone = log.status === "sent" ? "success" : log.status === "failed" ? "danger" : "muted";
     return `<tr>
                         <td>
@@ -13925,6 +14127,10 @@ function adminSmsPage(input) {
                         </td>
                         <td>
                           <span class="badge tone-${tone}">${statusLabel}</span>
+                          ${log.provider_id ? `<div class="hint">\u0634\u0646\u0627\u0633\u0647\u0654 \u0633\u0631\u0648\u06CC\u0633: <bdi>${escapeHtml(log.provider_id)}</bdi></div>` : ""}
+                          ${safeJsonParse(log.fallback_delivery ?? "[]", []).map((job) => `<div class="text-xs mt-2"><b>${job.channel === "telegram" ? "\u062A\u0644\u06AF\u0631\u0627\u0645" : "\u0628\u0644\u0647"}:</b> ${escapeHtml({ sent: "API \u067E\u06CC\u0627\u0645\u200C\u0631\u0633\u0627\u0646 \u062A\u0623\u06CC\u06CC\u062F \u06A9\u0631\u062F", pending: "\u062F\u0631 \u0635\u0641 \u0627\u062F\u0645\u06CC\u0646", processing: "\u062F\u0631 \u062D\u0627\u0644 \u0627\u0631\u0633\u0627\u0644", failed: "\u0628\u0647 \u0627\u062F\u0645\u06CC\u0646 \u0627\u0631\u0633\u0627\u0644 \u0646\u0634\u062F/\u0646\u0627\u0645\u0639\u0644\u0648\u0645", skipped: "\u0644\u063A\u0648 \u0634\u062F", expired: "\u0645\u0646\u0642\u0636\u06CC \u0634\u062F" }[job.status] ?? "\u0646\u0627\u0645\u0634\u062E\u0635")} ${job.providerId ? " \xB7 \u0634\u0646\u0627\u0633\u0647\u0654 \u067E\u06CC\u0627\u0645 " + escapeHtml(job.providerId) : ""}</div>`).join("")}
+                          ${log.status === "pending" && (!log.fallback_ids || log.fallback_ids === "[]") ? '<p class="hint">\u0644\u0627\u06AF \u0642\u062F\u06CC\u0645\u06CC \u0627\u0633\u062A\u061B \u0648\u0636\u0639\u06CC\u062A \u0645\u0642\u0635\u062F \u0628\u0647 \u0627\u06CC\u0646 \u067E\u06CC\u0627\u0645\u06A9 \u067E\u06CC\u0648\u0646\u062F \u0646\u062F\u0627\u0631\u062F.</p>' : ""}
+                          ${log.status === "pending" && log.fallback_ids && log.fallback_ids !== "[]" && log.fallback_delivery === "[]" ? '<p class="hint">\u0633\u0627\u0628\u0642\u0647\u0654 \u0645\u0642\u0635\u062F \u062F\u06CC\u06AF\u0631 \u062F\u0631 \u062F\u0633\u062A\u0631\u0633 \u0646\u06CC\u0633\u062A\u061B \u062A\u062D\u0648\u06CC\u0644 \u0628\u0647 \u0627\u062F\u0645\u06CC\u0646 \u0646\u0627\u0645\u0639\u0644\u0648\u0645 \u0627\u0633\u062A.</p>' : ""}
                           ${log.error ? `<div class="text-[9.5px] text-rose-300/60 mt-1 truncate max-w-[120px]" title="${escapeHtml(log.error)}">${escapeHtml(log.error)}</div>` : ""}
                         </td>
                         <td class="text-[10.5px] text-cream/40 whitespace-nowrap">${formatJalaliDateTime(log.sent_at)}</td>
@@ -14109,6 +14315,9 @@ var ACTION_LABELS = {
   admin_report_failed: { label: "\u06AF\u0632\u0627\u0631\u0634 \u0627\u062F\u0645\u06CC\u0646 \u062F\u0631 \u0635\u0641 \u062B\u0628\u062A \u0646\u0634\u062F", tone: "danger", iconName: "warning" },
   invoice_correct: { label: "\u0627\u0635\u0644\u0627\u062D \u0641\u0627\u06A9\u062A\u0648\u0631", tone: "warning", iconName: "receipt" },
   fallback_settings_update: { label: "\u062A\u0646\u0638\u06CC\u0645 \u067E\u06CC\u0627\u0645\u200C\u0647\u0627\u06CC \u0627\u062F\u0645\u06CC\u0646", tone: "info", iconName: "settings" },
+  fallback_manual: { label: "\u067E\u06CC\u0627\u0645 \u062F\u0633\u062A\u06CC \u0645\u062F\u06CC\u0631", tone: "info", iconName: "chat" },
+  fallback_delivery_failed: { label: "\u062E\u0637\u0627\u06CC \u0627\u0631\u0633\u0627\u0644 \u0628\u0647 \u0627\u062F\u0645\u06CC\u0646", tone: "danger", iconName: "warning" },
+  staff_permissions_update: { label: "\u062A\u063A\u06CC\u06CC\u0631 \u062F\u0633\u062A\u0631\u0633\u06CC \u06A9\u0627\u0631\u0645\u0646\u062F", tone: "info", iconName: "shield" },
   fallback_diagnose: { label: "\u0628\u0631\u0631\u0633\u06CC \u0627\u0631\u062A\u0628\u0627\u0637 \u0628\u062F\u0648\u0646 \u0627\u0631\u0633\u0627\u0644", tone: "info", iconName: "shield" },
   fallback_test: { label: "\u062A\u0633\u062A \u0627\u062A\u0635\u0627\u0644 \u067E\u06CC\u0627\u0645\u200C\u0631\u0633\u0627\u0646", tone: "muted", iconName: "chat" },
   fallback_retry: { label: "\u062A\u0644\u0627\u0634 \u0645\u062C\u062F\u062F \u067E\u06CC\u0627\u0645 \u0627\u062F\u0645\u06CC\u0646", tone: "warning", iconName: "chat" },
@@ -14609,7 +14818,7 @@ function reportsCsv(data) {
 
 // src/index.ts
 var app = new Hono3();
-var APP_BUILD = "messenger-diagnostics-v5";
+var APP_BUILD = "customer-workflow-v6";
 function resolveTimeZone2(env) {
   return resolveTimeZone(env.TZ_NAME);
 }
@@ -14729,6 +14938,10 @@ app.use("/login", loginBodyLimit);
 app.use("/api/auth/login", loginBodyLimit);
 app.use("/api/admin/system/schema", loginBodyLimit);
 app.use("/api/admin/fallback/diagnose", loginBodyLimit);
+app.use("/api/admin/fallback/send", loginBodyLimit);
+app.use("/api/staff/customers", loginBodyLimit);
+app.use("/api/admin/staff", loginBodyLimit);
+app.use("/api/admin/staff/:id", loginBodyLimit);
 app.use("/api/*", async (c, next) => {
   if (c.req.method === "GET") {
     await next();
@@ -14753,6 +14966,23 @@ app.use("*", async (c, next) => {
     if (path.startsWith("/api/")) return fail(c, "\u0633\u0627\u062E\u062A\u0627\u0631 \u062F\u06CC\u062A\u0627\u0628\u06CC\u0633 \u0646\u06CC\u0627\u0632 \u0628\u0647 \u0627\u0631\u062A\u0642\u0627 \u062F\u0627\u0631\u062F. \u0645\u062F\u06CC\u0631 \u0627\u0632 \u0628\u062E\u0634 \u0628\u0631\u0631\u0633\u06CC \u062F\u06CC\u062A\u0627\u0628\u06CC\u0633 \u0627\u0642\u062F\u0627\u0645 \u06A9\u0646\u062F.", 503, "SCHEMA_UPGRADE_REQUIRED");
     if (c.get("user")?.role === "admin") return c.redirect("/admin/system", 303);
     return c.html(errorPage(503, "\u0633\u0627\u062E\u062A\u0627\u0631 \u062F\u06CC\u062A\u0627\u0628\u06CC\u0633 \u0628\u0627\u06CC\u062F \u062A\u0648\u0633\u0637 \u0645\u062F\u06CC\u0631 \u0628\u0647\u200C\u0631\u0648\u0632\u0631\u0633\u0627\u0646\u06CC \u0634\u0648\u062F. \u0647\u06CC\u0686 \u0627\u0637\u0644\u0627\u0639\u0627\u062A\u06CC \u062D\u0630\u0641 \u0646\u0634\u062F\u0647 \u0627\u0633\u062A.", c.get("settings").cafe_name), 503);
+  }
+  await next();
+});
+app.use("*", async (c, next) => {
+  const user = c.get("user");
+  if (user?.role !== "staff") return next();
+  const path = c.req.path;
+  let permission;
+  if (path === "/api/staff/customer" || path === "/api/staff/coupons/check" || path === "/api/staff/invoices") permission = "invoice.create";
+  if (path === "/api/staff/invoices/today" || path === "/staff/history") permission = "invoice.history";
+  if (path.startsWith("/api/staff/shift") || path === "/staff/shift") permission = "shift.manage";
+  if (path === "/api/staff/customers" && c.req.method === "POST") permission = "customer.create";
+  if (path === "/api/staff/customers" && c.req.method === "GET") permission = "customer.list";
+  if (path === "/api/staff/customers/search") permission = "customer.search";
+  if (permission && !can(user, permission)) {
+    if (path.startsWith("/api/")) return fail(c, "\u0645\u062C\u0648\u0632 \u0627\u06CC\u0646 \u0639\u0645\u0644\u06CC\u0627\u062A \u0628\u0631\u0627\u06CC \u0634\u0645\u0627 \u0641\u0639\u0627\u0644 \u0646\u06CC\u0633\u062A.", 403, "PERMISSION_DENIED");
+    return c.html(errorPage(403, "\u0645\u062C\u0648\u0632 \u0627\u06CC\u0646 \u0628\u062E\u0634 \u0628\u0631\u0627\u06CC \u0634\u0645\u0627 \u0641\u0639\u0627\u0644 \u0646\u06CC\u0633\u062A\u061B \u0628\u0627 \u0645\u062F\u06CC\u0631 \u062A\u0645\u0627\u0633 \u0628\u06AF\u06CC\u0631\u06CC\u062F.", c.get("settings").cafe_name), 403);
   }
   await next();
 });
@@ -14800,22 +15030,23 @@ app.get("/login", (c) => {
 app.get("/staff", requirePageRole("staff", "admin"), async (c) => {
   const settings = c.get("settings");
   const user = c.get("user");
-  const menu = await loadMenuItems(c.env);
+  const menu = can(user, "invoice.create") ? await loadMenuItems(c.env) : [];
+  const historyAllowed = can(user, "invoice.history");
   const tz = resolveTimeZone2(c.env);
   const day = zonedDayRange(tz);
   const [statsRow, recentRes, openShiftRow, popular] = await Promise.all([
-    c.env.DB.prepare(
+    historyAllowed ? c.env.DB.prepare(
       `SELECT COUNT(*) AS c,
               COALESCE(SUM(amount), 0) AS s,
               COALESCE(SUM(paid_cash), 0) AS cash
        FROM invoices WHERE voided_at IS NULL AND registered_by = ? AND created_at >= ? AND created_at < ?`
-    ).bind(user.uid, day.start, day.end).first(),
-    c.env.DB.prepare(
+    ).bind(user.uid, day.start, day.end).first() : Promise.resolve(null),
+    historyAllowed ? c.env.DB.prepare(
       `SELECT i.id, i.amount, i.created_at, i.payment_method, u.name AS customer_name
        FROM invoices i JOIN users u ON u.id = i.user_id
        WHERE i.voided_at IS NULL AND i.registered_by = ? AND i.created_at >= ? AND i.created_at < ?
        ORDER BY i.id DESC LIMIT 8`
-    ).bind(user.uid, day.start, day.end).all(),
+    ).bind(user.uid, day.start, day.end).all() : Promise.resolve({ results: [] }),
     getOpenShift(c.env.DB, user.uid),
     getPopularItems(c.env.DB, 8)
   ]);
@@ -14828,6 +15059,8 @@ app.get("/staff", requirePageRole("staff", "admin"), async (c) => {
       recentRes.results ?? [],
       user.role === "admin",
       {
+        actorId: user.uid,
+        permissions: user.role === "admin" ? void 0 : user.permissions,
         popular,
         openShift: openShiftRow ? { id: openShiftRow.id, opening_cash: openShiftRow.opening_cash, opened_at: openShiftRow.opened_at } : null,
         todayCash: statsRow?.cash ?? 0,
@@ -14851,6 +15084,7 @@ app.get("/staff/shift", requirePageRole("staff", "admin"), async (c) => {
       openShift: openShiftRow,
       summary,
       history,
+      permissions: user.role === "admin" ? void 0 : user.permissions,
       canViewAll: user.role === "admin"
     })
   );
@@ -14955,7 +15189,7 @@ app.get("/staff/history", requirePageRole("staff", "admin"), async (c) => {
         count: summaryRow2?.c ?? 0,
         total: summaryRow2?.s ?? 0
       },
-      { q, onlyVoided }
+      { q, onlyVoided, permissions: user.role === "admin" ? void 0 : user.permissions }
     )
   );
 });
@@ -15382,6 +15616,8 @@ app.post("/api/auth/register", async (c) => {
   } catch {
     return fail(c, "\u062F\u0627\u062F\u0647\u200C\u0647\u0627\u06CC \u0627\u0631\u0633\u0627\u0644\u06CC \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "BAD_JSON");
   }
+  if (!body || typeof body !== "object" || Array.isArray(body)) return fail(c, "\u062F\u0627\u062F\u0647 \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "BAD_JSON");
+  if (body.nickname !== void 0 && (typeof body.nickname !== "string" || body.nickname.length > 40)) return fail(c, "\u0644\u0642\u0628 \u0628\u0627\u06CC\u062F \u062D\u062F\u0627\u06A9\u062B\u0631 \u06F4\u06F0 \u062D\u0631\u0641 \u0628\u0627\u0634\u062F.", 400, "INVALID_NICKNAME");
   const name = String(body.name ?? "").replace(/[<>]/g, "").replace(/\s+/g, " ").trim().slice(0, 60);
   const phone = normalizePhone(String(body.phone ?? ""));
   const birthDate = String(body.birth_date ?? "").slice(0, 10);
@@ -15400,6 +15636,7 @@ app.post("/api/auth/register", async (c) => {
     name,
     phone,
     birth_date: birthDate,
+    nickname: customerSearchText(String(body.nickname ?? "")),
     referral: referral || null,
     sms_opt_in: smsOptIn
   });
@@ -15548,6 +15785,19 @@ app.get("/api/auth/me", async (c) => {
     }
   });
 });
+async function staffCustomerChoices(c) {
+  const search = c.req.path.endsWith("/search");
+  const q = customerSearchText(c.req.query("q") ?? "").slice(0, 60);
+  if (search && (q.length < 2 || /^\d+$/.test(q) && q.length < 3)) return fail(c, "\u0628\u0631\u0627\u06CC \u062C\u0633\u062A\u062C\u0648 \u062D\u062F\u0627\u0642\u0644 \u06F2 \u062D\u0631\u0641 \u06CC\u0627 \u06F3 \u0631\u0642\u0645 \u0648\u0627\u0631\u062F \u06A9\u0646\u06CC\u062F.", 400, "QUERY_TOO_SHORT");
+  if (!search && q) return fail(c, "\u0628\u0631\u0627\u06CC \u062C\u0633\u062A\u062C\u0648 \u0627\u0632 \u0628\u062E\u0634 \u062C\u0633\u062A\u062C\u0648\u06CC \u0645\u062C\u0627\u0632 \u0627\u0633\u062A\u0641\u0627\u062F\u0647 \u06A9\u0646\u06CC\u062F.", 400, "INVALID_QUERY");
+  const page = search ? 1 : Math.min(1e4, toPositiveInt(c.req.query("page"), 1));
+  const pattern = customerSearchPattern(q);
+  const where = search ? " AND (replace(replace(name,'\u064A','\u06CC'),'\u0643','\u06A9') LIKE ? ESCAPE '!' OR nickname LIKE ? ESCAPE '!' OR phone LIKE ? ESCAPE '!')" : "";
+  const { results } = await c.env.DB.prepare("SELECT id,name,nickname,phone FROM users WHERE role='customer' AND is_active=1" + where + " ORDER BY id DESC LIMIT 21 OFFSET ?").bind(...search ? [pattern, pattern, pattern] : [], (page - 1) * 20).all();
+  return ok(c, { items: (results ?? []).slice(0, 20), hasMore: (results?.length ?? 0) > 20, page });
+}
+app.get("/api/staff/customers/search", requireApiRole("staff", "admin"), staffCustomerChoices);
+app.get("/api/staff/customers", requireApiRole("staff", "admin"), staffCustomerChoices);
 app.get("/api/staff/customer", requireApiRole("staff", "admin"), async (c) => {
   const settings = c.get("settings");
   const phone = normalizePhone(c.req.query("phone") ?? "");
@@ -15555,10 +15805,11 @@ app.get("/api/staff/customer", requireApiRole("staff", "admin"), async (c) => {
     return fail(c, "\u0634\u0645\u0627\u0631\u0647 \u0645\u0648\u0628\u0627\u06CC\u0644 \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "INVALID_PHONE");
   }
   const user = await findUserByPhone(c.env.DB, phone);
-  if (!user || user.role !== "customer") {
+  if (!user || user.role !== "customer" || !user.is_active) {
     return ok(c, { found: false, customer: null });
   }
-  const visitsRow = await c.env.DB.prepare(
+  const minimal = c.get("user").role === "staff" && !can(c.get("user"), "customer.list") && !can(c.get("user"), "customer.search");
+  const visitsRow = minimal ? null : await c.env.DB.prepare(
     "SELECT COUNT(*) AS c FROM invoices WHERE user_id = ? AND voided_at IS NULL"
   ).bind(user.id).first();
   const status = customerActivityStatus(
@@ -15582,6 +15833,8 @@ app.get("/api/staff/customer", requireApiRole("staff", "admin"), async (c) => {
   return ok(c, {
     found: true,
     customer: customerSummaryForApi(user, status, coupons ?? [], {
+      minimal,
+      tierLabels: settings.tier_labels,
       visitEarnedToday,
       pointsMode: settings.points_mode,
       visitPoints: settings.visit_points,
@@ -15593,6 +15846,11 @@ app.get("/api/staff/coupons/check", requireApiRole("staff", "admin"), async (c) 
   const userId = toPositiveInt(c.req.query("userId"), 0);
   const subtotal = toPositiveInt(c.req.query("subtotal"), 0);
   const code = (c.req.query("code") ?? "").trim();
+  if (c.get("user").role === "staff" && !can(c.get("user"), "customer.list") && !can(c.get("user"), "customer.search")) {
+    const phone = normalizePhone(c.req.query("customerPhone") ?? "");
+    const customer = /^09\d{9}$/.test(phone) ? await findUserByPhone(c.env.DB, phone) : null;
+    if (!customer || customer.role !== "customer" || customer.id !== userId) return fail(c, "\u0634\u0645\u0627\u0631\u0647\u0654 \u06A9\u0627\u0645\u0644 \u0645\u0634\u062A\u0631\u06CC \u0644\u0627\u0632\u0645 \u0627\u0633\u062A.", 400, "CUSTOMER_PHONE_REQUIRED");
+  }
   if (!userId || subtotal <= 0) {
     return ok(c, { valid: false, discount: 0, error: "\u0645\u0628\u0644\u063A \u06CC\u0627 \u0645\u0634\u062A\u0631\u06CC \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A." });
   }
@@ -15620,6 +15878,9 @@ app.post("/api/staff/invoices", requireApiRole("staff", "admin"), async (c) => {
   if (!body || typeof body !== "object" || Array.isArray(body)) return fail(c, "\u0641\u0627\u06A9\u062A\u0648\u0631 \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "BAD_JSON");
   const userId = toPositiveInt(body.userId, 0);
   if (!userId) return fail(c, "\u0645\u0634\u062A\u0631\u06CC \u0631\u0627 \u0627\u0646\u062A\u062E\u0627\u0628 \u06A9\u0646\u06CC\u062F.", 400, "INVALID_USER");
+  const restricted = c.get("user").role === "staff" && !can(c.get("user"), "customer.list") && !can(c.get("user"), "customer.search");
+  const customerPhone = restricted ? normalizePhone(String(body.customerPhone ?? "")) : void 0;
+  if (restricted && !/^09\d{9}$/.test(customerPhone ?? "")) return fail(c, "\u0634\u0645\u0627\u0631\u0647\u0654 \u06A9\u0627\u0645\u0644 \u0645\u0634\u062A\u0631\u06CC \u0628\u0631\u0627\u06CC \u062B\u0628\u062A \u0641\u0627\u06A9\u062A\u0648\u0631 \u0644\u0627\u0632\u0645 \u0627\u0633\u062A.", 400, "CUSTOMER_PHONE_REQUIRED");
   const items = Array.isArray(body.items) ? body.items : [];
   if (items.length > 50) return fail(c, "\u062A\u0639\u062F\u0627\u062F \u0622\u06CC\u062A\u0645\u200C\u0647\u0627 \u0628\u06CC\u0634 \u0627\u0632 \u062D\u062F \u0645\u062C\u0627\u0632 \u0627\u0633\u062A.", 400, "TOO_MANY_ITEMS");
   for (const item of items) {
@@ -15670,6 +15931,7 @@ app.post("/api/staff/invoices", requireApiRole("staff", "admin"), async (c) => {
   }
   const result = await recordInvoice(c.env, settings, {
     userId,
+    customerPhone,
     items,
     amount: amountRaw === null || !Number.isFinite(amountRaw) ? null : Math.floor(amountRaw),
     couponCode,
@@ -15713,7 +15975,7 @@ app.get("/api/admin/stats", requireApiRole("admin"), async (c) => {
   );
   return ok(c, stats);
 });
-app.post("/api/admin/customers", requireApiRole("admin"), async (c) => {
+async function createCustomer(c) {
   const settings = c.get("settings");
   let body;
   try {
@@ -15721,25 +15983,31 @@ app.post("/api/admin/customers", requireApiRole("admin"), async (c) => {
   } catch {
     return fail(c, "\u062F\u0627\u062F\u0647\u200C\u0647\u0627\u06CC \u0627\u0631\u0633\u0627\u0644\u06CC \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "BAD_JSON");
   }
+  if (!body || typeof body !== "object" || Array.isArray(body)) return fail(c, "\u062F\u0627\u062F\u0647 \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "BAD_JSON");
+  if (body.nickname !== void 0 && (typeof body.nickname !== "string" || body.nickname.length > 40)) return fail(c, "\u0644\u0642\u0628 \u0628\u0627\u06CC\u062F \u0645\u062A\u0646 \u062D\u062F\u0627\u06A9\u062B\u0631 \u06F4\u06F0 \u062D\u0631\u0641 \u0628\u0627\u0634\u062F.", 400, "INVALID_NICKNAME");
+  const nickname = customerSearchText(String(body.nickname ?? ""));
   const name = String(body.name ?? "").replace(/[<>]/g, "").trim().slice(0, 60);
   const phone = normalizePhone(String(body.phone ?? ""));
   const birthDate = String(body.birth_date ?? "").slice(0, 10);
   const referral = String(body.referral ?? "").trim().slice(0, 30);
   if (name.length < 2) return fail(c, "\u0646\u0627\u0645 \u0631\u0627 \u06A9\u0627\u0645\u0644 \u0648\u0627\u0631\u062F \u06A9\u0646\u06CC\u062F.", 400, "INVALID_NAME");
   if (!/^09\d{9}$/.test(phone)) return fail(c, "\u0634\u0645\u0627\u0631\u0647 \u0645\u0648\u0628\u0627\u06CC\u0644 \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "INVALID_PHONE");
-  if (!isValidBirthDate(birthDate)) return fail(c, "\u062A\u0627\u0631\u06CC\u062E \u062A\u0648\u0644\u062F \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "INVALID_BIRTH_DATE");
+  if (birthDate && !isValidBirthDate(birthDate)) return fail(c, "\u062A\u0627\u0631\u06CC\u062E \u062A\u0648\u0644\u062F \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "INVALID_BIRTH_DATE");
   const result = await registerCustomer(c.env, settings, {
     name,
     phone,
-    birth_date: birthDate,
+    birth_date: birthDate || null,
+    nickname,
     referral: referral || null,
     sms_opt_in: body.sms_opt_in === false || body.sms_opt_in === 0 ? 0 : 1
   });
   if (result.ok === false) {
     return fail(c, result.error, result.code === "PHONE_EXISTS" ? 409 : 400, result.code);
   }
-  return ok(c, { id: result.user.id, name: result.user.name, referralCode: result.referralCode }, 201);
-});
+  return ok(c, { id: result.user.id, name: result.user.name, phone: result.user.phone, nickname: result.user.nickname, referralCode: result.referralCode }, 201);
+}
+app.post("/api/admin/customers", requireApiRole("admin"), createCustomer);
+app.post("/api/staff/customers", requireApiRole("staff", "admin"), createCustomer);
 app.put("/api/admin/customers/:id", requireApiRole("admin"), async (c) => {
   const id = toPositiveInt(c.req.param("id"), 0);
   if (!id) return fail(c, "\u0634\u0646\u0627\u0633\u0647 \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "INVALID_ID");
@@ -15749,6 +16017,8 @@ app.put("/api/admin/customers/:id", requireApiRole("admin"), async (c) => {
   } catch {
     return fail(c, "\u062F\u0627\u062F\u0647\u200C\u0647\u0627\u06CC \u0627\u0631\u0633\u0627\u0644\u06CC \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "BAD_JSON");
   }
+  if (!body || typeof body !== "object" || Array.isArray(body)) return fail(c, "\u062F\u0627\u062F\u0647 \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "BAD_JSON");
+  if (body.nickname !== void 0 && (typeof body.nickname !== "string" || body.nickname.length > 40)) return fail(c, "\u0644\u0642\u0628 \u0628\u0627\u06CC\u062F \u062D\u062F\u0627\u06A9\u062B\u0631 \u06F4\u06F0 \u062D\u0631\u0641 \u0628\u0627\u0634\u062F.", 400, "INVALID_NICKNAME");
   const user = await findUserById(c.env.DB, id);
   if (!user)
     return fail(c, "\u0645\u0634\u062A\u0631\u06CC \u06CC\u0627\u0641\u062A \u0646\u0634\u062F.", 404, "NOT_FOUND");
@@ -15759,14 +16029,14 @@ app.put("/api/admin/customers/:id", requireApiRole("admin"), async (c) => {
   const birthDate = String(body.birth_date ?? "").slice(0, 10);
   if (name.length < 2) return fail(c, "\u0646\u0627\u0645 \u0631\u0627 \u06A9\u0627\u0645\u0644 \u0648\u0627\u0631\u062F \u06A9\u0646\u06CC\u062F.", 400, "INVALID_NAME");
   if (!/^09\d{9}$/.test(phone)) return fail(c, "\u0634\u0645\u0627\u0631\u0647 \u0645\u0648\u0628\u0627\u06CC\u0644 \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "INVALID_PHONE");
-  if (!isValidBirthDate(birthDate)) return fail(c, "\u062A\u0627\u0631\u06CC\u062E \u062A\u0648\u0644\u062F \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "INVALID_BIRTH_DATE");
+  if (birthDate && !isValidBirthDate(birthDate)) return fail(c, "\u062A\u0627\u0631\u06CC\u062E \u062A\u0648\u0644\u062F \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "INVALID_BIRTH_DATE");
   if (phone !== user.phone) {
     const duplicate = await findUserByPhone(c.env.DB, phone);
     if (duplicate && duplicate.id !== id) {
       return fail(c, "\u0627\u06CC\u0646 \u0634\u0645\u0627\u0631\u0647 \u0645\u0648\u0628\u0627\u06CC\u0644 \u0642\u0628\u0644\u0627\u064B \u0628\u0631\u0627\u06CC \u06A9\u0627\u0631\u0628\u0631 \u062F\u06CC\u06AF\u0631\u06CC \u062B\u0628\u062A \u0634\u062F\u0647 \u0627\u0633\u062A.", 409, "PHONE_EXISTS");
     }
   }
-  await c.env.DB.prepare("UPDATE users SET name = ?, phone = ?, birth_date = ? WHERE id = ?").bind(name, phone, birthDate, id).run();
+  await c.env.DB.prepare("UPDATE users SET name = ?, phone = ?, birth_date = ?, nickname = ? WHERE id = ?").bind(name, phone, birthDate || null, body.nickname === void 0 ? user.nickname ?? "" : customerSearchText(String(body.nickname)), id).run();
   return ok(c, { updated: true });
 });
 app.post("/api/admin/customers/:id/points", requireApiRole("admin"), async (c) => {
@@ -16039,7 +16309,7 @@ app.post("/api/admin/invoices/:id/correct", requireApiRole("admin"), async (c) =
     manualDiscount: discount
   });
   if (created.ok === false) {
-    return fail(c, created.error, 400, created.code);
+    return fail(c, created.error, created.code === "REQUEST_ID_CONFLICT" ? 409 : 400, created.code);
   }
   if (created.duplicate) return fail(c, "\u0627\u06CC\u0646 \u0634\u0646\u0627\u0633\u0647 \u062F\u0631\u062E\u0648\u0627\u0633\u062A \u0642\u0628\u0644\u0627\u064B \u0627\u0633\u062A\u0641\u0627\u062F\u0647 \u0634\u062F\u0647 \u0627\u0633\u062A\u061B \u0646\u062A\u06CC\u062C\u0647 \u0627\u0635\u0644\u0627\u062D \u0631\u0627 \u062F\u0631 \u062A\u0627\u0631\u06CC\u062E\u0686\u0647 \u0628\u0631\u0631\u0633\u06CC \u06A9\u0646\u06CC\u062F.", 409, "REQUEST_ID_CONFLICT");
   const voided = await voidInvoice(c.env, settings, id, user.uid, {
@@ -16279,6 +16549,38 @@ app.post("/api/admin/fallback/diagnose", requireApiRole("admin"), async (c) => {
   });
   return ok(c, report);
 });
+app.post("/api/admin/fallback/send", requireApiRole("admin"), async (c) => {
+  const { dbRateLimit: dbRateLimit2 } = await Promise.resolve().then(() => (init_otp(), otp_exports));
+  const rate = await dbRateLimit2(c.env.DB, "fallback:manual:" + c.get("user").uid, 3, 60);
+  if (!rate) return fail(c, "\u062B\u0628\u062A \u062F\u0631\u062E\u0648\u0627\u0633\u062A \u0641\u0639\u0644\u0627\u064B \u062F\u0631 \u062F\u0633\u062A\u0631\u0633 \u0646\u06CC\u0633\u062A.", 503, "RATE_LIMIT_UNAVAILABLE");
+  if (!rate.allowed) {
+    c.header("Retry-After", String(rate.retryAfter));
+    return fail(c, "\u062D\u062F\u0627\u06A9\u062B\u0631 \u06F3 \u062F\u0631\u062E\u0648\u0627\u0633\u062A \u062F\u0633\u062A\u06CC \u062F\u0631 \u062F\u0642\u06CC\u0642\u0647.", 429, "RATE_LIMITED");
+  }
+  let body;
+  try {
+    body = await c.req.json();
+  } catch {
+    return fail(c, "JSON \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "BAD_JSON");
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) return fail(c, "\u062F\u0631\u062E\u0648\u0627\u0633\u062A \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "BAD_JSON");
+  if (body.confirmAdminOnly !== true) return fail(c, "\u062A\u0623\u06CC\u06CC\u062F \u06A9\u0646\u06CC\u062F \u0627\u06CC\u0646 \u0627\u0631\u0633\u0627\u0644 \u0628\u0647 \u0627\u062F\u0645\u06CC\u0646 \u0627\u0633\u062A\u060C \u0646\u0647 \u067E\u06CC\u0627\u0645\u06A9 \u0628\u0647 \u0645\u0634\u062A\u0631\u06CC.", 400, "CONFIRM_REQUIRED");
+  if (!["telegram", "bale", "both"].includes(String(body.channel))) return fail(c, "\u0645\u0642\u0635\u062F \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "INVALID_CHANNEL");
+  if (typeof body.requestId !== "string" || !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(body.requestId)) return fail(c, "\u0634\u0646\u0627\u0633\u0647 \u062F\u0631\u062E\u0648\u0627\u0633\u062A \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "INVALID_REQUEST_ID");
+  if (typeof body.message !== "string" || !body.message.trim() || body.message.length > 2e3 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(body.message)) return fail(c, "\u0645\u062A\u0646 \u0628\u0627\u06CC\u062F \u0628\u06CC\u0646 \u06F1 \u0648 \u06F2\u06F0\u06F0\u06F0 \u06A9\u0627\u0631\u0627\u06A9\u062A\u0631 \u0628\u0627\u0634\u062F.", 400, "INVALID_MESSAGE");
+  const phone = normalizePhone(String(body.phone ?? ""));
+  if (phone && !/^09\d{9}$/.test(phone)) return fail(c, "\u0634\u0645\u0627\u0631\u0647\u0654 \u0645\u0631\u062A\u0628\u0637 \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "INVALID_PHONE");
+  const config = await loadFallbackConfig(c.env);
+  if (!config.channels.length || body.channel !== "both" && !config.channels.some((channel) => channel.channel === body.channel)) return fail(c, "\u0627\u0628\u062A\u062F\u0627 \u0645\u0642\u0635\u062F \u0631\u0627 \u062F\u0631 \u0647\u0645\u06CC\u0646 \u067E\u0646\u0644 \u0630\u062E\u06CC\u0631\u0647 \u06A9\u0646\u06CC\u062F.", 400, "CHANNEL_NOT_CONFIGURED");
+  let ids;
+  try {
+    ids = await enqueueFallback(c.env, { phone, userId: null, message: body.message.trim(), type: "manual", title: "\u067E\u06CC\u0627\u0645 \u062F\u0633\u062A\u06CC \u0645\u062F\u06CC\u0631", eventKey: "manual:" + c.get("user").uid + ":" + body.requestId }, "manual", body.channel === "both" ? void 0 : body.channel);
+  } catch {
+    return fail(c, "\u0646\u062A\u06CC\u062C\u0647\u0654 \u062B\u0628\u062A \u0642\u0637\u0639\u06CC \u0646\u06CC\u0633\u062A\u061B \u0628\u0627 \u0647\u0645\u06CC\u0646 \u062F\u0631\u062E\u0648\u0627\u0633\u062A \u062F\u0648\u0628\u0627\u0631\u0647 \u062A\u0644\u0627\u0634 \u06A9\u0646\u06CC\u062F \u0648 \u062A\u0627\u0631\u06CC\u062E\u0686\u0647 \u0631\u0627 \u0628\u0631\u0631\u0633\u06CC \u06A9\u0646\u06CC\u062F. \u062A\u0646\u0638\u06CC\u0645\u0627\u062A\u060C \u06A9\u0644\u06CC\u062F \u06CC\u0627 \u0638\u0631\u0641\u06CC\u062A \u0635\u0641 \u0645\u0645\u06A9\u0646 \u0627\u0633\u062A \u0646\u06CC\u0627\u0632 \u0628\u0647 \u0628\u0631\u0631\u0633\u06CC \u062F\u0627\u0634\u062A\u0647 \u0628\u0627\u0634\u062F.", 503, "MANUAL_QUEUE_UNAVAILABLE");
+  }
+  await logAdminAction(c.env.DB, { adminId: c.get("user").uid, adminName: c.get("user").name, action: "fallback_manual", targetType: "messenger", targetId: body.channel, details: ids.join(" | ") });
+  return ok(c, { ids, message: "\u062F\u0631 \u0635\u0641 \u0642\u0631\u0627\u0631 \u06AF\u0631\u0641\u062A\u061B \u0646\u062A\u06CC\u062C\u0647\u0654 API \u0647\u0631 \u0645\u0642\u0635\u062F \u062C\u062F\u0627\u06AF\u0627\u0646\u0647 \u062F\u0631 \u062A\u0627\u0631\u06CC\u062E\u0686\u0647 \u0646\u0645\u0627\u06CC\u0634 \u062F\u0627\u062F\u0647 \u0645\u06CC\u200C\u0634\u0648\u062F." }, 202);
+});
 app.post("/api/admin/fallback/test", requireApiRole("admin"), async (c) => {
   const { dbRateLimit: dbRateLimit2 } = await Promise.resolve().then(() => (init_otp(), otp_exports));
   const limit = await dbRateLimit2(c.env.DB, "fallback:test:" + c.get("user").uid, 3, 60);
@@ -16361,6 +16663,11 @@ app.put("/api/admin/settings", requireApiRole("admin"), async (c) => {
     return fail(c, "\u062F\u0627\u062F\u0647\u200C\u0647\u0627\u06CC \u0627\u0631\u0633\u0627\u0644\u06CC \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "BAD_JSON");
   }
   if (!body || typeof body !== "object" || Array.isArray(body)) return fail(c, "\u062A\u0646\u0638\u06CC\u0645\u0627\u062A \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "BAD_JSON");
+  if (body.tier_labels !== void 0) {
+    const labels = body.tier_labels;
+    if (!labels || typeof labels !== "object" || Array.isArray(labels) || Object.keys(labels).sort().join(",") !== "bronze,gold,silver,vip" || Object.values(labels).some((v) => typeof v !== "string" || !v.trim() || v.trim().length > 30 || /[<>\u0000-\u001f]/.test(v)))
+      return fail(c, "\u0646\u0627\u0645 \u0647\u0631 \u0686\u0647\u0627\u0631 \u0633\u0637\u062D \u0628\u0627\u06CC\u062F \u0645\u062A\u0646 \u063A\u06CC\u0631\u062E\u0627\u0644\u06CC \u062D\u062F\u0627\u06A9\u062B\u0631 \u06F3\u06F0 \u062D\u0631\u0641 \u0628\u0627\u0634\u062F.", 400, "INVALID_TIER_LABELS");
+  }
   if (body.points_mode !== void 0 && !["amount", "visit", "invoice"].includes(String(body.points_mode)))
     return fail(c, "\u0631\u0648\u0634 \u0627\u0645\u062A\u06CC\u0627\u0632\u062F\u0647\u06CC \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "INVALID_POINTS_POLICY");
   for (const [key, min, max] of [["invoice_points", 0, 1e5], ["visit_points", 1, 1e5], ["visit_min_amount", 0, 1e8], ["currency_unit", 1, 1e7], ["points_per_currency", 1, 1e3]]) {
@@ -16375,6 +16682,7 @@ app.put("/api/admin/settings", requireApiRole("admin"), async (c) => {
     updates[key] = value;
   };
   try {
+    if (body.tier_labels !== void 0) stage("tier_labels", Object.fromEntries(Object.entries(body.tier_labels).map(([key, value]) => [key, value.trim()])));
     if (body.cafe_name !== void 0) {
       stage("cafe_name", String(body.cafe_name).trim().slice(0, 60) || "\u06A9\u0627\u0641\u0647");
     }
@@ -16560,6 +16868,9 @@ app.post("/api/admin/staff", requireApiRole("admin"), async (c) => {
   } catch {
     return fail(c, "\u062F\u0627\u062F\u0647\u200C\u0647\u0627\u06CC \u0627\u0631\u0633\u0627\u0644\u06CC \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "BAD_JSON");
   }
+  if (!body || typeof body !== "object" || Array.isArray(body)) return fail(c, "\u062F\u0627\u062F\u0647 \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "BAD_JSON");
+  if (body.permissions !== void 0 && !validatePermissions(body.permissions)) return fail(c, "\u062F\u0633\u062A\u0631\u0633\u06CC\u200C\u0647\u0627 \u0646\u0627\u0645\u0639\u062A\u0628\u0631\u0646\u062F.", 400, "INVALID_PERMISSIONS");
+  if (body.role !== void 0 && !["admin", "staff"].includes(String(body.role))) return fail(c, "\u0646\u0642\u0634 \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "INVALID_ROLE");
   const name = String(body.name ?? "").replace(/[<>]/g, "").trim().slice(0, 60);
   const phone = normalizePhone(String(body.phone ?? ""));
   const role = body.role === "admin" ? "admin" : "staff";
@@ -16574,9 +16885,9 @@ app.post("/api/admin/staff", requireApiRole("admin"), async (c) => {
   const passwordHash = await hashPassword(password);
   const referralCode = generateCouponCode("REF");
   const result = await c.env.DB.prepare(
-    `INSERT INTO users (name, phone, role, is_active, password_hash, referral_code)
-     VALUES (?, ?, ?, 1, ?, ?)`
-  ).bind(name, phone, role, passwordHash, referralCode).run();
+    `INSERT INTO users (name, phone, role, is_active, password_hash, referral_code, permissions)
+     VALUES (?, ?, ?, 1, ?, ?, ?)`
+  ).bind(name, phone, role, passwordHash, referralCode, JSON.stringify(body.permissions ?? LEGACY_STAFF_PERMISSIONS)).run();
   return ok(
     c,
     {
@@ -16598,6 +16909,9 @@ app.put("/api/admin/staff/:id", requireApiRole("admin"), async (c) => {
   } catch {
     return fail(c, "\u062F\u0627\u062F\u0647\u200C\u0647\u0627\u06CC \u0627\u0631\u0633\u0627\u0644\u06CC \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "BAD_JSON");
   }
+  if (!body || typeof body !== "object" || Array.isArray(body)) return fail(c, "\u062F\u0627\u062F\u0647 \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "BAD_JSON");
+  if (body.permissions !== void 0 && !validatePermissions(body.permissions)) return fail(c, "\u062F\u0633\u062A\u0631\u0633\u06CC\u200C\u0647\u0627 \u0646\u0627\u0645\u0639\u062A\u0628\u0631\u0646\u062F.", 400, "INVALID_PERMISSIONS");
+  if (body.role !== void 0 && !["staff", "admin"].includes(String(body.role))) return fail(c, "\u0646\u0642\u0634 \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "INVALID_ROLE");
   const target = await findUserById(c.env.DB, id);
   if (!target || target.role !== "staff" && target.role !== "admin") {
     return fail(c, "\u06A9\u0627\u0631\u0628\u0631 \u06CC\u0627\u0641\u062A \u0646\u0634\u062F.", 404, "NOT_FOUND");
@@ -16615,15 +16929,15 @@ app.put("/api/admin/staff/:id", requireApiRole("admin"), async (c) => {
         return fail(c, "\u062D\u062F\u0627\u0642\u0644 \u06CC\u06A9 \u0627\u062F\u0645\u06CC\u0646 \u0641\u0639\u0627\u0644 \u0628\u0627\u06CC\u062F \u0628\u0627\u0642\u06CC \u0628\u0645\u0627\u0646\u062F.", 400, "LAST_ADMIN");
       }
     }
-    await c.env.DB.prepare("UPDATE users SET is_active = ? WHERE id = ?").bind(nextActive, id).run();
   }
   if (body.role !== void 0) {
     const nextRole = body.role === "admin" ? "admin" : "staff";
     if (id === currentUser.uid && nextRole !== "admin") {
       return fail(c, "\u0646\u0645\u06CC\u200C\u062A\u0648\u0627\u0646\u06CC\u062F \u0646\u0642\u0634 \u062E\u0648\u062F\u062A\u0627\u0646 \u0631\u0627 \u062A\u063A\u06CC\u06CC\u0631 \u062F\u0647\u06CC\u062F.", 400, "SELF_ROLE");
     }
-    await c.env.DB.prepare("UPDATE users SET role = ? WHERE id = ?").bind(nextRole, id).run();
   }
+  await c.env.DB.prepare("UPDATE users SET is_active=?,role=?,permissions=? WHERE id=?").bind(body.is_active === void 0 ? target.is_active : Number(body.is_active) === 1 ? 1 : 0, body.role ?? target.role, body.permissions === void 0 ? target.permissions ?? null : JSON.stringify(body.permissions), id).run();
+  await audit(c, "staff_permissions_update", { targetType: "staff", targetId: id, details: "\u062F\u0633\u062A\u0631\u0633\u06CC \u06CC\u0627 \u0648\u0636\u0639\u06CC\u062A \u06A9\u0627\u0631\u0645\u0646\u062F \u0628\u0647\u200C\u0631\u0648\u0632\u0631\u0633\u0627\u0646\u06CC \u0634\u062F\u061B \u0627\u0639\u0645\u0627\u0644 \u062F\u0631 \u062F\u0631\u062E\u0648\u0627\u0633\u062A \u0628\u0639\u062F\u06CC." });
   return ok(c, { updated: true });
 });
 app.post("/api/admin/staff/:id/password", requireApiRole("admin"), async (c) => {

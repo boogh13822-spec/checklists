@@ -8,8 +8,8 @@ import { adapters, validBotToken, validChatId, type FallbackChannel } from './fa
 import { formatJalaliDateTime, normalizePhone } from './utils';
 
 export type ChannelConfig = { channel: FallbackChannel; chatId: string; token: string };
-export type FallbackConfig = { enabled: boolean; channels: ChannelConfig[]; notifyEnabled?: boolean; notifyInvoices?: boolean; notifyActions?: boolean; configured?: true };
-export type FallbackPayload = { phone: string; message: string; requestedAt: string; userId: number | null; title?: string };
+export type FallbackConfig = { enabled: boolean; channels: ChannelConfig[]; notifyErrors?: boolean; notifyEnabled?: boolean; notifyInvoices?: boolean; notifyActions?: boolean; configured?: true };
+export type FallbackPayload = { phone: string; message: string; requestedAt: string; userId: number | null; title?: string; reason?: string };
 export type FallbackJob = {
   id: string; channel: FallbackChannel; chat_id: string; user_id: number | null;
   type: string; payload: string; reason: string; status: string; attempts: number;
@@ -52,7 +52,7 @@ export function safeFallbackConfig(env: Bindings, config: FallbackConfig) {
   let encryptionKeyConfigured = false;
   try { encryptionKeyConfigured = base64ToBytes(env.FALLBACK_ENCRYPTION_KEY ?? '').length === 32; } catch { /* invalid key */ }
   return { enabled: config.enabled, notifyEnabled: config.notifyEnabled === true,
-    notifyInvoices: config.notifyInvoices !== false, notifyActions: config.notifyActions !== false, encryptionKeyConfigured,
+    notifyErrors: config.notifyErrors !== false, notifyInvoices: config.notifyInvoices !== false, notifyActions: config.notifyActions !== false, encryptionKeyConfigured,
     channels: config.channels.map(c => ({ channel: c.channel, chatId: c.chatId,
       hasToken: !!c.token || !!(c.channel === 'telegram' ? env.TELEGRAM_BOT_TOKEN : env.BALE_BOT_TOKEN),
       tokenSource: (c.channel === 'telegram' ? env.TELEGRAM_BOT_TOKEN : env.BALE_BOT_TOKEN) ? 'env' : c.token ? 'database' : 'none' })) };
@@ -62,9 +62,10 @@ export async function saveFallbackConfig(env: Bindings, body: unknown): Promise<
   const input = body as Record<string, unknown>;
   if (typeof input.enabled !== 'boolean' || !Array.isArray(input.channels) || input.channels.length > 2) throw new Error('سوئیچ و فهرست مقصدها نامعتبر است.');
   const previous = await loadFallbackConfig(env);
-  for (const key of ['notifyEnabled','notifyInvoices','notifyActions']) {
+  for (const key of ['notifyEnabled','notifyInvoices','notifyActions','notifyErrors']) {
     if (input[key] !== undefined && typeof input[key] !== 'boolean') throw new Error('سوئیچ گزارش مدیریت نامعتبر است.');
   }
+  const notifyErrors = input.notifyErrors === undefined ? previous.notifyErrors !== false : input.notifyErrors === true;
   const notifyEnabled = input.notifyEnabled === undefined ? previous.notifyEnabled === true : input.notifyEnabled === true;
   const notifyInvoices = input.notifyInvoices === undefined ? previous.notifyInvoices !== false : input.notifyInvoices === true;
   const notifyActions = input.notifyActions === undefined ? previous.notifyActions !== false : input.notifyActions === true;
@@ -93,15 +94,16 @@ export async function saveFallbackConfig(env: Bindings, body: unknown): Promise<
   // Single atomic setting write: validation errors never partially update the config.
   await env.DB.batch([
     env.DB.prepare(`INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`)
-      .bind(CONFIG_KEY, JSON.stringify({ enabled: input.enabled, channels, notifyEnabled, notifyInvoices, notifyActions })),
+      .bind(CONFIG_KEY, JSON.stringify({ enabled: input.enabled, channels, notifyErrors, notifyEnabled, notifyInvoices, notifyActions })),
     // Pending work for removed destinations must not be sent or kept indefinitely.
     env.DB.prepare(`UPDATE fallback_jobs SET status='skipped',error='CONFIG_CHANGED: مقصد حذف یا مسیر خاموش شد.',
       payload=CASE WHEN type='otp' THEN '' ELSE payload END,completed_at=datetime('now')
       WHERE status='pending' AND (
         NOT EXISTS (SELECT 1 FROM json_each(?) WHERE json_extract(value,'$.channel')=fallback_jobs.channel AND json_extract(value,'$.chatId')=fallback_jobs.chat_id)
-        OR (reason NOT IN ('test','event') AND ?=0)
-        OR (reason='event' AND (?=0 OR (type='report_invoice' AND ?=0) OR (type='report_action' AND ?=0))))`)
-      .bind(JSON.stringify(channels), input.enabled ? 1 : 0, notifyEnabled ? 1 : 0, notifyInvoices ? 1 : 0, notifyActions ? 1 : 0),
+        OR (reason NOT IN ('test','event','manual') AND ?=0)
+        OR (reason='event' AND type!='report_error' AND (?=0 OR (type='report_invoice' AND ?=0) OR (type='report_action' AND ?=0)))
+        OR (type='report_error' AND ?=0))`)
+      .bind(JSON.stringify(channels), input.enabled ? 1 : 0, notifyEnabled ? 1 : 0, notifyInvoices ? 1 : 0, notifyActions ? 1 : 0, notifyErrors ? 1 : 0),
   ]);
 }
 
@@ -122,14 +124,14 @@ export function smsPanelActive(env: Bindings, settings: AppSettings): boolean {
 }
 
 export async function enqueueFallback(env: Bindings, params: { phone: string; message: string; userId: number | null; type: string; expiresAt?: number; eventKey?: string; title?: string },
-  reason: 'inactive' | 'primary_failed' | 'test' | 'event', testChannel?: FallbackChannel): Promise<string[]> {
+  reason: 'inactive' | 'primary_failed' | 'test' | 'event' | 'manual', testChannel?: FallbackChannel): Promise<string[]> {
   const config = await loadFallbackConfig(env);
-  if (reason === 'event' ? (!config.notifyEnabled || (params.type === 'report_invoice' ? config.notifyInvoices === false : config.notifyActions === false)) : (!config.enabled && reason !== 'test')) return [];
+  if (params.type === 'report_error' ? config.notifyErrors === false : reason === 'event' ? (!config.notifyEnabled || (params.type === 'report_invoice' ? config.notifyInvoices === false : config.notifyActions === false)) : (!config.enabled && reason !== 'test' && reason !== 'manual')) return [];
   const phone = normalizePhone(params.phone);
-  if ((reason !== 'event' && !/^09\d{9}$/.test(phone)) || (phone && !/^09\d{9}$/.test(phone)) || !params.message.trim()) throw new Error('INVALID_FALLBACK_MESSAGE');
+  if ((reason !== 'event' && reason !== 'manual' && !/^09\d{9}$/.test(phone)) || (phone && !/^09\d{9}$/.test(phone)) || !params.message.trim()) throw new Error('INVALID_FALLBACK_MESSAGE');
   if (params.message.length > 2000) throw new Error('MESSAGE_TOO_LONG');
   const selected = config.channels.filter(c => !testChannel || c.channel === testChannel);
-  if (!selected.length) throw new Error('هیچ مقصد ذخیره‌شده‌ای انتخاب نشده است.');
+  if (!selected.length) { if(params.type === 'report_error') return []; throw new Error('هیچ مقصد ذخیره‌شده‌ای انتخاب نشده است.'); }
   const now = Date.now();
   const ids: string[] = [];
   const bindings: (string | number | null)[] = [];
@@ -138,7 +140,7 @@ export async function enqueueFallback(env: Bindings, params: { phone: string; me
   for (const c of selected) {
     if (!validChatId(c.chatId) || !validBotToken(await channelToken(env, c))) throw new Error('تنظیمات مقصد کامل نیست.');
     const id = params.eventKey ? 'event-' + await sha256Hex(params.eventKey + ':' + c.channel + ':' + c.chatId) : crypto.randomUUID();
-    const payload = await seal(env, { phone, message: params.message, requestedAt: new Date(now).toISOString(), userId: params.userId, title: params.title }, `job:${id}`);
+    const payload = await seal(env, { phone, message: params.message, requestedAt: new Date(now).toISOString(), userId: params.userId, title: params.title, reason }, `job:${id}`);
     rows.push('SELECT ? AS id,? AS channel,? AS chat_id,? AS user_id,? AS type,? AS payload,? AS reason,? AS next_at,? AS expires_at');
     bindings.push(id, c.channel, c.chatId, params.userId, params.type, payload, reason, now, Math.min(now + (params.type === 'otp' ? 110_000 : 86_400_000), params.expiresAt ?? Infinity));
     ids.push(id);
@@ -162,9 +164,20 @@ export async function enqueueFallback(env: Bindings, params: { phone: string; me
   return ids;
 }
 
+/** No raw provider text, credentials, customer body or OTP in error notices. */
+export async function enqueueDeliveryAlert(env: Bindings, reference: string, code: string, failedChannel?: FallbackChannel): Promise<string[]> {
+  const safeCode = /^[A-Z_]{3,40}$/.test(code) ? code : 'DELIVERY_FAILED';
+  return enqueueFallback(env,{phone:'',userId:null,type:'report_error',title:'هشدار خطای ارسال',
+    eventKey:'delivery-error:'+reference,
+    message:`خطای ارسال ${failedChannel === 'telegram' ? 'تلگرام' : failedChannel === 'bale' ? 'بله' : 'پیامک'}\nکد: ${safeCode}\nپیگیری: ${reference}\nجزئیات و وضعیت هر مقصد در پنل پیام‌های ادمین ثبت شده است. پیام اصلی خودکار تکرار نشده است.`,
+  },'event',failedChannel ? failedChannel === 'telegram' ? 'bale' : 'telegram' : undefined);
+}
+
 export function formatFallbackMessage(p: FallbackPayload, type: string): string {
+  if (type === 'manual') return [p.title || 'پیام دستی مدیر', `زمان: ${formatJalaliDateTime(p.requestedAt)}`,p.phone ? `شمارهٔ مرتبط:\n${p.phone}` : '',p.message].filter(Boolean).join('\n\n');
   if (type.startsWith('report_')) return [p.title || 'گزارش مدیریت', `زمان: ${formatJalaliDateTime(p.requestedAt)}`, p.phone ? `شماره مشتری:\n${p.phone}` : '', p.message].filter(Boolean).join('\n\n');
   return ['ارسال دستی پیامک — این پیام فقط به ادمین رسیده است',
+    p.reason === 'primary_failed' ? '⚠️ ارسال اصلی پیامک ناموفق بود؛ رسیدن این پیام به ادمین، تحویل پیامک به مشتری نیست.' : '',
     `شماره مشترک:\n${p.phone}`, `زمان درخواست: ${formatJalaliDateTime(p.requestedAt)}`,
     `نوع: ${{welcome:'خوش‌آمد',invoice:'رسید خرید',birthday:'تولد',churn:'یادآوری حضور',weather:'آب‌وهوا',referral:'معرفی',otp:'کد ورود',redeem:'تبدیل امتیاز',admin:'تست اتصال'}[type] || type}`, p.userId !== null ? `شناسه کاربر: ${p.userId}` : '',
     type === 'otp' ? '⚠️ کد ورود محرمانه است؛ حداکثر تا ۲ دقیقه پس از درخواست معتبر است. در کانال عمومی نفرستید.' : '',
@@ -195,7 +208,7 @@ export async function processFallbackQueue(env: Bindings, maintenance = false): 
     await env.DB.prepare(`UPDATE fallback_jobs SET status='expired',error='EXPIRED: مهلت ارسال تمام شد.',payload=CASE WHEN type='otp' THEN '' ELSE payload END,completed_at=datetime('now')
       WHERE status='pending' AND expires_at<=?`).bind(now).run();
     const job = await env.DB.prepare(`UPDATE fallback_jobs SET status='processing',locked_at=?,attempts=attempts+1
-      WHERE id=(SELECT id FROM fallback_jobs WHERE status='pending' AND next_at<=? AND channel NOT IN (SELECT channel FROM fallback_channel_limits WHERE until_ms>?) ORDER BY CASE WHEN type='otp' THEN 0 WHEN reason='test' THEN 1 WHEN reason='event' THEN 3 ELSE 2 END,next_at,rowid LIMIT 1)
+      WHERE id=(SELECT id FROM fallback_jobs WHERE status='pending' AND next_at<=? AND channel NOT IN (SELECT channel FROM fallback_channel_limits WHERE until_ms>?) ORDER BY CASE WHEN type='otp' THEN 0 WHEN reason='test' THEN 1 WHEN type='report_error' THEN 2 WHEN reason='event' THEN 4 ELSE 3 END,next_at,rowid LIMIT 1)
       AND status='pending' RETURNING *`).bind(now, now, now).first<FallbackJob>();
     if (!job) return false;
     let status = 'failed', error: string | null = null, providerId: string | null = null;
@@ -204,7 +217,7 @@ export async function processFallbackQueue(env: Bindings, maintenance = false): 
       const channel = config.channels.find(c => c.channel === job.channel && c.chatId === job.chat_id);
       const { loadSettings } = await import('./settings');
       const settings = job.reason === 'inactive' ? await loadSettings(env, true) : null;
-      if (!channel || (job.reason === 'event' ? (!config.notifyEnabled || (job.type === 'report_invoice' ? config.notifyInvoices === false : config.notifyActions === false)) : (!config.enabled && job.reason !== 'test')) || (job.reason === 'inactive' && settings && smsPanelActive(env, settings))) {
+      if (!channel || (job.type === 'report_error' ? config.notifyErrors === false : job.reason === 'event' ? (!config.notifyEnabled || (job.type === 'report_invoice' ? config.notifyInvoices === false : config.notifyActions === false)) : (!config.enabled && job.reason !== 'test' && job.reason !== 'manual')) || (job.reason === 'inactive' && settings && smsPanelActive(env, settings))) {
         status = 'skipped'; error = 'CONFIG_CHANGED: مسیر جایگزین خاموش یا مقصد/پنل اصلی تغییر کرده است.';
       } else if (job.expires_at <= Date.now() + 12_000) {
         status = 'expired'; error = 'EXPIRED';
@@ -231,6 +244,15 @@ export async function processFallbackQueue(env: Bindings, maintenance = false): 
       payload=CASE WHEN type='otp' AND ?!='pending' THEN '' ELSE payload END,
       completed_at=CASE WHEN ?='pending' THEN NULL ELSE datetime('now') END WHERE id=? AND status='processing'`)
       .bind(status, error, providerId, nextAt, status, status, job.id).run();
+    if (status === 'failed' && job.type !== 'report_error') {
+      // One bounded cross-channel alert; never replay the original and never recurse.
+      const code = /^[A-Z_]{3,40}:/.exec(error ?? '')?.[0].slice(0,-1) ?? 'DELIVERY_FAILED';
+      try {
+        await env.DB.prepare('INSERT INTO admin_logs(admin_id,admin_name,action,target_type,target_id,details) VALUES(NULL,?,?,?,?,?)')
+          .bind('سیستم','fallback_delivery_failed','messenger',job.id,job.channel + ': ' + code).run();
+        await enqueueDeliveryAlert(env,'job:'+job.id+':'+now,code,job.channel);
+      } catch { console.error('DELIVERY_ALERT_QUEUE_FAILED', job.id); }
+    }
     // OTP body never appears in history, even while pending.
     return true;
   } finally {
@@ -278,7 +300,7 @@ export async function retryFallbackJob(env: Bindings, id: string, confirmDuplica
   if (!certain && !confirmDuplicateRisk) throw new Error('CONFIRM_DUPLICATE_RISK');
   const config = await loadFallbackConfig(env);
   const channel = config.channels.find(c => c.channel === job.channel && c.chatId === job.chat_id);
-  if (!channel || (job.reason === 'event' ? (!config.notifyEnabled || (job.type === 'report_invoice' ? config.notifyInvoices === false : config.notifyActions === false)) : (!config.enabled && job.reason !== 'test')))
+  if (!channel || (job.type === 'report_error' ? config.notifyErrors === false : job.reason === 'event' ? (!config.notifyEnabled || (job.type === 'report_invoice' ? config.notifyInvoices === false : config.notifyActions === false)) : (!config.enabled && job.reason !== 'test' && job.reason !== 'manual')))
     throw new Error('CONFIG_CHANGED');
   if (!validBotToken(await channelToken(env, channel))) throw new Error('INVALID_TOKEN');
   await unseal<FallbackPayload>(env, job.payload, `job:${job.id}`);

@@ -168,6 +168,7 @@ export function registerPage(
             </div>
           </div>
 
+          <div><label class="label" for="nickname">لقب (اختیاری)</label><input id="nickname" class="field" maxlength="40" autocomplete="off" placeholder="مثلاً آقای قهوه" /></div>
           <div>
             <label class="label" for="phone">شماره موبایل <span class="text-rose-400">*</span></label>
             <div class="relative">
@@ -258,10 +259,10 @@ export function registerPage(
           <div class="text-3xl mb-3">☕</div>
           <h3 class="font-bold text-sm mb-2">سطح‌های عضویت</h3>
           <div class="space-y-2 text-[11.5px] text-cream/55">
-            <div class="flex items-center justify-between"><span>🥉 برنزی</span><span>شروع</span></div>
-            <div class="flex items-center justify-between"><span>🥈 نقره‌ای</span><span>${toPersianDigits(settings.tiers.silver)} امتیاز</span></div>
-            <div class="flex items-center justify-between"><span>🥇 طلایی</span><span>${toPersianDigits(settings.tiers.gold)} امتیاز</span></div>
-            <div class="flex items-center justify-between"><span>💎 الماسی</span><span>${toPersianDigits(settings.tiers.vip)} امتیاز</span></div>
+            <div class="flex items-center justify-between"><span>🥉 ${escapeHtml(settings.tier_labels.bronze)}</span><span>شروع</span></div>
+            <div class="flex items-center justify-between"><span>🥈 ${escapeHtml(settings.tier_labels.silver)}</span><span>${toPersianDigits(settings.tiers.silver)} امتیاز</span></div>
+            <div class="flex items-center justify-between"><span>🥇 ${escapeHtml(settings.tier_labels.gold)}</span><span>${toPersianDigits(settings.tiers.gold)} امتیاز</span></div>
+            <div class="flex items-center justify-between"><span>💎 ${escapeHtml(settings.tier_labels.vip)}</span><span>${toPersianDigits(settings.tiers.vip)} امتیاز</span></div>
           </div>
         </div>
 
@@ -294,7 +295,7 @@ export function registerPage(
             <div class="w-8 h-8 rounded-lg gold-bg text-coffee-950 flex items-center justify-center">${icon('coffee', 'w-4 h-4')}</div>
             <span class="text-[11px] font-semibold">${cafe}</span>
           </div>
-          <span class="badge tone-warning">🥉 برنزی</span>
+          <span class="badge tone-warning">🥉 ${escapeHtml(settings.tier_labels.bronze)}</span>
         </div>
         <div class="text-[10px] text-cream/40 mb-1">نام مشتری</div>
         <div id="s-name" class="font-bold text-sm mb-3">—</div>
@@ -371,6 +372,7 @@ export function registerPage(
             name: name,
             phone: phone,
             birth_date: birth,
+            nickname: $('#nickname').value.trim(),
             referral: referral,
             sms_opt_in: smsOptIn ? 1 : 0
           }

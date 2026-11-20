@@ -13,6 +13,8 @@ CREATE TABLE IF NOT EXISTS users (
   id                 INTEGER PRIMARY KEY AUTOINCREMENT,
   name               TEXT    NOT NULL,
   phone              TEXT    NOT NULL UNIQUE,
+  nickname           TEXT NOT NULL DEFAULT '',
+  permissions        TEXT DEFAULT NULL,
   birth_date         TEXT,                                   -- قالب YYYY-MM-DD
   points             INTEGER NOT NULL DEFAULT 0,             -- موجودی امتیاز (قابل خرج)
   lifetime_points    INTEGER NOT NULL DEFAULT 0,             -- مجموع امتیازهای کسب‌شده (مبنای سطح)
@@ -106,6 +108,8 @@ CREATE TABLE IF NOT EXISTS sms_logs (
   status          TEXT    NOT NULL,   -- sent | failed | skipped
   message         TEXT,
   provider_id     TEXT,
+  fallback_ids    TEXT NOT NULL DEFAULT '[]',
+  delivery_kind   TEXT NOT NULL DEFAULT 'legacy',
   error           TEXT,
   sent_at         TEXT    NOT NULL DEFAULT (datetime('now')),
   FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE SET NULL

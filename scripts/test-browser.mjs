@@ -37,7 +37,7 @@ try{
   async function pageFor(cookie, options={}){
     const context=await browser.newContext({viewport:{width:1280,height:900},...options});if(cookie)await context.addCookies([{name:cookie.split('=')[0],value:cookie.slice(cookie.indexOf('=')+1),url:BASE}]);
     await context.route('**/*',r=>new URL(r.request().url()).origin===new URL(BASE).origin?r.continue():r.abort());
-    await context.addInitScript(()=>document.addEventListener('DOMContentLoaded',()=>{const s=document.createElement('style');s.textContent='.hidden{display:none!important}';document.head.appendChild(s);}));
+    await context.addInitScript(()=>document.addEventListener('DOMContentLoaded',()=>{const s=document.createElement('style');s.textContent='.hidden{display:none!important}html{scroll-behavior:auto!important}*,*::before,*::after{animation:none!important;transition:none!important}';document.head.appendChild(s);}));
     const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));return page;
   }
   async function fillLogin(page){await page.locator('#phone').fill(process.env.ADMIN_PHONE||'09120000000');await page.locator('#password').fill(process.env.ADMIN_PASSWORD||'Admin@12345');}

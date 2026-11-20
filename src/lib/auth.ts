@@ -5,6 +5,7 @@
  */
 import type { Context, MiddlewareHandler } from 'hono';
 import { sign, verify } from 'hono/jwt';
+import { storedPermissions } from './permissions';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import type { AppEnv, JwtPayload, Role, UserRow, Bindings } from '../types';
 import { fail } from './utils';
@@ -225,7 +226,7 @@ export const attachUser: MiddlewareHandler<AppEnv> = async (c, next) => {
     await next();
     return;
   }
-  c.set('user', { ...payload, role: user.role, name: user.name });
+  c.set('user', { ...payload, role: user.role, name: user.name, permissions: user.role === 'staff' ? storedPermissions(user.permissions) : [] });
   await next();
 };
 

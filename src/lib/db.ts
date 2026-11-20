@@ -67,8 +67,8 @@ export const TIER_LABELS: Record<string, string> = {
   vip: 'الماسی',
 };
 
-export function tierLabel(tier: string): string {
-  return TIER_LABELS[tier] ?? 'برنزی';
+export function tierLabel(tier: string, settings?: Pick<AppSettings,'tier_labels'>): string {
+  return settings?.tier_labels?.[tier] ?? TIER_LABELS[tier] ?? 'برنزی';
 }
 
 /* ==========================================================================
@@ -168,6 +168,7 @@ export async function resolveReferrer(
 }
 
 export type RegisterInput = {
+  nickname?: string;
   name: string;
   phone: string;
   birth_date: string | null;
@@ -209,8 +210,8 @@ export async function registerCustomer(
   try {
     const smsOptIn = input.sms_opt_in === 0 ? 0 : 1;
     const result = await env.DB.prepare(
-      `INSERT INTO users (name, phone, birth_date, points, tier, referred_by, role, referral_code, sms_opt_in)
-       VALUES (?, ?, ?, 0, 'bronze', ?, 'customer', ?, ?)`
+      `INSERT INTO users (name, phone, birth_date, points, tier, referred_by, role, referral_code, sms_opt_in, nickname)
+       VALUES (?, ?, ?, 0, 'bronze', ?, 'customer', ?, ?, ?)`
     )
       .bind(
         input.name,
@@ -218,7 +219,8 @@ export async function registerCustomer(
         input.birth_date,
         referrer ? referrer.id : null,
         referralCode,
-        smsOptIn
+        smsOptIn,
+        input.nickname ?? ''
       )
       .run();
 
@@ -230,7 +232,7 @@ export async function registerCustomer(
 
     // پیامک خوش‌آمدگویی — برای کسی که رضایت نداده ارسال نمی‌شود
     if (smsOptIn === 1) {
-    await sendSms(env, settings, {
+    try { await sendSms(env, settings, {
       userId: user.id,
       phone: user.phone,
       type: 'welcome',
@@ -239,7 +241,7 @@ export async function registerCustomer(
         referral_code: user.referral_code ?? referralCode,
         points: 0,
       }),
-    });
+    }); } catch { console.error('CUSTOMER_WELCOME_FAILED',user.id); }
     }
 
     return {
@@ -249,6 +251,7 @@ export async function registerCustomer(
       referralCode: user.referral_code ?? referralCode,
     };
   } catch (error) {
+    if (/UNIQUE constraint failed: users.phone/i.test(String(error))) return { ok: false, error: 'این شماره موبایل قبلاً ثبت شده است.', code: 'PHONE_EXISTS' };
     console.error('registerCustomer failed:', error);
     return { ok: false, error: 'خطای پایگاه داده در ثبت‌نام.', code: 'DB_ERROR' };
   }
@@ -259,6 +262,7 @@ export async function registerCustomer(
  * ========================================================================== */
 
 export type InvoiceInput = {
+  customerPhone?: string;
   userId: number;
   items: InvoiceItem[];
   amount: number | null;
@@ -574,6 +578,7 @@ export async function recordInvoice(
   if (!customer) {
     return { ok: false, error: 'مشتری یافت نشد.', code: 'USER_NOT_FOUND' };
   }
+  if (input.customerPhone !== undefined && customer.phone !== normalizePhone(input.customerPhone)) return {ok:false,error:'شمارهٔ کامل با مشتری انتخاب‌شده مطابقت ندارد.',code:'INVALID_USER'};
   if (customer.role !== 'customer') {
     return { ok: false, error: 'فقط برای مشتریان می‌توان فاکتور ثبت کرد.', code: 'INVALID_ROLE' };
   }
@@ -594,7 +599,7 @@ export async function recordInvoice(
       .bind(requestId)
       .first<InvoiceRow>();
     if (existing) {
-      if (existing.user_id !== customer.id) return { ok: false, error: 'شناسه درخواست برای مشتری دیگری استفاده شده است.', code: 'REQUEST_ID_CONFLICT' };
+      if (existing.user_id !== customer.id || existing.registered_by !== input.registeredBy) return { ok: false, error: 'شناسه درخواست متعلق به مشتری یا ثبت‌کنندهٔ دیگری است.', code: 'REQUEST_ID_CONFLICT' };
       return invoiceResultFromRow(env.DB, existing, customer, settings);
     }
   }
@@ -768,7 +773,7 @@ export async function recordInvoice(
         .bind(requestId)
         .first<InvoiceRow>();
       if (existing) {
-        if (existing.user_id !== customer.id) return { ok: false, error: 'شناسه درخواست برای مشتری دیگری استفاده شده است.', code: 'REQUEST_ID_CONFLICT' };
+        if (existing.user_id !== customer.id || existing.registered_by !== input.registeredBy) return { ok: false, error: 'شناسه درخواست متعلق به مشتری یا ثبت‌کنندهٔ دیگری است.', code: 'REQUEST_ID_CONFLICT' };
         return invoiceResultFromRow(env.DB, existing, customer, settings);
       }
     }
@@ -845,7 +850,7 @@ export async function sendInvoiceReceipt(env: Bindings, settings: AppSettings, i
     await sendSms(env, settings, { userId: row.user_id, phone: row.phone, type: 'invoice',
       message: renderSms(settings, 'invoice', { name: row.name, amount: formatNumberFa(row.amount),
         points: toPersianDigits(row.points_earned), total_points: toPersianDigits(row.points),
-        tier: tierLabel(row.tier), discount: formatNumberFa(row.discount), code: row.coupon_code ?? '' }) });
+        tier: tierLabel(row.tier, settings), discount: formatNumberFa(row.discount), code: row.coupon_code ?? '' }) });
     return { pointsEarned: row.points_earned, totalPoints: row.points };
   } catch { console.error('INVOICE_RECEIPT_FAILED', invoiceId); return null; }
 }
@@ -1139,6 +1144,7 @@ export async function getDashboardStats(
  * ========================================================================== */
 
 export type CustomerListItem = {
+  nickname?: string;
   id: number;
   name: string;
   phone: string;
@@ -1161,7 +1167,7 @@ export type CustomerListItem = {
 export async function exportCustomers(db: D1Database): Promise<CustomerListItem[]> {
   const { results } = await db
     .prepare(
-      `SELECT u.id, u.name, u.phone, u.birth_date, u.points, u.tier, u.last_visit_date,
+      `SELECT u.id, u.name, u.nickname, u.phone, u.birth_date, u.points, u.tier, u.last_visit_date,
               u.avg_visit_interval, u.created_at, u.referral_code, u.is_active,
               (SELECT COUNT(*) FROM invoices i WHERE i.user_id = u.id AND i.voided_at IS NULL) AS visits,
               (SELECT COALESCE(SUM(amount), 0) FROM invoices i WHERE i.user_id = u.id AND i.voided_at IS NULL) AS total_spent
@@ -1187,6 +1193,13 @@ export type ListCustomersParams = {
   minVisits?: number;
 };
 
+export function customerSearchText(value: string): string {
+  return toLatinDigits(value.normalize('NFKC')).replace(/[يى]/g,'ی').replace(/ك/g,'ک').replace(/[\u0000-\u001f\u007f\u200c]/g,' ').replace(/\s+/g,' ').trim();
+}
+export function customerSearchPattern(value: string): string {
+  return '%' + customerSearchText(value).replace(/[!%_]/g,'!$&') + '%';
+}
+
 export async function listCustomers(
   db: D1Database,
   params: ListCustomersParams
@@ -1198,11 +1211,11 @@ export async function listCustomers(
   const where: string[] = [`u.role = 'customer'`];
   const binds: Array<string | number> = [];
 
-  const q = String(params.q ?? '').trim().slice(0, 60);
+  const q = customerSearchText(String(params.q ?? '')).slice(0,60);
   if (q) {
-    where.push('(u.name LIKE ? OR u.phone LIKE ? OR u.referral_code LIKE ?)');
-    const like = `%${q}%`;
-    binds.push(like, like, like);
+    where.push("(replace(replace(u.name,'ي','ی'),'ك','ک') LIKE ? ESCAPE '!' OR u.phone LIKE ? ESCAPE '!' OR u.referral_code LIKE ? ESCAPE '!' OR u.nickname LIKE ? ESCAPE '!')");
+    const like = customerSearchPattern(q);
+    binds.push(like, like, like, like);
   }
   if (params.tier && ['bronze', 'silver', 'gold', 'vip'].includes(params.tier)) {
     where.push('u.tier = ?');
@@ -1247,7 +1260,7 @@ export async function listCustomers(
 
   const { results } = await db
     .prepare(
-      `SELECT u.id, u.name, u.phone, u.birth_date, u.points, u.tier, u.last_visit_date,
+      `SELECT u.id, u.name, u.nickname, u.phone, u.birth_date, u.points, u.tier, u.last_visit_date,
               u.avg_visit_interval, u.created_at, u.referral_code, u.is_active,
               (SELECT COUNT(*) FROM invoices i WHERE i.user_id = u.id AND i.voided_at IS NULL) AS visits,
               (SELECT COALESCE(SUM(amount), 0) FROM invoices i WHERE i.user_id = u.id AND i.voided_at IS NULL) AS total_spent
@@ -1559,12 +1572,13 @@ export type StaffListItem = {
   is_active: number;
   created_at: string;
   invoices_count: number;
+  permissions?: string | null;
 };
 
 export async function listStaff(db: D1Database): Promise<StaffListItem[]> {
   const { results } = await db
     .prepare(
-      `SELECT u.id, u.name, u.phone, u.role, u.is_active, u.created_at,
+      `SELECT u.id, u.name, u.phone, u.role, u.is_active, u.created_at, u.permissions,
               (SELECT COUNT(*) FROM invoices i WHERE i.registered_by = u.id AND i.voided_at IS NULL) AS invoices_count
        FROM users u
        WHERE u.role IN ('staff', 'admin')
@@ -1578,7 +1592,7 @@ export async function listStaff(db: D1Database): Promise<StaffListItem[]> {
  * ۱۰) لاگ پیامک‌ها
  * ========================================================================== */
 
-export type SmsLogListItem = SmsLogRow & { user_name: string | null; user_phone: string | null };
+export type SmsLogListItem = SmsLogRow & { fallback_delivery?: string; user_name: string | null; user_phone: string | null };
 
 export async function listSmsLogs(
   db: D1Database,
@@ -1609,7 +1623,9 @@ export async function listSmsLogs(
 
   const { results } = await db
     .prepare(
-      `SELECT l.*, u.name AS user_name, u.phone AS user_phone
+      `SELECT l.*, u.name AS user_name, u.phone AS user_phone,
+         (SELECT json_group_array(json_object('channel',f.channel,'status',f.status,'id',f.id,'providerId',f.provider_id)) FROM fallback_jobs f
+          WHERE f.id IN (SELECT value FROM json_each(CASE WHEN json_valid(l.fallback_ids) THEN l.fallback_ids ELSE '[]' END))) AS fallback_delivery
        FROM sms_logs l
        LEFT JOIN users u ON u.id = l.user_id
        WHERE ${whereSql}
@@ -2008,9 +2024,9 @@ export async function getCustomerPanelData(
     .first<{ c: number }>();
 
   const order: Array<{ key: string; label: string; threshold: number }> = [
-    { key: 'silver', label: 'نقره‌ای', threshold: settings.tiers.silver },
-    { key: 'gold', label: 'طلایی', threshold: settings.tiers.gold },
-    { key: 'vip', label: 'الماسی', threshold: settings.tiers.vip },
+    { key: 'silver', label: tierLabel('silver',settings), threshold: settings.tiers.silver },
+    { key: 'gold', label: tierLabel('gold',settings), threshold: settings.tiers.gold },
+    { key: 'vip', label: tierLabel('vip',settings), threshold: settings.tiers.vip },
   ];
   const next = order.find((tier) => user.lifetime_points < tier.threshold) ?? null;
   const currentFloor =

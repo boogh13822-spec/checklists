@@ -1,3 +1,4 @@
+import { STAFF_PERMISSIONS, LEGACY_STAFF_PERMISSIONS } from '../lib/permissions';
 /**
  * ----------------------------------------------------------------------------
  *  پنل کارمند: ثبت فاکتور، جستجوی مشتری و تاریخچه
@@ -39,12 +40,16 @@ export function staffPage(
   }>,
   isAdmin = false,
   options: {
+    actorId?: number;
+    permissions?: string[];
     popular?: string[];
     openShift?: { id: number; opening_cash: number; opened_at: string } | null;
     todayCash?: number;
     requireShift?: boolean;
   } = {}
 ): string {
+  const permissions = options.permissions ?? (isAdmin ? Object.keys(STAFF_PERMISSIONS) : LEGACY_STAFF_PERMISSIONS);
+  const allowed = (permission: string) => permissions.includes(permission);
   const categories = Array.from(new Set(menu.map((item) => item.category?.trim() || 'سایر')));
   // «پرکاربرد» از سابقهٔ فروش می‌آید؛ روی نصب تازه که سابقه‌ای نیست،
   // آیتم‌های اول منو نمایش داده می‌شوند تا دسترسی سریع همیشه در دسترس باشد.
@@ -106,7 +111,7 @@ export function staffPage(
       </div>`,
     })}
 
-    ${shiftBanner}
+    ${allowed('shift.manage') ? shiftBanner : ''}
 
     <div class="grid xl:grid-cols-[1.6fr_1fr] gap-5 items-start">
 
@@ -118,23 +123,29 @@ export function staffPage(
           <div class="px-5 py-4 border-b border-white/10 flex items-center gap-2">
             <span class="w-8 h-8 rounded-xl bg-gold/10 border border-gold/20 text-gold flex items-center justify-center">${icon('search', 'w-4 h-4')}</span>
             <h2 class="font-bold text-sm">جستجوی مشتری</h2>
-            <span class="badge tone-muted me-auto">با شماره موبایل</span>
+            <span class="badge tone-muted me-auto">${allowed('customer.search') ? 'شماره، لقب یا نام' : 'فقط شمارهٔ کامل'}</span>
           </div>
 
           <div class="p-5">
             <div class="flex gap-2">
               <div class="relative flex-1">
                 <span class="absolute right-3 top-1/2 -translate-y-1/2 text-cream/30">${icon('phone', 'w-4 h-4')}</span>
-                <input id="phone-input" type="tel" inputmode="numeric" dir="ltr" maxlength="13"
+                <input id="phone-input" type="text" dir="auto" maxlength="60"
                   class="field !pr-10 !py-3 text-left tracking-[.18em] text-base"
                   placeholder="09123456789" autocomplete="off" />
               </div>
-              <button type="button" id="search-btn" class="btn btn-primary !px-5">
+              <button type="button" id="search-btn" ${!allowed('invoice.create') && !allowed('customer.search') ? 'hidden' : ''} class="btn btn-primary !px-5">
                 ${icon('search', 'w-5 h-5')}
                 <span class="hidden sm:inline">جستجو</span>
               </button>
             </div>
 
+            ${!allowed('invoice.create') && !allowed('customer.create') && !allowed('customer.search') && !allowed('customer.list') ? '<p class="hint">مجوز ثبت مشتری و فاکتور ندارید؛ از بخش‌های مجاز منو استفاده کنید یا با مدیر تماس بگیرید.</p>' : ''}
+            <div id="customer-choices" class="space-y-2 mt-3" role="status"></div>
+            <div ${allowed('customer.list') ? '' : 'hidden'} class="flex gap-2 mt-3"><button id="customer-list" type="button" class="btn btn-ghost btn-sm">فهرست مشتریان</button><button id="customer-list-prev" type="button" class="btn btn-ghost btn-sm" disabled>قبلی</button><button id="customer-list-next" type="button" class="btn btn-ghost btn-sm" disabled>بعدی</button></div>
+            <details id="quick-customer" ${allowed('customer.create') ? '' : 'hidden'} class="mt-4 rounded-xl border border-white/10 p-3"><summary class="cursor-pointer font-bold text-sm">ثبت مشتری جدید ${allowed('invoice.create') ? 'و ادامه به فاکتور' : ''}</summary>
+              <div class="space-y-3 mt-3"><p class="hint">شماره را در کادر بالا وارد کنید. تولد و معرف را بعداً مدیر می‌تواند تکمیل کند.</p><label class="label" for="quick-name">نام مشتری</label><input id="quick-name" class="field" maxlength="60" /><label class="label" for="quick-nickname">لقب (اختیاری)</label><input id="quick-nickname" class="field" maxlength="40" /><label class="flex gap-2 text-xs"><input id="quick-sms" type="checkbox" /> مشتری رضایت دریافت پیامک دارد</label><button id="quick-save" type="button" class="btn btn-primary btn-sm">ثبت مشتری ${allowed('invoice.create') ? 'و انتخاب برای فاکتور' : ''}</button><p id="quick-result" class="hint" role="status"></p></div>
+            </details>
             <div id="search-state" class="mt-4"></div>
 
             <div id="customer-card" class="hidden mt-4">
@@ -182,14 +193,14 @@ export function staffPage(
                   <div class="text-sm font-semibold mb-0.5">مشتری یافت نشد</div>
                   <p class="text-[11px] text-cream/50 leading-6">این شماره در باشگاه ثبت نشده است. می‌توانید همین حالا عضو کنید.</p>
                 </div>
-                <button type="button" id="go-register" class="btn btn-primary btn-sm self-center">${icon('plus', 'w-4 h-4')} ثبت‌نام</button>
+                <button type="button" id="go-register" ${allowed('customer.create') ? '' : 'hidden'} class="btn btn-primary btn-sm self-center">${icon('plus', 'w-4 h-4')} ثبت‌نام</button>
               </div>
             </div>
           </div>
         </section>
 
         <!-- Items -->
-        <section class="glass rounded-3xl overflow-hidden">
+        <section data-invoice-only ${allowed('invoice.create') ? '' : 'hidden'} class="glass rounded-3xl overflow-hidden">
           <div class="px-5 py-4 border-b border-white/10 flex items-center gap-2">
             <span class="w-8 h-8 rounded-xl bg-gold/10 border border-gold/20 text-gold flex items-center justify-center">${icon('coffee', 'w-4 h-4')}</span>
             <h2 class="font-bold text-sm">انتخاب آیتم‌ها</h2>
@@ -261,7 +272,7 @@ export function staffPage(
       </div>
 
       <!-- LEFT: summary -->
-      <div class="xl:sticky xl:top-6 space-y-4">
+      <div data-invoice-only ${allowed('invoice.create') ? '' : 'hidden'} class="xl:sticky xl:top-6 space-y-4">
         <section class="glass rounded-3xl overflow-hidden">
           <div class="px-5 py-4 border-b border-white/10 flex items-center gap-2">
             <span class="w-8 h-8 rounded-xl bg-gold/10 border border-gold/20 text-gold flex items-center justify-center">${icon('wallet', 'w-4 h-4')}</span>
@@ -308,6 +319,7 @@ export function staffPage(
               <div id="sum-points-note" class="text-[10px] text-cream/30 text-start leading-5"></div>
             </div>
 
+            <p id="invoice-request-state" class="hint text-amber-200" role="status" aria-live="polite"></p>
             <!-- پرداخت -->
             <div class="border-t border-white/10 pt-4">
               <div class="flex items-center justify-between mb-2">
@@ -378,7 +390,7 @@ export function staffPage(
         </section>
 
         <!-- Recent -->
-        <section class="glass rounded-3xl overflow-hidden">
+        <section ${allowed('invoice.history') ? '' : 'hidden'} class="glass rounded-3xl overflow-hidden">
           <div class="px-5 py-4 border-b border-white/10 flex items-center gap-2">
             <span class="w-8 h-8 rounded-xl bg-gold/10 border border-gold/20 text-gold flex items-center justify-center">${icon('clock', 'w-4 h-4')}</span>
             <h2 class="font-bold text-sm">آخرین فاکتورهای شما</h2>
@@ -447,7 +459,9 @@ export function staffPage(
     var INVOICE_POINTS = ${Number(settings.invoice_points) || 0};
     var VISIT_POINTS = ${Number(settings.visit_points) || 0};
     var VISIT_MIN_AMOUNT = ${Number(settings.visit_min_amount) || 0};
-    var TIER_LABELS = { bronze: 'برنزی', silver: 'نقره‌ای', gold: 'طلایی', vip: 'الماسی' };
+    var TIER_LABELS = ${jsonForScript(settings.tier_labels)};
+    var CAN_INVOICE=${allowed('invoice.create')},CAN_CREATE=${allowed('customer.create')},CAN_SEARCH=${allowed('customer.search')},CAN_LIST=${allowed('customer.list')};
+    var lookupSequence=0,choicePage=1,choiceSequence=0,creatingCustomer=false;
     var TIER_CLASSES = { bronze: 'tone-warning', silver: 'tone-muted', gold: 'tone-warning', vip: 'tone-info' };
 
     var customer = null;
@@ -456,7 +470,8 @@ export function staffPage(
     var menuVisibleLimit = 40;
     var activeCategory = '__popular__';
     var appliedCoupon = null;
-    var requestId = null;
+    var requestId = null, pendingInvoice=null,lockedInvoice=[];
+    var pendingStorageKey='cc.invoice.pending:${options.actorId ?? 0}';
     var appliedDiscount = 0;
     var searchQuery = '';
     var payMode = 'cash';
@@ -774,16 +789,19 @@ export function staffPage(
 
     function setCustomer(data) {
       customer = data;
+      resetCoupon();
+      phoneInput.value=data.phone;
+      $('#customer-choices').textContent='';
       $('#not-found').classList.add('hidden');
       $('#customer-card').classList.remove('hidden');
       $('#c-avatar').textContent = (data.name || '؟').slice(0, 1);
-      $('#c-name').textContent = data.name;
+      $('#c-name').textContent = data.name+(data.nickname?' · '+data.nickname:'');
       $('#c-phone').textContent = fa(data.phone);
       $('#c-points').textContent = fa(data.points);
-      $('#c-last').textContent = data.last_visit_date ? formatJalaliClient(data.last_visit_date) : 'بدون خرید';
-      $('#c-avg').textContent = data.avg_visit_interval > 0 ? fa(Math.round(data.avg_visit_interval)) + ' روز' : '—';
+      $('#c-last').textContent = data.last_visit_date === undefined ? 'محدود' : data.last_visit_date ? formatJalaliClient(data.last_visit_date) : 'بدون خرید';
+      $('#c-avg').textContent = data.avg_visit_interval === undefined ? 'محدود' : data.avg_visit_interval > 0 ? fa(Math.round(data.avg_visit_interval)) + ' روز' : '—';
       var tierBadge = $('#c-tier');
-      tierBadge.textContent = TIER_LABELS[data.tier] || 'برنزی';
+      tierBadge.textContent = data.tier_label || TIER_LABELS[data.tier] || TIER_LABELS.bronze;
       tierBadge.className = 'badge ' + (TIER_CLASSES[data.tier] || 'tone-muted');
       var status = $('#c-status');
       status.textContent = data.status_label || 'فعال';
@@ -827,7 +845,12 @@ export function staffPage(
     }
 
     async function searchCustomer() {
+      if(submitting||creatingCustomer||pendingInvoice)return;
+      var sequence=++lookupSequence;
+      customer=null;$('#customer-card').classList.add('hidden');$('#not-found').classList.add('hidden');resetCoupon();refreshTotals();
       var phone = normalizePhone(phoneInput.value);
+      if(CAN_SEARCH && (!CAN_INVOICE || !/^09\\d{9}$/.test(phone))){await loadChoices(true,phoneInput.value);return;}
+      if(!CAN_INVOICE)return;
       if (!/^09\\d{9}$/.test(phone)) {
         toast('شماره موبایل معتبر وارد کنید (۰۹xxxxxxxxx).', 'error');
         phoneInput.focus();
@@ -838,6 +861,7 @@ export function staffPage(
         '<div class="flex items-center gap-2 text-[11px] text-cream/40"><span class="w-4 h-4 rounded-full border-2 border-gold border-t-transparent spin"></span> در حال جستجو…</div>';
       try {
         var data = await api('/api/staff/customer?phone=' + encodeURIComponent(phone));
+        if(sequence!==lookupSequence)return;
         $('#search-state').innerHTML = '';
         if (data.found) {
           setCustomer(data.customer);
@@ -885,19 +909,43 @@ export function staffPage(
       refreshTotals();
     }
 
+    async function loadChoices(search,query){
+      var sequence=++choiceSequence;
+      try{var data=await api(search?'/api/staff/customers/search?q='+encodeURIComponent(query):'/api/staff/customers?page='+choicePage);if(sequence!==choiceSequence)return;
+        $('#customer-choices').textContent='';data.items.forEach(function(item){var button=document.createElement('button');button.type='button';button.className='btn btn-ghost text-right w-full';button.textContent=item.name+(item.nickname?' · '+item.nickname:'')+' — '+item.phone;button.disabled=!CAN_INVOICE;button.addEventListener('click',function(){phoneInput.value=item.phone;searchCustomer();});$('#customer-choices').appendChild(button);});
+        if(!data.items.length)$('#customer-choices').textContent='نتیجه‌ای پیدا نشد.';
+        $('#customer-list-prev').disabled=search||choicePage<=1;$('#customer-list-next').disabled=search||!data.hasMore;
+      }catch(error){toast(error.message,'error');}
+    }
+    $('#customer-list').addEventListener('click',function(){if(CAN_LIST){choicePage=1;loadChoices(false);}});
+    $('#customer-list-prev').addEventListener('click',function(){if(CAN_LIST&&choicePage>1){choicePage--;loadChoices(false);}});
+    $('#customer-list-next').addEventListener('click',function(){if(CAN_LIST){choicePage++;loadChoices(false);}});
+    $('#quick-save').addEventListener('click',async function(){
+      if(!CAN_CREATE||creatingCustomer||submitting||pendingInvoice)return;var phone=normalizePhone(phoneInput.value),name=$('#quick-name').value.trim();
+      if(!/^09\\d{9}$/.test(phone)||name.length<2){$('#quick-result').textContent='نام کامل و شمارهٔ معتبر را وارد کنید.';return;}
+      creatingCustomer=true;var button=this;setLoading(button,true,'در حال ثبت…');phoneInput.disabled=true;$('#search-btn').disabled=true;
+      try{await api('/api/staff/customers',{method:'POST',body:{name:name,phone:phone,nickname:$('#quick-nickname').value.trim(),sms_opt_in:$('#quick-sms').checked,birth_date:''}});
+        $('#quick-result').textContent='مشتری ثبت شد.';$('#quick-name').value='';$('#quick-nickname').value='';$('#quick-sms').checked=false;$('#quick-customer').open=false;
+        creatingCustomer=false;phoneInput.value=phone;
+        if(CAN_INVOICE){await searchCustomer();if(customer){$('#manual-amount').focus();$('#quick-result').textContent='مشتری انتخاب شد؛ فاکتور را در همین صفحه ثبت کنید.';}}
+        else{phoneInput.value='';toast('مشتری ثبت شد.','success');}
+      }catch(error){$('#quick-result').textContent=error.code==='PHONE_EXISTS'?'این شماره قبلاً ثبت شده است؛ برای مشتری قبلی جستجو را بزنید.':error.message;}
+      finally{creatingCustomer=false;phoneInput.disabled=false;$('#search-btn').disabled=false;setLoading(button,false);}
+    });
     // Events
     $('#search-btn').addEventListener('click', searchCustomer);
     phoneInput.addEventListener('keydown', function (event) {
       if (event.key === 'Enter') { event.preventDefault(); searchCustomer(); }
     });
     phoneInput.addEventListener('input', function () {
+      lookupSequence++;choiceSequence++;customer=null;$('#customer-card').classList.add('hidden');$('#not-found').classList.add('hidden');$('#customer-choices').textContent='';resetCoupon();refreshTotals();
       var clean = phoneInput.value.replace(/[۰-۹]/g, function (d) { return String('۰۱۲۳۴۵۶۷۸۹'.indexOf(d)); });
       if (clean !== phoneInput.value) phoneInput.value = clean;
     });
     $('#clear-customer').addEventListener('click', clearCustomer);
     $('#go-register').addEventListener('click', function () {
       var phone = normalizePhone(phoneInput.value);
-      window.location.href = '/register' + (/^09\\d{9}$/.test(phone) ? '?phone=' + encodeURIComponent(phone) : '');
+      if(CAN_CREATE){$('#quick-customer').open=true;$('#quick-name').focus();}
     });
 
     $('#category-tabs').addEventListener('click', function (event) {
@@ -1055,7 +1103,7 @@ export function staffPage(
       setLoading(btn, true, '');
       try {
         var data = await api('/api/staff/coupons/check?code=' + encodeURIComponent(code) +
-          '&userId=' + customer.id + '&subtotal=' + base);
+          '&userId=' + customer.id + '&customerPhone='+encodeURIComponent(customer.phone)+'&subtotal=' + base);
         if (!data.valid) {
           appliedCoupon = null;
           appliedDiscount = 0;
@@ -1084,8 +1132,13 @@ export function staffPage(
       $('#apply-coupon').click();
     });
 
+    function lockInvoice(on){
+      if(on&&!lockedInvoice.length){lockedInvoice=Array.from(document.querySelectorAll('[data-invoice-only] input,[data-invoice-only] select,[data-invoice-only] button,#phone-input,#search-btn,#quick-save,#go-register,#customer-list,#customer-list-prev,#customer-list-next,#clear-customer')).filter(function(node){return node.id!=='submit-invoice';}).map(function(node){var state={node:node,disabled:node.disabled};node.disabled=true;return state;});}
+      if(!on){lockedInvoice.forEach(function(state){state.node.disabled=state.disabled;});lockedInvoice=[];}
+    }
     async function submitInvoice() {
-      if (submitting) return;
+      if (submitting||!CAN_INVOICE) return;
+      if(!pendingInvoice){
       if (!customer) { toast('ابتدا مشتری را جستجو و انتخاب کنید.', 'error'); phoneInput.focus(); return; }
       var totals = refreshTotals();
       if (totals.base <= 0) { toast('مبلغ فاکتور باید بیشتر از صفر باشد.', 'error'); return; }
@@ -1106,26 +1159,14 @@ export function staffPage(
         var item = cartItems[name];
         return { name: item.name, qty: selected[name], price: item.price };
       });
-      var btn = $('#submit-invoice');
-      submitting = true;
-      setLoading(btn, true, 'در حال ثبت…');
-      if (!requestId) {
-        requestId = (window.crypto && window.crypto.randomUUID)
-          ? window.crypto.randomUUID()
-          : String(Date.now()) + '-' + Math.random().toString(16).slice(2);
+      requestId = crypto.randomUUID();
+      pendingInvoice={userId:customer.id,customerPhone:customer.phone,items:items,amount:items.length?null:totals.base,couponCode:appliedCoupon?appliedCoupon.code:null,clientRequestId:requestId,payment:{cash:payment.cash,card:payment.card,online:payment.online}};
+      try{sessionStorage.setItem(pendingStorageKey,JSON.stringify(pendingInvoice));}catch(_){toast('ذخیرهٔ پیگیری مرورگر ممکن نشد؛ تا تعیین نتیجه این صفحه را نبندید.','error');}
       }
+      var btn=$('#submit-invoice');submitting=true;lockInvoice(true);setLoading(btn,true,'در حال ثبت/پیگیری…');
       try {
-        var result = await api('/api/staff/invoices', {
-          method: 'POST',
-          body: {
-            userId: customer.id,
-            items: items,
-            amount: items.length ? null : totals.base,
-            couponCode: appliedCoupon ? appliedCoupon.code : null,
-            clientRequestId: requestId,
-            payment: { cash: payment.cash, card: payment.card, online: payment.online }
-          }
-        });
+        var result = await api('/api/staff/invoices', {method:'POST',body:pendingInvoice});
+        pendingInvoice=null;try{sessionStorage.removeItem(pendingStorageKey);}catch(_){}
         requestId = null;
         $('#r-payment').textContent = paymentLabel(result.paymentMethod) +
           (result.change > 0 ? ' (' + moneyFa(result.change) + ' باقیمانده)' : '');
@@ -1151,6 +1192,7 @@ export function staffPage(
         $('#receipt-modal').classList.remove('hidden');
         toast('فاکتور با موفقیت ثبت شد.', 'success');
 
+        if(!result.duplicate){
         // به‌روزرسانی آمار امروز
         var countEl = $('#today-count');
         var totalEl = $('#today-total');
@@ -1165,13 +1207,15 @@ export function staffPage(
           '<div class="text-[10px] text-cream/35">همین حالا</div></div>' +
           '<div class="text-[12px] font-bold text-amber-200 whitespace-nowrap">' + moneyFa(result.amount) + '</div>';
         list.prepend(row);
+        }
       } catch (error) {
         toast(error.message, 'error');
-        // اگر درخواست نیمه‌کاره ماند، شناسه یکتا آزاد می‌شود تا تلاش بعدی فاکتور تازه بسازد
-        requestId = null;
+        if(error.status>=400&&error.status<500){pendingInvoice=null;requestId=null;try{sessionStorage.removeItem(pendingStorageKey);}catch(_){}}
+        else $('#invoice-request-state').textContent='نتیجهٔ ثبت قبلی نامعلوم است؛ دکمهٔ ثبت/پیگیری فقط همان درخواست را دوباره بررسی می‌کند. سبد جدید نسازید.';
       } finally {
         submitting = false;
         setLoading(btn, false);
+        if(pendingInvoice)btn.textContent='پیگیری همان فاکتور';else{$('#invoice-request-state').textContent='';lockInvoice(false);}
       }
     }
 
@@ -1216,14 +1260,18 @@ export function staffPage(
     renderMenu();
     refreshTotals();
     phoneInput.focus();
+    if(CAN_INVOICE){try{var saved=sessionStorage.getItem(pendingStorageKey),parsed=saved&&saved.length<20000?JSON.parse(saved):null;if(parsed&&typeof parsed==='object'&&Number.isSafeInteger(parsed.userId)&&typeof parsed.clientRequestId==='string'){pendingInvoice=parsed;lockInvoice(true);$('#invoice-request-state').textContent='یک درخواست تعیین‌تکلیف‌نشده از همین حساب باقی مانده؛ برای پیگیری همان فاکتور دکمه را بزنید. ارسال خودکار انجام نمی‌شود.';$('#submit-invoice').textContent='پیگیری همان فاکتور';}}catch(_){}}
+    var preset=new URLSearchParams(window.location.search).get('phone');
+    if(preset&&CAN_INVOICE&&!pendingInvoice){phoneInput.value=preset;searchCustomer();window.history.replaceState(null,'',window.location.pathname);}
   })();
   `;
 
   return appShell({
     title: 'ثبت فاکتور',
-    role: 'staff',
+    role: isAdmin ? 'admin' : 'staff',
+    permissions,
     userName: user.name,
-    active: 'invoice',
+    active: isAdmin ? 'invoices' : 'invoice',
     body,
     scripts,
     cafeName: settings.cafe_name,
@@ -1241,7 +1289,7 @@ export function staffHistoryPage(
     InvoiceRow & { customer_name: string; customer_phone: string; registered_name: string | null }
   >,
   summary: { count: number; total: number },
-  options: { q?: string; onlyVoided?: boolean } = {}
+  options: { q?: string; onlyVoided?: boolean; permissions?: string[] } = {}
 ): string {
   const q = (options.q ?? '').trim();
   const body = `
@@ -1340,6 +1388,7 @@ export function staffHistoryPage(
     role: 'staff',
     userName: user.name,
     active: 'history',
+    permissions: options.permissions,
     body,
     cafeName: settings.cafe_name,
   });
@@ -1353,9 +1402,10 @@ export function customerSummaryForApi(
   user: UserRow,
   status: { label: string; tone: string },
   coupons: Array<{ code: string; kind: string; value: number }>,
-  extra: { visitEarnedToday?: boolean; pointsMode?: string; visitPoints?: number; visitMinAmount?: number } = {}
+  extra: { minimal?: boolean; tierLabels?: Record<string,string>; visitEarnedToday?: boolean; pointsMode?: string; visitPoints?: number; visitMinAmount?: number } = {}
 ): Record<string, unknown> {
-  return {
+  const result: Record<string,unknown> = {
+    nickname: user.nickname ?? '',
     id: user.id,
     name: user.name,
     phone: user.phone,
@@ -1366,7 +1416,7 @@ export function customerSummaryForApi(
     avg_visit_interval: user.avg_visit_interval,
     status_label: status.label,
     status_tone: status.tone,
-    tier_label: tierLabel(user.tier),
+    tier_label: tierLabel(user.tier, extra.tierLabels ? {tier_labels:extra.tierLabels} : undefined),
     sms_opt_in: user.sms_opt_in,
     visit_earned_today: extra.visitEarnedToday === true,
     points_mode: extra.pointsMode ?? 'amount',
@@ -1377,6 +1427,8 @@ export function customerSummaryForApi(
       label: c.kind === 'percent' ? `${c.value}٪` : `${formatMoney(c.value)} تومان`,
     })),
   };
+  if(extra.minimal){for(const key of ['last_visit_date','avg_visit_interval','lifetime_points','sms_opt_in','status_label','status_tone'])delete result[key];}
+  return result;
 }
 
 /** خواندن امن آیتم‌های فاکتور برای نمایش */
