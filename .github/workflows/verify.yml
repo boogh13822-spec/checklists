@@ -1,0 +1,21 @@
+name: Verify Worker
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck && npm run schema:check
+      - run: npm run test:schema && npm run test:login && npm run test:upgrade
+      - run: npm run test:fallback && npm run test:messenger && npm run test:workflow
+      - run: npm run build:single && node --check single-file/worker.js
+      - run: cmp single-file/worker.js deliverables/worker-complete.txt && git diff --check
+      - run: bash -n scripts/deploy.sh scripts/migrate.sh
