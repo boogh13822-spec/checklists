@@ -34,6 +34,7 @@ export type SendSmsParams = {
   /** Absolute deadline for short-lived content (OTP). */
   eventKey?: string;
   adminOnly?: boolean;
+  receiptGuard?: {invoiceId:number;owner:string};
   expiresAt?: number;
 };
 

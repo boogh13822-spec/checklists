@@ -3,7 +3,7 @@ import type {AppSettings, Bindings, UserRow} from '../types';
 import {createCoupon, tierLabel} from './db';
 import {loadFallbackConfig} from './fallback';
 import {fetchWeather, renderSms, sendSms} from './sms';
-import {daysSince,formatJalali,todayISO,todayJalali,toJalali,toGregorian,toPersianDigits,utcStamp} from './utils';
+import {daysSince,formatJalali,todayISO,todayJalali,toJalali,toGregorian,toPersianDigits,utcStamp,normalizePhone,isValidBirthDate} from './utils';
 import type {JobResult} from './jobs';
 type Campaign='birthday'|'churn'|'weather';
 type Progress={job:Campaign;day:string;cursor:number;queued:number;scanned:number;status:string;context:string|null;owner:string|null};
@@ -47,12 +47,19 @@ export async function resumeAdminCampaign(env:Bindings,only?:Campaign,provided?:
     const today=todayJalali();
     for(const user of users.results??[]){
       if(attempts>=3){more=true;break;}
+      if(row.job==='birthday'&&user.birth_date&&!isValidBirthDate(user.birth_date)){
+        attempts++;await env.DB.prepare("INSERT OR IGNORE INTO campaign_issues(job,day,user_id,code) VALUES(?,?,?,'INVALID_BIRTH_DATE')").bind(row.job,row.day,user.id).run();cursor=user.id;scanned++;continue;
+      }
       let eligible=false;
       if(row.job==='birthday' && user.birth_date){const [y,m,d]=user.birth_date.split('-').map(Number);const j=toJalali(y,m,d);eligible=j.jm===today.jm&&j.jd===today.jd;}
       if(row.job==='churn' && user.last_visit_date){const baseline=user.visits>=settings.churn_min_visits&&user.avg_visit_interval>0?user.avg_visit_interval:30;eligible=daysSince(user.last_visit_date)>baseline+settings.churn_grace_days&&(!user.last_churn_sms_at||daysSince(user.last_churn_sms_at)>=30);}
       if(row.job==='weather')eligible=daysSince(user.last_visit_date||user.created_at)<=30;
       if(eligible){
         attempts++;
+        if(!/^09\d{9}$/.test(normalizePhone(user.phone))){
+          await env.DB.prepare("INSERT OR IGNORE INTO campaign_issues(job,day,user_id,code) VALUES(?,?,?,'INVALID_PHONE')").bind(row.job,row.day,user.id).run();
+          cursor=user.id;scanned++;continue;
+        }
         const vars:Record<string,string|number>={name:user.name,tier:tierLabel(user.tier,settings),last_visit:daysSince(user.last_visit_date)};
         if(row.job==='birthday'){
           const start=toGregorian(today.jy,1,1),startISO=utcStamp(Date.UTC(start.gy,start.gm-1,start.gd)-3.5*3600000);

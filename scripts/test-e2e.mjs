@@ -16,6 +16,9 @@
  * ----------------------------------------------------------------------------
  */
 const BASE = process.env.BASE_URL ?? 'http://127.0.0.1:8787';
+if(!['127.0.0.1','localhost'].includes(new URL(BASE).hostname))throw new Error('Use disposable local D1 only');
+// Keep repeated suites independent; rate-limit behavior is tested separately.
+const TEST_IP='198.18.'+Math.floor(Math.random()*256)+'.'+Math.floor(Math.random()*256);
 const ADMIN = { phone: '09120000000', password: 'Admin@12345' };
 const STAFF = { phone: '09120000001', password: 'Staff@12345' };
 
@@ -33,7 +36,7 @@ const check = (condition, label, extra = '') => (condition ? ok(label, extra) : 
 const section = (title) => console.log(`\n■ ${title}`);
 
 async function call(method, path, { body, cookie } = {}) {
-  const headers = {};
+  const headers = {'CF-Connecting-IP':TEST_IP};
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   if (cookie) headers.Cookie = cookie;
   const response = await fetch(BASE + path, {

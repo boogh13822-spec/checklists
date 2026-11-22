@@ -108,5 +108,11 @@ try {
   await test('dispatcher control rows are restored without resetting any existing lease or cooldown',async()=>{
     reset();db.exec("DELETE FROM fallback_dispatch; DELETE FROM fallback_channel_limits WHERE channel='bale'; UPDATE fallback_channel_limits SET until_ms=987654321 WHERE channel='telegram'");assert.equal((await m.schemaStatus(env.DB,true)).ready,false);await m.applySchemaSteps(env.DB,{uid:1,name:'admin'});assert.equal((await m.schemaStatus(env.DB,true)).ready,true);assert.equal(db.prepare('SELECT until_ms FROM fallback_dispatch WHERE id=1').get().until_ms,0);assert.equal(db.prepare("SELECT until_ms FROM fallback_channel_limits WHERE channel='telegram'").get().until_ms,987654321);assert.equal(db.prepare("SELECT until_ms FROM fallback_channel_limits WHERE channel='bale'").get().until_ms,0);
   });
+  await test('v8-to-v9 browser upgrade adds delivery tables without changing identities, settings or historical invoices',async()=>{
+    reset();db.exec('DROP TABLE invoice_receipts; DROP TABLE campaign_issues');const before={users:clone(db.prepare('SELECT * FROM users ORDER BY id').all()),settings:clone(db.prepare('SELECT * FROM settings ORDER BY key').all()),invoices:clone(db.prepare('SELECT * FROM invoices ORDER BY id').all())};const cookie=await login();const {receipt}=await snapshot(cookie);await upgrade(cookie,receipt);for(const [table,data] of Object.entries(before)){const key=table==='settings'?'key':'id';assert.deepEqual(clone(db.prepare('SELECT * FROM '+table+' ORDER BY '+key).all()),data);}assert.equal(db.prepare('SELECT COUNT(*) n FROM invoice_receipts').get().n,0);assert.equal(db.prepare('SELECT COUNT(*) n FROM campaign_issues').get().n,0);
+  });
+  await test('v9 standalone additive migration is repeat-safe and never backfills old messages',async()=>{
+    reset();db.exec('DROP TABLE invoice_receipts; DROP TABLE campaign_issues');const migration=await readFile('migrations/0009_delivery_reliability.sql','utf8');db.exec(migration);db.exec(migration);assert.equal((await m.schemaStatus(env.DB,true)).ready,true);assert.equal(db.prepare('SELECT COUNT(*) n FROM invoice_receipts').get().n,0);
+  });
   console.log(`\n${passed}/${passed} schema/recovery regressions passed.`);
 }finally{await rm(dir,{recursive:true,force:true});}

@@ -251,6 +251,12 @@ apply "CREATE TABLE IF NOT EXISTS campaign_progress(job TEXT PRIMARY KEY,day TEX
 
 apply "CREATE INDEX IF NOT EXISTS idx_fallback_handoff ON fallback_jobs(handoff_key,manual_sent_at)" "جستجوی سریع کارهای دستی"
 
+if out="$("${WRANGLER[@]}" d1 execute "$DB_NAME" "$MODE" --file=migrations/0009_delivery_reliability.sql 2>&1)"; then
+  APPLIED=$((APPLIED + 1)); ok "بازیابی رسید و گزارش مشتری مشکل‌دار کمپین"
+else
+  FAILED=$((FAILED + 1)); printf '%s\n' "$out"; warn "ساخت صف بازیابی رسید ناموفق بود"
+fi
+
 # --- ۵) پر کردن داده‌های قدیمی ------------------------------------------------
 # Never overwrite an existing lifetime counter. For very old DB baseline use the backed-up browser upgrade.
 

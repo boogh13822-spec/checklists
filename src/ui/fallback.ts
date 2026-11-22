@@ -12,6 +12,7 @@ export const fallbackPanel = `
       <button id="fallback-refresh" type="button" class="btn btn-ghost btn-sm">تازه‌سازی</button></div>
     <label class="label" for="fallback-handoff">نمایش کارها</label><select id="fallback-handoff" class="field"><option value="">همهٔ پیام‌ها و گزارش‌ها</option><option value="todo">نیازمند ارسال دستی به مشتری</option><option value="done">ارسال دستی ثبت‌شده توسط مدیر</option></select>
     <details class="rounded-xl border border-white/10 p-3"><summary class="cursor-pointer">آماده‌سازی کمپین‌های خودکار</summary><div id="campaign-progress" class="hint" role="status"></div></details>
+    <details class="rounded-xl border border-white/10 p-3"><summary class="cursor-pointer">رسیدهای خرید در انتظار آماده‌سازی</summary><p class="hint">این وضعیت، تحویل به مشتری نیست. بازیابی فقط رسیدهای جدیدِ حالت ادمین را آماده می‌کند، نه پیامک یا OTP.</p><div id="receipt-progress" class="hint" role="status"></div><button id="receipt-recover" type="button" class="btn btn-ghost btn-sm">بررسی دوبارهٔ یک رسید</button></details>
     <div id="fallback-stats" class="text-xs text-cream/60" aria-live="polite"></div>
     <p class="hint">ارسال موفق یعنی تأیید API پیام‌رسان؛ خواندن پیام توسط ادمین یا رسیدن پیامک به مشتری را تأیید نمی‌کند.</p>
     <div class="flex flex-wrap gap-2">
@@ -125,10 +126,13 @@ export const fallbackScripts = String.raw`
   async function save(){
     if(!ready)throw new Error('ابتدا تنظیمات را بازخوانی کنید.');
     var data=payload();
+    if(lastConfig&&lastConfig.deliveryMode==='admin'&&data.deliveryMode!=='admin'&&!window.confirm('خروج از حالت ادمین، رسیدهای آماده‌نشده و پیام‌های منتظر این مسیر را لغو می‌کند؛ با برگشت دوباره فعال نمی‌شوند. ادامه می‌دهید؟'))throw new Error('تغییر حالت لغو شد.');
     if(lastConfig&&lastConfig.channels.some(function(c){return !data.channels.some(function(n){return n.channel===c.channel;});})&&!window.confirm('حذف مقصد، پیام‌های معلق آن را لغو می‌کند. ادامه می‌دهید؟'))throw new Error('حذف مقصد لغو شد.');
     await api('/api/admin/fallback',{method:'PUT',body:data});await loadConfig();
   }
-  async function campaigns(){try{var data=await api('/api/admin/campaigns');el('campaign-progress').textContent=data.items.length?data.items.map(function(row){return({birthday:'تولد',churn:'یادآوری دیدار',weather:'آب‌وهوا'}[row.job]||row.job)+' · '+({running:'در حال آماده‌سازی',paused:'متوقف؛ نیازمند بررسی',done:'آماده‌سازی کامل',expired:'مهلت روز تمام شد'}[row.status]||row.status)+' · '+fa(row.queued)+' پیام آماده'+(row.error?' — '+row.error:'');}).join(' | '):'هنوز کمپینی در حالت ادمین شروع نشده است.';}catch{el('campaign-progress').textContent='وضعیت کمپین دریافت نشد؛ دوباره تازه‌سازی کنید.';}}
+  async function receipts(){try{var data=await api('/api/admin/receipts');var labels={pending:'نیازمند آماده‌سازی',processing:'در حال بررسی',held:'منتظر تکمیل اصلاح',queued:'آمادهٔ صف ادمین',cancelled:'لغوشده',expired:'منقضی'};el('receipt-progress').textContent=data.counts.map(function(r){return(labels[r.status]||r.status)+': '+fa(r.n);}).join(' | ')+(data.items.length?' — '+data.items.map(function(r){return 'فاکتور #'+fa(r.invoice_id)+' '+(labels[r.status]||r.status)+(r.error?' ('+r.error+')':'');}).join('، '):'');}catch{el('receipt-progress').textContent='وضعیت رسیدها دریافت نشد؛ دوباره تازه‌سازی کنید.';}}
+  el('receipt-recover').addEventListener('click',async function(){setLoading(this,true);try{var r=await api('/api/admin/receipts/recover',{method:'POST',body:{}});toast(r.checked?'یک رسید بررسی شد؛ وضعیت را بخوانید.':'رسید آمادهٔ بررسی وجود ندارد.','success');await receipts();await history();}catch(e){report(e);}finally{setLoading(this,false);}});
+  async function campaigns(){try{var data=await api('/api/admin/campaigns');el('campaign-progress').textContent=data.items.length?data.items.map(function(row){return({birthday:'تولد',churn:'یادآوری دیدار',weather:'آب‌وهوا'}[row.job]||row.job)+' · '+({running:'در حال آماده‌سازی',paused:'متوقف؛ نیازمند بررسی',done:'آماده‌سازی کامل',expired:'مهلت روز تمام شد'}[row.status]||row.status)+' · '+fa(row.queued)+' پیام آماده · '+fa(row.issues)+' مشتری نیازمند اصلاح'+(row.error?' — '+row.error:'');}).join(' | ')+(data.issues&&data.issues.length?' — خطاهای اخیر: '+data.issues.map(function(e){return 'مشتری #'+fa(e.user_id)+' ('+e.code+')';}).join('، '):''):'هنوز کمپینی در حالت ادمین شروع نشده است.';}catch{el('campaign-progress').textContent='وضعیت کمپین دریافت نشد؛ دوباره تازه‌سازی کنید.';}}
   function schedule(delay){clearTimeout(timer);timer=setTimeout(function(){if(!document.hidden)history().catch(report);else schedule(20000);},delay);}
   async function history(){
     if(historyBusy){historyAgain=true;return;}historyBusy=true;
@@ -209,13 +213,13 @@ export const fallbackScripts = String.raw`
     setLoading(btn,true,'در حال ثبت…');try{var r=await api('/api/admin/fallback/'+encodeURIComponent(btn.dataset.retryId)+'/retry',{method:'POST',body:{confirmDuplicateRisk:btn.dataset.uncertain==='true'}});toast(r.message,'success');await history();}catch(error){report(error);}finally{setLoading(btn,false);}
   });
   ['fallback-status','fallback-channel','fallback-handoff'].forEach(function(id){el(id).addEventListener('change',function(){page=1;history().catch(report);});});
-  el('fallback-refresh').addEventListener('click',function(){history().catch(report);campaigns();});
+  el('fallback-refresh').addEventListener('click',function(){history().catch(report);campaigns();receipts();});
   el('fb-prev').addEventListener('click',function(){if(page>1)page--;history().catch(report);});el('fb-next').addEventListener('click',function(){page++;history().catch(report);});
   document.addEventListener('sms-settings-saved',function(){api('/api/admin/fallback').then(state).catch(report);});
   window.addEventListener('pagehide',function(){clearTimeout(timer);});
   window.addEventListener('beforeunload',function(e){if(dirty){e.preventDefault();e.returnValue='';}});
   busy=true;lockConfig(true);loadConfig().then(function(){return history();}).catch(function(e){el('fallback-state').textContent='تنظیمات دریافت نشد؛ بازخوانی تنظیمات را بزنید.';report(e);}).finally(function(){busy=false;lockConfig(false);});
-  campaigns();
+  campaigns();receipts();
   history().catch(function(e){report(e);schedule(20000);});
 })();`;
 

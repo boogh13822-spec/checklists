@@ -1,4 +1,4 @@
-> **راهنمای جاری v8:** [ADMIN-HANDOFF-FA.md](ADMIN-HANDOFF-FA.md). برای سایت موجود، دریافت بکاپ خصوصی و ارتقای مرورگری `/admin/system` توصیه می‌شود؛ setup فقط نصب تازه است.
+> **راهنمای جاری v9:** [DELIVERY-RELIABILITY-FA.md](DELIVERY-RELIABILITY-FA.md). برای سایت موجود، دریافت بکاپ خصوصی و ارتقای مرورگری `/admin/system` توصیه می‌شود؛ setup فقط نصب تازه است.
 
 # راهنمای اعمال تغییرات روی سایت واقعی
 

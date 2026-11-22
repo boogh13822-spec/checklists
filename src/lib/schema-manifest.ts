@@ -689,6 +689,70 @@ export const SCHEMA_TABLES = [
         "definition": "TEXT NOT NULL DEFAULT (datetime('now'))"
       }
     ]
+  },
+  {
+    "name": "invoice_receipts",
+    "sql": "CREATE TABLE IF NOT EXISTS invoice_receipts (\n  invoice_id INTEGER PRIMARY KEY REFERENCES invoices(id),\n  status TEXT NOT NULL DEFAULT 'pending',\n  owner TEXT,\n  until_ms INTEGER NOT NULL DEFAULT 0,\n  expires_at INTEGER NOT NULL,\n  attempts INTEGER NOT NULL DEFAULT 0,\n  error TEXT,\n  created_at TEXT NOT NULL DEFAULT (datetime('now'))\n);",
+    "columns": [
+      {
+        "name": "invoice_id",
+        "definition": "INTEGER PRIMARY KEY REFERENCES invoices(id)"
+      },
+      {
+        "name": "status",
+        "definition": "TEXT NOT NULL DEFAULT 'pending'"
+      },
+      {
+        "name": "owner",
+        "definition": "TEXT"
+      },
+      {
+        "name": "until_ms",
+        "definition": "INTEGER NOT NULL DEFAULT 0"
+      },
+      {
+        "name": "expires_at",
+        "definition": "INTEGER NOT NULL"
+      },
+      {
+        "name": "attempts",
+        "definition": "INTEGER NOT NULL DEFAULT 0"
+      },
+      {
+        "name": "error",
+        "definition": "TEXT"
+      },
+      {
+        "name": "created_at",
+        "definition": "TEXT NOT NULL DEFAULT (datetime('now'))"
+      }
+    ]
+  },
+  {
+    "name": "campaign_issues",
+    "sql": "CREATE TABLE IF NOT EXISTS campaign_issues (\n  job TEXT NOT NULL,\n  day TEXT NOT NULL,\n  user_id INTEGER NOT NULL,\n  code TEXT NOT NULL,\n  created_at TEXT NOT NULL DEFAULT (datetime('now')),\n  PRIMARY KEY(job,day,user_id)\n);",
+    "columns": [
+      {
+        "name": "job",
+        "definition": "TEXT NOT NULL"
+      },
+      {
+        "name": "day",
+        "definition": "TEXT NOT NULL"
+      },
+      {
+        "name": "user_id",
+        "definition": "INTEGER NOT NULL"
+      },
+      {
+        "name": "code",
+        "definition": "TEXT NOT NULL"
+      },
+      {
+        "name": "created_at",
+        "definition": "TEXT NOT NULL DEFAULT (datetime('now'))"
+      }
+    ]
   }
 ] as const;
 export const SCHEMA_INDEXES = [
@@ -811,5 +875,9 @@ export const SCHEMA_INDEXES = [
   {
     "name": "idx_fallback_handoff",
     "sql": "CREATE INDEX IF NOT EXISTS idx_fallback_handoff ON fallback_jobs(handoff_key,manual_sent_at);"
+  },
+  {
+    "name": "idx_invoice_receipts_due",
+    "sql": "CREATE INDEX IF NOT EXISTS idx_invoice_receipts_due ON invoice_receipts(status,until_ms);"
   }
 ] as const;

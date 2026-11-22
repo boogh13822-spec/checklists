@@ -1196,6 +1196,7 @@ export function staffPage(
         }
         $('#receipt-modal').classList.remove('hidden');
         toast('فاکتور با موفقیت ثبت شد.', 'success');
+        if(result.deliveryWarning){if(noteEl)noteEl.textContent+=' — '+result.deliveryWarning;toast(result.deliveryWarning,'error');}
 
         if(!result.duplicate){
         // به‌روزرسانی آمار امروز

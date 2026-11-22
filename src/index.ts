@@ -137,7 +137,7 @@ import { adminLogsCsv, adminLogsPage, adminReportsPage, reportsCsv } from './ui/
  * ========================================================================== */
 
 const app = new Hono<AppEnv>();
-const APP_BUILD = 'admin-handoff-v8';
+const APP_BUILD = 'delivery-reliability-v9';
 
 /**
  * منطقه‌ی زمانی از متغیر محیطی TZ_NAME (پیش‌فرض Asia/Tehran).
@@ -1281,7 +1281,7 @@ app.post('/api/auth/otp/request', async (c) => {
   const result = await requestOtpCode(c.env, settings, phone, clientKey(c));
   if (result.ok === false) {
     if (result.retryAfter) c.header('Retry-After', String(result.retryAfter));
-    return fail(c, result.error, result.code === 'RATE_LIMITED' ? 429 : 400, result.code);
+    return fail(c, result.error, result.code === 'RATE_LIMIT_UNAVAILABLE' ? 503 : result.code === 'RATE_LIMITED' ? 429 : 400, result.code);
   }
 
   return ok(c, { sent: result.sent, queued: result.queued ?? false, ttl: result.ttl });
@@ -2399,8 +2399,19 @@ app.post('/api/admin/fallback/:id/retry', requireApiRole('admin'), async (c) => 
   await audit(c, 'fallback_retry', { targetType:'message', targetId:id, details:`تلاش مجدد آگاهانه مدیر (بدون تغییر مالی). نوبت قبلی: ${previous.previousAttempts} تلاش؛ نتیجه: ${(previous.previousError ?? 'نامشخص').slice(0,200)}؛ پذیرش خطر تکرار: ${body?.confirmDuplicateRisk === true ? 'بله' : 'خیر'}.` });
   return ok(c, { message:'دوباره در صف قرار گرفت؛ نتیجه در تاریخچه مشخص می‌شود.' }, 202);
 });
+app.get('/api/admin/receipts',requireApiRole('admin'),async(c)=>{
+  const counts=await c.env.DB.prepare('SELECT status,COUNT(*) AS n FROM invoice_receipts GROUP BY status').all();
+  const items=await c.env.DB.prepare("SELECT invoice_id,status,error,attempts,created_at FROM invoice_receipts WHERE status IN ('pending','processing','held','expired') ORDER BY invoice_id DESC LIMIT 20").all();
+  return ok(c,{counts:counts.results??[],items:items.results??[]});
+});
+app.post('/api/admin/receipts/recover',requireApiRole('admin'),async(c)=>{
+  const {dbRateLimit}=await import('./lib/otp');const rate=await dbRateLimit(c.env.DB,'receipts:recover:'+c.get('user')!.uid,3,60);
+  if(!rate)return fail(c,'کنترل امن درخواست در دسترس نیست.',503,'RATE_LIMIT_UNAVAILABLE');
+  if(!rate.allowed)return fail(c,'حداکثر سه بررسی در دقیقه.',429,'RATE_LIMITED');
+  const {recoverInvoiceReceipt}=await import('./lib/db');return ok(c,{checked:await recoverInvoiceReceipt(c.env,c.get('settings'))});
+});
 app.get('/api/admin/campaigns',requireApiRole('admin'),async(c)=>{
-  const rows=await c.env.DB.prepare('SELECT job,day,cursor,queued,scanned,status,error,updated_at FROM campaign_progress ORDER BY job').all();return ok(c,{items:rows.results??[]});
+  const rows=await c.env.DB.prepare('SELECT p.job,p.day,p.cursor,p.queued,p.scanned,p.status,p.error,p.updated_at,(SELECT COUNT(*) FROM campaign_issues e WHERE e.job=p.job AND e.day=p.day) AS issues FROM campaign_progress p ORDER BY p.job').all();const issues=await c.env.DB.prepare('SELECT job,day,user_id,code FROM campaign_issues ORDER BY created_at DESC LIMIT 20').all();return ok(c,{items:rows.results??[],issues:issues.results??[]});
 });
 app.get('/api/admin/fallback/history', requireApiRole('admin'), async (c) => {
   const page = Math.min(10000, Math.max(1, toPositiveInt(c.req.query('page'), 1)));
@@ -3013,6 +3024,7 @@ async function scheduled(
 ): Promise<void> {
   if (!(await schemaStatus(env.DB)).ready) { console.warn('CRON_PAUSED_SCHEMA_UPGRADE_REQUIRED'); return; }
   if (controller.cron === '* * * * *') {
+    if(new Date(controller.scheduledTime).getUTCMinutes()%4===3){const {recoverInvoiceReceipt}=await import('./lib/db');if(await recoverInvoiceReceipt(env))return;}
     const hourBoundary = new Date(controller.scheduledTime).getUTCMinutes() === 0;
     if(new Date(controller.scheduledTime).getUTCMinutes()%2===1){const {resumeAdminCampaign}=await import('./lib/campaigns');if(await resumeAdminCampaign(env))return;}
 

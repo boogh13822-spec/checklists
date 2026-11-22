@@ -35,6 +35,7 @@ import {
 } from './utils';
 import { generateCouponCode } from './crypto';
 import { renderSms, sendSms } from './sms';
+import { loadFallbackConfig } from './fallback';
 import { CHURN_DEFAULT_INTERVAL } from './settings';
 
 /* ==========================================================================
@@ -394,6 +395,8 @@ export type InvoiceResult =
       pointsNote: string;
       /** آیا این درخواست تکراری بود و همان فاکتور قبلی برگشت داده شد */
       duplicate: boolean;
+      receiptStatus?: string;
+      deliveryWarning?: string;
       /** روش پرداخت ثبت‌شده */
       paymentMethod: PaymentMethod | null;
       paidCash: number;
@@ -535,6 +538,14 @@ export function calculateInvoicePoints(input: {
   };
 }
 
+/** Financial success and delivery state must never be conflated. */
+function receiptWarning(status:string|undefined):string|undefined{
+  if(status==='queued'||status==='held')return undefined;
+  if(status==='cancelled')return 'خرید ثبت شد؛ ارسال رسید این مسیر لغو شده است و خودکار دوباره فعال نمی‌شود.';
+  if(status==='expired')return 'خرید ثبت شد؛ مهلت آماده‌سازی رسید تمام شده است. در صورت نیاز، مدیر محتوا را برای ارسال دستی بررسی کند.';
+  return 'خرید ثبت شد؛ آماده‌سازی پیام ادمین هنوز انجام نشده است. درخواست رسید محفوظ است و دوباره بررسی می‌شود.';
+}
+
 /** نتیجه‌ی فاکتور از روی رکورد موجود (برای درخواست‌های تکراری) */
 async function invoiceResultFromRow(
   db: D1Database,
@@ -547,9 +558,12 @@ async function invoiceResultFromRow(
     .bind(customer.id)
     .first<{ points: number; tier: string }>();
 
+  const receipt=await db.prepare('SELECT status FROM invoice_receipts WHERE invoice_id=?').bind(row.id).first<{status:string}>().catch(()=>null);
   return {
     ok: true,
     invoiceId: row.id,
+    receiptStatus:receipt?.status,
+    deliveryWarning:receipt?receiptWarning(receipt.status):undefined,
     subtotal: row.subtotal,
     discount: row.discount,
     amount: row.amount,
@@ -692,6 +706,10 @@ export async function recordInvoice(
   );
   let tierChanged = newTier !== customer.tier;
 
+  const adminReceipt=(await loadFallbackConfig(env)).deliveryMode==='admin';
+  const referrer=customer.referred_by&&customer.referral_rewarded!==1?await findUserById(env.DB,customer.referred_by):null;
+  const reward=Math.max(0,Math.floor(settings.referral_reward_points));
+  let rewardResultIndex=-1,rewardApplied=false;
   const buildStatements = (earned: number, day: string | null) => {
     const list = [
       env.DB.prepare(
@@ -750,6 +768,9 @@ export async function recordInvoice(
       ),
     ];
 
+    // The intent cannot be lost between committing the sale and preparing the messenger queue.
+    if(adminReceipt)list.splice(1,0,env.DB.prepare("INSERT INTO invoice_receipts(invoice_id,status,expires_at) VALUES(last_insert_rowid(),?,?)")
+      .bind(input.deferReceipt?'held':'pending',Date.now()+86400000));
     if(input.replacesInvoiceId)list.unshift(env.DB.prepare(`INSERT INTO operation_assertions(valid) SELECT 0 WHERE
       NOT EXISTS(SELECT 1 FROM invoices WHERE id=? AND voided_at IS NULL) OR
       EXISTS(SELECT 1 FROM invoices WHERE replaces_invoice_id=? AND voided_at IS NULL)`)
@@ -764,12 +785,23 @@ export async function recordInvoice(
         env.DB.prepare('UPDATE coupons SET used_count = used_count + 1 WHERE id = ?').bind(coupon.id)
       );
     }
+    rewardResultIndex=-1;
+    if(referrer && referrer.role==='customer' && referrer.is_active===1){
+      rewardResultIndex=list.length;
+      list.push(env.DB.prepare(`UPDATE users SET points=points+?,lifetime_points=lifetime_points+?,
+        tier=CASE WHEN lifetime_points+?>=? THEN 'vip' WHEN lifetime_points+?>=? THEN 'gold' WHEN lifetime_points+?>=? THEN 'silver' ELSE 'bronze' END
+        WHERE id=? AND role='customer' AND is_active=1 AND EXISTS(SELECT 1 FROM users c WHERE c.id=? AND c.referred_by=users.id AND c.referral_rewarded=0)`)
+        .bind(reward,reward,reward,settings.tiers.vip,reward,settings.tiers.gold,reward,settings.tiers.silver,referrer.id,customer.id));
+      list.push(env.DB.prepare(`UPDATE users SET referral_rewarded=1 WHERE id=? AND referral_rewarded=0
+        AND EXISTS(SELECT 1 FROM users r WHERE r.id=users.referred_by AND r.role='customer' AND r.is_active=1)`).bind(customer.id));
+    }
     return list;
   };
 
   let invoiceId = 0;
   try {
     const results = await env.DB.batch(buildStatements(pointsEarned, visitDay));
+    rewardApplied=rewardResultIndex>=0&&Number(results[rewardResultIndex]?.meta?.changes)>0;
     invoiceId = Number(results[(coupon ? 1 : 0)+(input.replacesInvoiceId ? 1 : 0)]?.meta?.last_row_id ?? 0);
   } catch (error) {
     const message = String(error);
@@ -793,6 +825,7 @@ export async function recordInvoice(
     if (visitDay && (message.includes('visit_day') || message.includes('ux_invoices_visit_day'))) {
       try {
         const results = await env.DB.batch(buildStatements(0, null));
+        rewardApplied=rewardResultIndex>=0&&Number(results[rewardResultIndex]?.meta?.changes)>0;
         invoiceId = Number(results[(coupon ? 1 : 0)+(input.replacesInvoiceId ? 1 : 0)]?.meta?.last_row_id ?? 0);
         pointsEarned = 0;
         pointsNote = 'امتیاز حضور امروز قبلاً برای این مشتری ثبت شده است.';
@@ -810,26 +843,23 @@ export async function recordInvoice(
   // خواندن مقدار نهایی امتیاز/سطح از دیتابیس (منبع حقیقت)
   const after = await env.DB.prepare('SELECT points, tier FROM users WHERE id = ?')
     .bind(customer.id)
-    .first<{ points: number; tier: string }>();
+    .first<{ points: number; tier: string }>().catch(()=>null);
   if (after) {
     newPoints = after.points;
     newTier = after.tier;
     tierChanged = newTier !== customer.tier;
   }
 
-  // به‌روزرسانی میانگین فاصله خرید (خارج از تراکنش اصلی)
-  await recomputeAvgInterval(env.DB, customer.id);
-
-  // پاداش معرف پس از اولین خرید
-  if (customer.referred_by && customer.referral_rewarded !== 1) {
-    await rewardReferrer(env, settings, customer);
-  }
-
-  if (!input.deferReceipt) await sendInvoiceReceipt(env, settings, invoiceId);
+  await recomputeAvgInterval(env.DB,customer.id).catch(()=>console.error('INVOICE_AVERAGE_DEFERRED',invoiceId));
+  if(rewardApplied&&reward>0&&referrer){try{await sendSms(env,settings,{userId:referrer.id,phone:referrer.phone,type:'referral',eventKey:'referral:'+customer.id,
+    message:renderSms(settings,'welcome',{name:referrer.name,points:reward,referral_code:customer.name})});}catch{console.error('REFERRAL_NOTICE_FAILED',invoiceId);}}
+  const receipt=!input.deferReceipt?await sendInvoiceReceipt(env,settings,invoiceId):null;
 
   return {
     ok: true,
     invoiceId,
+    receiptStatus:receipt?.receiptStatus,
+    deliveryWarning:adminReceipt&&!input.deferReceipt?receiptWarning(receipt?.receiptStatus):undefined,
     subtotal,
     discount,
     amount,
@@ -848,74 +878,66 @@ export async function recordInvoice(
   };
 }
 
-/** Read final persisted values so correction receipts never show pre-reversal balances. */
-export async function sendInvoiceReceipt(env: Bindings, settings: AppSettings, invoiceId: number): Promise<{ pointsEarned: number; totalPoints: number } | null> {
+/** Durable admin-mode receipt intents use a stable event key; recovery NEVER calls an SMS provider. */
+export async function sendInvoiceReceipt(env: Bindings, settings: AppSettings, invoiceId: number): Promise<{ pointsEarned: number; totalPoints: number; receiptStatus?: string } | null> {
+  let owner:string|undefined;
   try {
-    const row = await env.DB.prepare(`SELECT i.amount,i.discount,i.coupon_code,i.points_earned,
+    const row=await env.DB.prepare(`SELECT i.amount,i.discount,i.coupon_code,i.points_earned,i.replaces_invoice_id,
       u.id AS user_id,u.name,u.phone,u.points,u.tier FROM invoices i JOIN users u ON u.id=i.user_id
       WHERE i.id=? AND i.voided_at IS NULL`).bind(invoiceId).first<{
-        amount: number; discount: number; coupon_code: string | null; points_earned: number;
-        user_id: number; name: string; phone: string; points: number; tier: string;
+        amount:number;discount:number;coupon_code:string|null;points_earned:number;replaces_invoice_id:number|null;
+        user_id:number;name:string;phone:string;points:number;tier:string;
       }>();
-    if (!row) return null;
-    await sendSms(env, settings, { userId: row.user_id, phone: row.phone, type: 'invoice',
-      message: renderSms(settings, 'invoice', { name: row.name, amount: formatNumberFa(row.amount),
-        points: toPersianDigits(row.points_earned), total_points: toPersianDigits(row.points),
-        tier: tierLabel(row.tier, settings), discount: formatNumberFa(row.discount), code: row.coupon_code ?? '' }) });
-    return { pointsEarned: row.points_earned, totalPoints: row.points };
-  } catch { console.error('INVOICE_RECEIPT_FAILED', invoiceId); return null; }
+    const task=await env.DB.prepare('SELECT * FROM invoice_receipts WHERE invoice_id=?').bind(invoiceId)
+      .first<{status:string;expires_at:number}>();
+    if(!row){if(task)await env.DB.prepare("UPDATE invoice_receipts SET status='cancelled',owner=NULL,error='INVOICE_VOIDED' WHERE invoice_id=? AND status!='queued'").bind(invoiceId).run();return null;}
+    const values={pointsEarned:row.points_earned,totalPoints:row.points};
+    if(task){
+      if(['queued','cancelled','expired'].includes(task.status))return {...values,receiptStatus:task.status};
+      // A deferred correction must not escape before its original has been reversed.
+      if(row.replaces_invoice_id){const original=await env.DB.prepare('SELECT voided_at FROM invoices WHERE id=?').bind(row.replaces_invoice_id).first<{voided_at:string|null}>();
+        if(!original?.voided_at)return {...values,receiptStatus:'held'};}
+      owner=crypto.randomUUID();
+      const claim=await env.DB.prepare(`UPDATE invoice_receipts SET status='processing',owner=?,until_ms=?,attempts=attempts+1
+        WHERE invoice_id=? AND status IN ('pending','held','processing') AND until_ms<=? RETURNING invoice_id`)
+        .bind(owner,Date.now()+90000,invoiceId,Date.now()).first();
+      if(!claim)return {...values,receiptStatus:'pending'};
+      const config=await loadFallbackConfig(env);
+      if(config.deliveryMode!=='admin'||task.expires_at<=Date.now()+12000){
+        const state=config.deliveryMode!=='admin'?'cancelled':'expired';
+        await env.DB.prepare('UPDATE invoice_receipts SET status=?,owner=NULL,error=? WHERE invoice_id=? AND owner=?').bind(state,state.toUpperCase(),invoiceId,owner).run();
+        return {...values,receiptStatus:state};
+      }
+    }
+    const result=await sendSms(env,settings,{userId:row.user_id,phone:row.phone,type:'invoice',
+      ...(task?{adminOnly:true,eventKey:'invoice-receipt:'+invoiceId,expiresAt:task.expires_at,receiptGuard:{invoiceId,owner:owner!}}:{}),
+      message:renderSms(settings,'invoice',{name:row.name,amount:formatNumberFa(row.amount),points:toPersianDigits(row.points_earned),total_points:toPersianDigits(row.points),
+        tier:tierLabel(row.tier,settings),discount:formatNumberFa(row.discount),code:row.coupon_code??''})});
+    if(task){
+      const queued=result.status==='pending';
+      await env.DB.prepare(`UPDATE invoice_receipts SET status=?,owner=NULL,until_ms=?,error=? WHERE invoice_id=? AND owner=?`)
+        .bind(queued?'queued':'pending',queued?0:Date.now()+60000,queued?null:'QUEUE_PREPARATION_FAILED',invoiceId,owner!).run();
+      return {...values,receiptStatus:queued?'queued':'pending'};
+    }
+    return {...values,receiptStatus:result.status};
+  }catch{
+    console.error('INVOICE_RECEIPT_DEFERRED',invoiceId);
+    // An uncertain insert is safe to retry because the queue event ID is deterministic.
+    // A failed checkpoint keeps the lease; it becomes eligible after 90s.
+    return null;
+  }
 }
 
-/** پاداش دادن به معرف پس از اولین خرید مشتری */
-async function rewardReferrer(
-  env: Bindings,
-  settings: AppSettings,
-  customer: UserRow
-): Promise<void> {
-  if (!customer.referred_by) return;
-
-  const referrer = await findUserById(env.DB, customer.referred_by);
-  if (!referrer || referrer.is_active !== 1) return;
-
-  const reward = Math.max(0, settings.referral_reward_points);
-
-  // «ثبت پاداش» را اول و به‌صورت شرطی انجام می‌دهیم: اگر دو فاکتور هم‌زمان برسد،
-  // فقط یکی از آن‌ها می‌تواند این ردیف را از 0 به 1 ببرد و پاداش دوبار داده نشود.
-  const claim = await env.DB.prepare(
-    'UPDATE users SET referral_rewarded = 1 WHERE id = ? AND referral_rewarded = 0'
-  )
-    .bind(customer.id)
-    .run();
-  if (!claim.meta?.changes) return;
-
-  if (reward > 0) {
-    // افزایش اتمیک امتیاز معرف + محاسبه‌ی سطح از مقدار نهایی
-    const updated = await env.DB.prepare(
-      `UPDATE users
-       SET points = points + ?, lifetime_points = lifetime_points + ?
-       WHERE id = ? AND role = 'customer'
-       RETURNING points, lifetime_points`
-    )
-      .bind(reward, reward, referrer.id)
-      .first<{ points: number; lifetime_points: number }>();
-
-    if (updated) {
-      await env.DB.prepare('UPDATE users SET tier = ? WHERE id = ?')
-        .bind(calculateTier(updated.lifetime_points, settings), referrer.id)
-        .run();
-    }
-
-    await sendSms(env, settings, {
-      userId: referrer.id,
-      phone: referrer.phone,
-      type: 'referral',
-      message: renderSms(settings, 'welcome', {
-        name: referrer.name,
-        points: reward,
-        referral_code: customer.name,
-      }),
-    });
-  }
+/** One bounded recovery per invocation. No legacy receipts or OTP are replayed. */
+export async function recoverInvoiceReceipt(env:Bindings,provided?:AppSettings):Promise<boolean>{
+  const task=await env.DB.prepare(`SELECT r.invoice_id FROM invoice_receipts r JOIN invoices i ON i.id=r.invoice_id
+    WHERE r.status IN ('pending','processing','held') AND r.until_ms<=?
+    AND (r.status!='held' OR i.voided_at IS NOT NULL OR i.replaces_invoice_id IS NULL OR EXISTS(SELECT 1 FROM invoices o WHERE o.id=i.replaces_invoice_id AND o.voided_at IS NOT NULL))
+    ORDER BY r.until_ms,r.invoice_id LIMIT 1`).bind(Date.now()).first<{invoice_id:number}>();
+  if(!task)return false;
+  const {loadSettings}=await import('./settings');
+  await sendInvoiceReceipt(env,provided??await loadSettings(env,true),task.invoice_id);
+  return true;
 }
 
 /** میانگین فاصله روزهای خرید یک کاربر را از روی فاکتورها محاسبه می‌کند */

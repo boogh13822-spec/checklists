@@ -961,7 +961,8 @@ async function saveFallbackConfig(env, body) {
         NOT EXISTS (SELECT 1 FROM json_each(?) WHERE json_extract(value,'$.channel')=fallback_jobs.channel AND json_extract(value,'$.chatId')=fallback_jobs.chat_id)
         OR (reason NOT IN ('test','event','manual','admin_handoff') AND ?=0)
         OR (reason='event' AND type!='report_error' AND (?=0 OR (type='report_invoice' AND ?=0) OR (type='report_action' AND ?=0)))
-        OR (type='report_error' AND ?=0))`).bind(JSON.stringify(channels), input.enabled ? 1 : 0, notifyEnabled ? 1 : 0, notifyInvoices ? 1 : 0, notifyActions ? 1 : 0, notifyErrors ? 1 : 0)
+        OR (type='report_error' AND ?=0) OR (reason='admin_handoff' AND ?!='admin'))`).bind(JSON.stringify(channels), input.enabled ? 1 : 0, notifyEnabled ? 1 : 0, notifyInvoices ? 1 : 0, notifyActions ? 1 : 0, notifyErrors ? 1 : 0, deliveryMode),
+    env.DB.prepare("UPDATE invoice_receipts SET status='cancelled',owner=NULL,error='MODE_CHANGED' WHERE status IN ('pending','held','processing') AND ?!='admin'").bind(deliveryMode)
   ]);
 }
 async function diagnoseFallback(env, channel) {
@@ -1002,7 +1003,7 @@ async function enqueueFallback(env, params, reason, testChannel) {
     ids.push(id);
   }
   const insert = env.DB.prepare(`INSERT OR IGNORE INTO fallback_jobs(id,channel,chat_id,user_id,type,payload,reason,next_at,expires_at,handoff_key)
-    SELECT * FROM (${rows.join(" UNION ALL ")}) WHERE (SELECT COUNT(*) FROM fallback_jobs WHERE status IN ('pending','processing')) <= ?`).bind(...bindings, 1e3 - ids.length);
+    SELECT * FROM (${rows.join(" UNION ALL ")}) WHERE (SELECT COUNT(*) FROM fallback_jobs WHERE status IN ('pending','processing')) <= ? ${reason === "admin_handoff" ? "AND COALESCE(json_extract((SELECT value FROM settings WHERE key=?),'$.deliveryMode'),'sms')='admin'" : ""} ${params.receiptGuard ? "AND EXISTS(SELECT 1 FROM invoice_receipts WHERE invoice_id=? AND status='processing' AND owner=?)" : ""}`).bind(...bindings, 1e3 - ids.length, ...reason === "admin_handoff" ? ["sms_fallback_config"] : [], ...params.receiptGuard ? [params.receiptGuard.invoiceId, params.receiptGuard.owner] : []);
   const inserted = params.type === "otp" && params.userId !== null ? (await env.DB.batch([
     env.DB.prepare(`UPDATE fallback_jobs SET status='skipped',error='SUPERSEDED: \u06A9\u062F \u062C\u062F\u06CC\u062F \u062F\u0631\u062E\u0648\u0627\u0633\u062A \u0634\u062F.',payload='',completed_at=datetime('now')
         WHERE type='otp' AND user_id=? AND status='pending'`).bind(params.userId),
@@ -1632,6 +1633,54 @@ var init_sms = __esm({
 });
 
 // src/lib/db.ts
+var db_exports = {};
+__export(db_exports, {
+  PAYMENT_LABELS: () => PAYMENT_LABELS,
+  TIER_LABELS: () => TIER_LABELS,
+  adjustPoints: () => adjustPoints,
+  calculateInvoicePoints: () => calculateInvoicePoints,
+  calculatePoints: () => calculatePoints,
+  calculateTier: () => calculateTier,
+  createCoupon: () => createCoupon,
+  customerActivityStatus: () => customerActivityStatus,
+  customerSearchPattern: () => customerSearchPattern,
+  customerSearchText: () => customerSearchText,
+  describeItems: () => describeItems,
+  evaluateCoupon: () => evaluateCoupon,
+  exportAdminLogs: () => exportAdminLogs,
+  exportCustomers: () => exportCustomers,
+  findUserById: () => findUserById,
+  findUserByPhone: () => findUserByPhone,
+  findUserByPhoneLoose: () => findUserByPhoneLoose,
+  generateUniqueReferralCode: () => generateUniqueReferralCode,
+  getCustomerDetail: () => getCustomerDetail,
+  getCustomerPanelData: () => getCustomerPanelData,
+  getDashboardStats: () => getDashboardStats,
+  getPopularItems: () => getPopularItems,
+  getReportsData: () => getReportsData,
+  hasVisitPointsToday: () => hasVisitPointsToday,
+  itemsSubtotal: () => itemsSubtotal,
+  listAdminLogs: () => listAdminLogs,
+  listCoupons: () => listCoupons,
+  listCustomers: () => listCustomers,
+  listInvoices: () => listInvoices,
+  listSmsLogs: () => listSmsLogs,
+  listStaff: () => listStaff,
+  logAdminAction: () => logAdminAction,
+  normalizeItems: () => normalizeItems,
+  paymentSummary: () => paymentSummary,
+  recomputeAvgInterval: () => recomputeAvgInterval,
+  recordInvoice: () => recordInvoice,
+  recoverInvoiceReceipt: () => recoverInvoiceReceipt,
+  redeemPointsForCoupon: () => redeemPointsForCoupon,
+  registerCustomer: () => registerCustomer,
+  resolvePayment: () => resolvePayment,
+  resolveReferrer: () => resolveReferrer,
+  sendInvoiceReceipt: () => sendInvoiceReceipt,
+  shortJalali: () => shortJalali,
+  tierLabel: () => tierLabel,
+  voidInvoice: () => voidInvoice
+});
 function calculatePoints(amount, settings) {
   const safeAmount = Math.max(0, Math.floor(Number(amount) || 0));
   const unit = Math.max(1, settings.currency_unit);
@@ -1801,6 +1850,17 @@ function resolvePayment(amount, input) {
   else method = "cash";
   return { ok: true, payment: { method, cash, card: rawCard, online: rawOnline, change, tendered } };
 }
+function paymentSummary(row) {
+  if (!row.payment_method) return PAYMENT_LABELS.unknown;
+  if (row.payment_method === "mixed") {
+    const parts = [];
+    if ((row.paid_cash ?? 0) > 0) parts.push(`${formatNumberFa(row.paid_cash ?? 0)} \u0646\u0642\u062F`);
+    if ((row.paid_card ?? 0) > 0) parts.push(`${formatNumberFa(row.paid_card ?? 0)} \u06A9\u0627\u0631\u062A`);
+    if ((row.paid_online ?? 0) > 0) parts.push(`${formatNumberFa(row.paid_online ?? 0)} \u0622\u0646\u0644\u0627\u06CC\u0646`);
+    return parts.join(" + ") || PAYMENT_LABELS.mixed;
+  }
+  return PAYMENT_LABELS[row.payment_method] ?? row.payment_method;
+}
 function itemsSubtotal(items) {
   return (items ?? []).reduce((sum, item) => {
     const qty = Math.max(1, Math.floor(Number(item.qty) || 1));
@@ -1885,11 +1945,20 @@ function calculateInvoicePoints(input) {
     visitDay: false
   };
 }
+function receiptWarning(status) {
+  if (status === "queued" || status === "held") return void 0;
+  if (status === "cancelled") return "\u062E\u0631\u06CC\u062F \u062B\u0628\u062A \u0634\u062F\u061B \u0627\u0631\u0633\u0627\u0644 \u0631\u0633\u06CC\u062F \u0627\u06CC\u0646 \u0645\u0633\u06CC\u0631 \u0644\u063A\u0648 \u0634\u062F\u0647 \u0627\u0633\u062A \u0648 \u062E\u0648\u062F\u06A9\u0627\u0631 \u062F\u0648\u0628\u0627\u0631\u0647 \u0641\u0639\u0627\u0644 \u0646\u0645\u06CC\u200C\u0634\u0648\u062F.";
+  if (status === "expired") return "\u062E\u0631\u06CC\u062F \u062B\u0628\u062A \u0634\u062F\u061B \u0645\u0647\u0644\u062A \u0622\u0645\u0627\u062F\u0647\u200C\u0633\u0627\u0632\u06CC \u0631\u0633\u06CC\u062F \u062A\u0645\u0627\u0645 \u0634\u062F\u0647 \u0627\u0633\u062A. \u062F\u0631 \u0635\u0648\u0631\u062A \u0646\u06CC\u0627\u0632\u060C \u0645\u062F\u06CC\u0631 \u0645\u062D\u062A\u0648\u0627 \u0631\u0627 \u0628\u0631\u0627\u06CC \u0627\u0631\u0633\u0627\u0644 \u062F\u0633\u062A\u06CC \u0628\u0631\u0631\u0633\u06CC \u06A9\u0646\u062F.";
+  return "\u062E\u0631\u06CC\u062F \u062B\u0628\u062A \u0634\u062F\u061B \u0622\u0645\u0627\u062F\u0647\u200C\u0633\u0627\u0632\u06CC \u067E\u06CC\u0627\u0645 \u0627\u062F\u0645\u06CC\u0646 \u0647\u0646\u0648\u0632 \u0627\u0646\u062C\u0627\u0645 \u0646\u0634\u062F\u0647 \u0627\u0633\u062A. \u062F\u0631\u062E\u0648\u0627\u0633\u062A \u0631\u0633\u06CC\u062F \u0645\u062D\u0641\u0648\u0638 \u0627\u0633\u062A \u0648 \u062F\u0648\u0628\u0627\u0631\u0647 \u0628\u0631\u0631\u0633\u06CC \u0645\u06CC\u200C\u0634\u0648\u062F.";
+}
 async function invoiceResultFromRow(db, row, customer, settings) {
   const after = await db.prepare("SELECT points, tier FROM users WHERE id = ?").bind(customer.id).first();
+  const receipt = await db.prepare("SELECT status FROM invoice_receipts WHERE invoice_id=?").bind(row.id).first().catch(() => null);
   return {
     ok: true,
     invoiceId: row.id,
+    receiptStatus: receipt?.status,
+    deliveryWarning: receipt ? receiptWarning(receipt.status) : void 0,
     subtotal: row.subtotal,
     discount: row.discount,
     amount: row.amount,
@@ -1997,6 +2066,10 @@ async function recordInvoice(env, settings, input) {
     settings
   );
   let tierChanged = newTier !== customer.tier;
+  const adminReceipt = (await loadFallbackConfig(env)).deliveryMode === "admin";
+  const referrer = customer.referred_by && customer.referral_rewarded !== 1 ? await findUserById(env.DB, customer.referred_by) : null;
+  const reward = Math.max(0, Math.floor(settings.referral_reward_points));
+  let rewardResultIndex = -1, rewardApplied = false;
   const buildStatements = (earned, day) => {
     const list = [
       env.DB.prepare(
@@ -2054,6 +2127,7 @@ async function recordInvoice(env, settings, input) {
         customer.id
       )
     ];
+    if (adminReceipt) list.splice(1, 0, env.DB.prepare("INSERT INTO invoice_receipts(invoice_id,status,expires_at) VALUES(last_insert_rowid(),?,?)").bind(input.deferReceipt ? "held" : "pending", Date.now() + 864e5));
     if (input.replacesInvoiceId) list.unshift(env.DB.prepare(`INSERT INTO operation_assertions(valid) SELECT 0 WHERE
       NOT EXISTS(SELECT 1 FROM invoices WHERE id=? AND voided_at IS NULL) OR
       EXISTS(SELECT 1 FROM invoices WHERE replaces_invoice_id=? AND voided_at IS NULL)`).bind(input.replacesInvoiceId, input.replacesInvoiceId));
@@ -2065,11 +2139,21 @@ async function recordInvoice(env, settings, input) {
         env.DB.prepare("UPDATE coupons SET used_count = used_count + 1 WHERE id = ?").bind(coupon.id)
       );
     }
+    rewardResultIndex = -1;
+    if (referrer && referrer.role === "customer" && referrer.is_active === 1) {
+      rewardResultIndex = list.length;
+      list.push(env.DB.prepare(`UPDATE users SET points=points+?,lifetime_points=lifetime_points+?,
+        tier=CASE WHEN lifetime_points+?>=? THEN 'vip' WHEN lifetime_points+?>=? THEN 'gold' WHEN lifetime_points+?>=? THEN 'silver' ELSE 'bronze' END
+        WHERE id=? AND role='customer' AND is_active=1 AND EXISTS(SELECT 1 FROM users c WHERE c.id=? AND c.referred_by=users.id AND c.referral_rewarded=0)`).bind(reward, reward, reward, settings.tiers.vip, reward, settings.tiers.gold, reward, settings.tiers.silver, referrer.id, customer.id));
+      list.push(env.DB.prepare(`UPDATE users SET referral_rewarded=1 WHERE id=? AND referral_rewarded=0
+        AND EXISTS(SELECT 1 FROM users r WHERE r.id=users.referred_by AND r.role='customer' AND r.is_active=1)`).bind(customer.id));
+    }
     return list;
   };
   let invoiceId = 0;
   try {
     const results = await env.DB.batch(buildStatements(pointsEarned, visitDay));
+    rewardApplied = rewardResultIndex >= 0 && Number(results[rewardResultIndex]?.meta?.changes) > 0;
     invoiceId = Number(results[(coupon ? 1 : 0) + (input.replacesInvoiceId ? 1 : 0)]?.meta?.last_row_id ?? 0);
   } catch (error) {
     const message = String(error);
@@ -2087,6 +2171,7 @@ async function recordInvoice(env, settings, input) {
     if (visitDay && (message.includes("visit_day") || message.includes("ux_invoices_visit_day"))) {
       try {
         const results = await env.DB.batch(buildStatements(0, null));
+        rewardApplied = rewardResultIndex >= 0 && Number(results[rewardResultIndex]?.meta?.changes) > 0;
         invoiceId = Number(results[(coupon ? 1 : 0) + (input.replacesInvoiceId ? 1 : 0)]?.meta?.last_row_id ?? 0);
         pointsEarned = 0;
         pointsNote = "\u0627\u0645\u062A\u06CC\u0627\u0632 \u062D\u0636\u0648\u0631 \u0627\u0645\u0631\u0648\u0632 \u0642\u0628\u0644\u0627\u064B \u0628\u0631\u0627\u06CC \u0627\u06CC\u0646 \u0645\u0634\u062A\u0631\u06CC \u062B\u0628\u062A \u0634\u062F\u0647 \u0627\u0633\u062A.";
@@ -2100,20 +2185,32 @@ async function recordInvoice(env, settings, input) {
       return { ok: false, error: "\u062E\u0637\u0627 \u062F\u0631 \u062B\u0628\u062A \u0641\u0627\u06A9\u062A\u0648\u0631.", code: "DB_ERROR" };
     }
   }
-  const after = await env.DB.prepare("SELECT points, tier FROM users WHERE id = ?").bind(customer.id).first();
+  const after = await env.DB.prepare("SELECT points, tier FROM users WHERE id = ?").bind(customer.id).first().catch(() => null);
   if (after) {
     newPoints = after.points;
     newTier = after.tier;
     tierChanged = newTier !== customer.tier;
   }
-  await recomputeAvgInterval(env.DB, customer.id);
-  if (customer.referred_by && customer.referral_rewarded !== 1) {
-    await rewardReferrer(env, settings, customer);
+  await recomputeAvgInterval(env.DB, customer.id).catch(() => console.error("INVOICE_AVERAGE_DEFERRED", invoiceId));
+  if (rewardApplied && reward > 0 && referrer) {
+    try {
+      await sendSms(env, settings, {
+        userId: referrer.id,
+        phone: referrer.phone,
+        type: "referral",
+        eventKey: "referral:" + customer.id,
+        message: renderSms(settings, "welcome", { name: referrer.name, points: reward, referral_code: customer.name })
+      });
+    } catch {
+      console.error("REFERRAL_NOTICE_FAILED", invoiceId);
+    }
   }
-  if (!input.deferReceipt) await sendInvoiceReceipt(env, settings, invoiceId);
+  const receipt = !input.deferReceipt ? await sendInvoiceReceipt(env, settings, invoiceId) : null;
   return {
     ok: true,
     invoiceId,
+    receiptStatus: receipt?.receiptStatus,
+    deliveryWarning: adminReceipt && !input.deferReceipt ? receiptWarning(receipt?.receiptStatus) : void 0,
     subtotal,
     discount,
     amount,
@@ -2132,15 +2229,39 @@ async function recordInvoice(env, settings, input) {
   };
 }
 async function sendInvoiceReceipt(env, settings, invoiceId) {
+  let owner;
   try {
-    const row = await env.DB.prepare(`SELECT i.amount,i.discount,i.coupon_code,i.points_earned,
+    const row = await env.DB.prepare(`SELECT i.amount,i.discount,i.coupon_code,i.points_earned,i.replaces_invoice_id,
       u.id AS user_id,u.name,u.phone,u.points,u.tier FROM invoices i JOIN users u ON u.id=i.user_id
       WHERE i.id=? AND i.voided_at IS NULL`).bind(invoiceId).first();
-    if (!row) return null;
-    await sendSms(env, settings, {
+    const task = await env.DB.prepare("SELECT * FROM invoice_receipts WHERE invoice_id=?").bind(invoiceId).first();
+    if (!row) {
+      if (task) await env.DB.prepare("UPDATE invoice_receipts SET status='cancelled',owner=NULL,error='INVOICE_VOIDED' WHERE invoice_id=? AND status!='queued'").bind(invoiceId).run();
+      return null;
+    }
+    const values = { pointsEarned: row.points_earned, totalPoints: row.points };
+    if (task) {
+      if (["queued", "cancelled", "expired"].includes(task.status)) return { ...values, receiptStatus: task.status };
+      if (row.replaces_invoice_id) {
+        const original = await env.DB.prepare("SELECT voided_at FROM invoices WHERE id=?").bind(row.replaces_invoice_id).first();
+        if (!original?.voided_at) return { ...values, receiptStatus: "held" };
+      }
+      owner = crypto.randomUUID();
+      const claim = await env.DB.prepare(`UPDATE invoice_receipts SET status='processing',owner=?,until_ms=?,attempts=attempts+1
+        WHERE invoice_id=? AND status IN ('pending','held','processing') AND until_ms<=? RETURNING invoice_id`).bind(owner, Date.now() + 9e4, invoiceId, Date.now()).first();
+      if (!claim) return { ...values, receiptStatus: "pending" };
+      const config = await loadFallbackConfig(env);
+      if (config.deliveryMode !== "admin" || task.expires_at <= Date.now() + 12e3) {
+        const state = config.deliveryMode !== "admin" ? "cancelled" : "expired";
+        await env.DB.prepare("UPDATE invoice_receipts SET status=?,owner=NULL,error=? WHERE invoice_id=? AND owner=?").bind(state, state.toUpperCase(), invoiceId, owner).run();
+        return { ...values, receiptStatus: state };
+      }
+    }
+    const result = await sendSms(env, settings, {
       userId: row.user_id,
       phone: row.phone,
       type: "invoice",
+      ...task ? { adminOnly: true, eventKey: "invoice-receipt:" + invoiceId, expiresAt: task.expires_at, receiptGuard: { invoiceId, owner } } : {},
       message: renderSms(settings, "invoice", {
         name: row.name,
         amount: formatNumberFa(row.amount),
@@ -2151,42 +2272,26 @@ async function sendInvoiceReceipt(env, settings, invoiceId) {
         code: row.coupon_code ?? ""
       })
     });
-    return { pointsEarned: row.points_earned, totalPoints: row.points };
+    if (task) {
+      const queued = result.status === "pending";
+      await env.DB.prepare(`UPDATE invoice_receipts SET status=?,owner=NULL,until_ms=?,error=? WHERE invoice_id=? AND owner=?`).bind(queued ? "queued" : "pending", queued ? 0 : Date.now() + 6e4, queued ? null : "QUEUE_PREPARATION_FAILED", invoiceId, owner).run();
+      return { ...values, receiptStatus: queued ? "queued" : "pending" };
+    }
+    return { ...values, receiptStatus: result.status };
   } catch {
-    console.error("INVOICE_RECEIPT_FAILED", invoiceId);
+    console.error("INVOICE_RECEIPT_DEFERRED", invoiceId);
     return null;
   }
 }
-async function rewardReferrer(env, settings, customer) {
-  if (!customer.referred_by) return;
-  const referrer = await findUserById(env.DB, customer.referred_by);
-  if (!referrer || referrer.is_active !== 1) return;
-  const reward = Math.max(0, settings.referral_reward_points);
-  const claim = await env.DB.prepare(
-    "UPDATE users SET referral_rewarded = 1 WHERE id = ? AND referral_rewarded = 0"
-  ).bind(customer.id).run();
-  if (!claim.meta?.changes) return;
-  if (reward > 0) {
-    const updated = await env.DB.prepare(
-      `UPDATE users
-       SET points = points + ?, lifetime_points = lifetime_points + ?
-       WHERE id = ? AND role = 'customer'
-       RETURNING points, lifetime_points`
-    ).bind(reward, reward, referrer.id).first();
-    if (updated) {
-      await env.DB.prepare("UPDATE users SET tier = ? WHERE id = ?").bind(calculateTier(updated.lifetime_points, settings), referrer.id).run();
-    }
-    await sendSms(env, settings, {
-      userId: referrer.id,
-      phone: referrer.phone,
-      type: "referral",
-      message: renderSms(settings, "welcome", {
-        name: referrer.name,
-        points: reward,
-        referral_code: customer.name
-      })
-    });
-  }
+async function recoverInvoiceReceipt(env, provided) {
+  const task = await env.DB.prepare(`SELECT r.invoice_id FROM invoice_receipts r JOIN invoices i ON i.id=r.invoice_id
+    WHERE r.status IN ('pending','processing','held') AND r.until_ms<=?
+    AND (r.status!='held' OR i.voided_at IS NOT NULL OR i.replaces_invoice_id IS NULL OR EXISTS(SELECT 1 FROM invoices o WHERE o.id=i.replaces_invoice_id AND o.voided_at IS NOT NULL))
+    ORDER BY r.until_ms,r.invoice_id LIMIT 1`).bind(Date.now()).first();
+  if (!task) return false;
+  const { loadSettings: loadSettings2 } = await Promise.resolve().then(() => (init_settings(), settings_exports));
+  await sendInvoiceReceipt(env, provided ?? await loadSettings2(env, true), task.invoice_id);
+  return true;
 }
 async function recomputeAvgInterval(db, userId) {
   const { results } = await db.prepare(
@@ -2442,6 +2547,9 @@ function describeItems(raw2) {
   const items = safeJsonParse(raw2, []);
   if (!Array.isArray(items) || items.length === 0) return "\u2014";
   return items.slice(0, 4).map((item) => `${item.name} \xD7${toPersianDigits(item.qty)}`).join("\u060C ");
+}
+function shortJalali(value) {
+  return formatJalali(value);
 }
 async function listInvoices(db, params) {
   const page = Math.max(1, Math.floor(params.page ?? 1));
@@ -3136,6 +3244,7 @@ var init_db = __esm({
     init_utils();
     init_crypto();
     init_sms();
+    init_fallback();
     init_settings();
     TIER_LABELS = {
       bronze: "\u0628\u0631\u0646\u0632\u06CC",
@@ -3210,6 +3319,13 @@ async function resumeAdminCampaign(env, only, provided) {
         more = true;
         break;
       }
+      if (row.job === "birthday" && user.birth_date && !isValidBirthDate(user.birth_date)) {
+        attempts++;
+        await env.DB.prepare("INSERT OR IGNORE INTO campaign_issues(job,day,user_id,code) VALUES(?,?,?,'INVALID_BIRTH_DATE')").bind(row.job, row.day, user.id).run();
+        cursor = user.id;
+        scanned++;
+        continue;
+      }
       let eligible = false;
       if (row.job === "birthday" && user.birth_date) {
         const [y, m, d] = user.birth_date.split("-").map(Number);
@@ -3223,6 +3339,12 @@ async function resumeAdminCampaign(env, only, provided) {
       if (row.job === "weather") eligible = daysSince(user.last_visit_date || user.created_at) <= 30;
       if (eligible) {
         attempts++;
+        if (!/^09\d{9}$/.test(normalizePhone(user.phone))) {
+          await env.DB.prepare("INSERT OR IGNORE INTO campaign_issues(job,day,user_id,code) VALUES(?,?,?,'INVALID_PHONE')").bind(row.job, row.day, user.id).run();
+          cursor = user.id;
+          scanned++;
+          continue;
+        }
         const vars = { name: user.name, tier: tierLabel(user.tier, settings), last_visit: daysSince(user.last_visit_date) };
         if (row.job === "birthday") {
           const start = toGregorian(today.jy, 1, 1), startISO = utcStamp(Date.UTC(start.gy, start.gm - 1, start.gd) - 3.5 * 36e5);
@@ -3340,12 +3462,14 @@ async function requestOtpCode(env, settings, phone, clientIp) {
       retryAfter: perIp.retryAfter
     };
   }
+  if (!perIp) return { ok: false, code: "RATE_LIMIT_UNAVAILABLE", error: "\u06A9\u0646\u062A\u0631\u0644 \u0627\u0645\u0646 \u062F\u0631\u062E\u0648\u0627\u0633\u062A \u06A9\u062F \u0645\u0648\u0642\u062A\u0627\u064B \u062F\u0631 \u062F\u0633\u062A\u0631\u0633 \u0646\u06CC\u0633\u062A\u061B \u06A9\u0645\u06CC \u0628\u0639\u062F \u062A\u0644\u0627\u0634 \u06A9\u0646\u06CC\u062F.", retryAfter: 60 };
   const user = await findUserByPhone(env.DB, phone);
   if (!user || user.role !== "customer" || user.is_active !== 1) {
     return { ok: true, ttl: 0, sent: false };
   }
   const perPhone = await dbRateLimit(env.DB, `otp:phone:${phone}`, 3, 600);
-  if (perPhone && !perPhone.allowed) {
+  if (!perPhone) return { ok: false, code: "RATE_LIMIT_UNAVAILABLE", error: "\u06A9\u0646\u062A\u0631\u0644 \u0627\u0645\u0646 \u062F\u0631\u062E\u0648\u0627\u0633\u062A \u06A9\u062F \u0645\u0648\u0642\u062A\u0627\u064B \u062F\u0631 \u062F\u0633\u062A\u0631\u0633 \u0646\u06CC\u0633\u062A\u061B \u06A9\u0645\u06CC \u0628\u0639\u062F \u062A\u0644\u0627\u0634 \u06A9\u0646\u06CC\u062F.", retryAfter: 60 };
+  if (!perPhone.allowed) {
     return {
       ok: false,
       error: "\u06A9\u062F \u0648\u0631\u0648\u062F \u0627\u062E\u06CC\u0631\u0627\u064B \u0686\u0646\u062F \u0628\u0627\u0631 \u0627\u0631\u0633\u0627\u0644 \u0634\u062F\u0647 \u0627\u0633\u062A\u061B \u0686\u0646\u062F \u062F\u0642\u06CC\u0642\u0647 \u0628\u0639\u062F \u062F\u0648\u0628\u0627\u0631\u0647 \u062A\u0644\u0627\u0634 \u06A9\u0646\u06CC\u062F.",
@@ -3354,7 +3478,8 @@ async function requestOtpCode(env, settings, phone, clientIp) {
     };
   }
   const perHour = await dbRateLimit(env.DB, `otp:hour:${phone}`, 8, 3600);
-  if (perHour && !perHour.allowed) {
+  if (!perHour) return { ok: false, code: "RATE_LIMIT_UNAVAILABLE", error: "\u06A9\u0646\u062A\u0631\u0644 \u0627\u0645\u0646 \u062F\u0631\u062E\u0648\u0627\u0633\u062A \u06A9\u062F \u0645\u0648\u0642\u062A\u0627\u064B \u062F\u0631 \u062F\u0633\u062A\u0631\u0633 \u0646\u06CC\u0633\u062A\u061B \u06A9\u0645\u06CC \u0628\u0639\u062F \u062A\u0644\u0627\u0634 \u06A9\u0646\u06CC\u062F.", retryAfter: 60 };
+  if (!perHour.allowed) {
     return {
       ok: false,
       error: "\u062A\u0639\u062F\u0627\u062F \u062F\u0631\u062E\u0648\u0627\u0633\u062A\u200C\u0647\u0627\u06CC \u0627\u0645\u0631\u0648\u0632 \u0632\u06CC\u0627\u062F \u0627\u0633\u062A\u061B \u06A9\u0645\u06CC \u0628\u0639\u062F \u062A\u0644\u0627\u0634 \u06A9\u0646\u06CC\u062F.",
@@ -4368,6 +4493,7 @@ var fallbackPanel = `
       <button id="fallback-refresh" type="button" class="btn btn-ghost btn-sm">\u062A\u0627\u0632\u0647\u200C\u0633\u0627\u0632\u06CC</button></div>
     <label class="label" for="fallback-handoff">\u0646\u0645\u0627\u06CC\u0634 \u06A9\u0627\u0631\u0647\u0627</label><select id="fallback-handoff" class="field"><option value="">\u0647\u0645\u0647\u0654 \u067E\u06CC\u0627\u0645\u200C\u0647\u0627 \u0648 \u06AF\u0632\u0627\u0631\u0634\u200C\u0647\u0627</option><option value="todo">\u0646\u06CC\u0627\u0632\u0645\u0646\u062F \u0627\u0631\u0633\u0627\u0644 \u062F\u0633\u062A\u06CC \u0628\u0647 \u0645\u0634\u062A\u0631\u06CC</option><option value="done">\u0627\u0631\u0633\u0627\u0644 \u062F\u0633\u062A\u06CC \u062B\u0628\u062A\u200C\u0634\u062F\u0647 \u062A\u0648\u0633\u0637 \u0645\u062F\u06CC\u0631</option></select>
     <details class="rounded-xl border border-white/10 p-3"><summary class="cursor-pointer">\u0622\u0645\u0627\u062F\u0647\u200C\u0633\u0627\u0632\u06CC \u06A9\u0645\u067E\u06CC\u0646\u200C\u0647\u0627\u06CC \u062E\u0648\u062F\u06A9\u0627\u0631</summary><div id="campaign-progress" class="hint" role="status"></div></details>
+    <details class="rounded-xl border border-white/10 p-3"><summary class="cursor-pointer">\u0631\u0633\u06CC\u062F\u0647\u0627\u06CC \u062E\u0631\u06CC\u062F \u062F\u0631 \u0627\u0646\u062A\u0638\u0627\u0631 \u0622\u0645\u0627\u062F\u0647\u200C\u0633\u0627\u0632\u06CC</summary><p class="hint">\u0627\u06CC\u0646 \u0648\u0636\u0639\u06CC\u062A\u060C \u062A\u062D\u0648\u06CC\u0644 \u0628\u0647 \u0645\u0634\u062A\u0631\u06CC \u0646\u06CC\u0633\u062A. \u0628\u0627\u0632\u06CC\u0627\u0628\u06CC \u0641\u0642\u0637 \u0631\u0633\u06CC\u062F\u0647\u0627\u06CC \u062C\u062F\u06CC\u062F\u0650 \u062D\u0627\u0644\u062A \u0627\u062F\u0645\u06CC\u0646 \u0631\u0627 \u0622\u0645\u0627\u062F\u0647 \u0645\u06CC\u200C\u06A9\u0646\u062F\u060C \u0646\u0647 \u067E\u06CC\u0627\u0645\u06A9 \u06CC\u0627 OTP.</p><div id="receipt-progress" class="hint" role="status"></div><button id="receipt-recover" type="button" class="btn btn-ghost btn-sm">\u0628\u0631\u0631\u0633\u06CC \u062F\u0648\u0628\u0627\u0631\u0647\u0654 \u06CC\u06A9 \u0631\u0633\u06CC\u062F</button></details>
     <div id="fallback-stats" class="text-xs text-cream/60" aria-live="polite"></div>
     <p class="hint">\u0627\u0631\u0633\u0627\u0644 \u0645\u0648\u0641\u0642 \u06CC\u0639\u0646\u06CC \u062A\u0623\u06CC\u06CC\u062F API \u067E\u06CC\u0627\u0645\u200C\u0631\u0633\u0627\u0646\u061B \u062E\u0648\u0627\u0646\u062F\u0646 \u067E\u06CC\u0627\u0645 \u062A\u0648\u0633\u0637 \u0627\u062F\u0645\u06CC\u0646 \u06CC\u0627 \u0631\u0633\u06CC\u062F\u0646 \u067E\u06CC\u0627\u0645\u06A9 \u0628\u0647 \u0645\u0634\u062A\u0631\u06CC \u0631\u0627 \u062A\u0623\u06CC\u06CC\u062F \u0646\u0645\u06CC\u200C\u06A9\u0646\u062F.</p>
     <div class="flex flex-wrap gap-2">
@@ -4480,10 +4606,13 @@ var fallbackScripts = String.raw`
   async function save(){
     if(!ready)throw new Error('ابتدا تنظیمات را بازخوانی کنید.');
     var data=payload();
+    if(lastConfig&&lastConfig.deliveryMode==='admin'&&data.deliveryMode!=='admin'&&!window.confirm('خروج از حالت ادمین، رسیدهای آماده‌نشده و پیام‌های منتظر این مسیر را لغو می‌کند؛ با برگشت دوباره فعال نمی‌شوند. ادامه می‌دهید؟'))throw new Error('تغییر حالت لغو شد.');
     if(lastConfig&&lastConfig.channels.some(function(c){return !data.channels.some(function(n){return n.channel===c.channel;});})&&!window.confirm('حذف مقصد، پیام‌های معلق آن را لغو می‌کند. ادامه می‌دهید؟'))throw new Error('حذف مقصد لغو شد.');
     await api('/api/admin/fallback',{method:'PUT',body:data});await loadConfig();
   }
-  async function campaigns(){try{var data=await api('/api/admin/campaigns');el('campaign-progress').textContent=data.items.length?data.items.map(function(row){return({birthday:'تولد',churn:'یادآوری دیدار',weather:'آب‌وهوا'}[row.job]||row.job)+' · '+({running:'در حال آماده‌سازی',paused:'متوقف؛ نیازمند بررسی',done:'آماده‌سازی کامل',expired:'مهلت روز تمام شد'}[row.status]||row.status)+' · '+fa(row.queued)+' پیام آماده'+(row.error?' — '+row.error:'');}).join(' | '):'هنوز کمپینی در حالت ادمین شروع نشده است.';}catch{el('campaign-progress').textContent='وضعیت کمپین دریافت نشد؛ دوباره تازه‌سازی کنید.';}}
+  async function receipts(){try{var data=await api('/api/admin/receipts');var labels={pending:'نیازمند آماده‌سازی',processing:'در حال بررسی',held:'منتظر تکمیل اصلاح',queued:'آمادهٔ صف ادمین',cancelled:'لغوشده',expired:'منقضی'};el('receipt-progress').textContent=data.counts.map(function(r){return(labels[r.status]||r.status)+': '+fa(r.n);}).join(' | ')+(data.items.length?' — '+data.items.map(function(r){return 'فاکتور #'+fa(r.invoice_id)+' '+(labels[r.status]||r.status)+(r.error?' ('+r.error+')':'');}).join('، '):'');}catch{el('receipt-progress').textContent='وضعیت رسیدها دریافت نشد؛ دوباره تازه‌سازی کنید.';}}
+  el('receipt-recover').addEventListener('click',async function(){setLoading(this,true);try{var r=await api('/api/admin/receipts/recover',{method:'POST',body:{}});toast(r.checked?'یک رسید بررسی شد؛ وضعیت را بخوانید.':'رسید آمادهٔ بررسی وجود ندارد.','success');await receipts();await history();}catch(e){report(e);}finally{setLoading(this,false);}});
+  async function campaigns(){try{var data=await api('/api/admin/campaigns');el('campaign-progress').textContent=data.items.length?data.items.map(function(row){return({birthday:'تولد',churn:'یادآوری دیدار',weather:'آب‌وهوا'}[row.job]||row.job)+' · '+({running:'در حال آماده‌سازی',paused:'متوقف؛ نیازمند بررسی',done:'آماده‌سازی کامل',expired:'مهلت روز تمام شد'}[row.status]||row.status)+' · '+fa(row.queued)+' پیام آماده · '+fa(row.issues)+' مشتری نیازمند اصلاح'+(row.error?' — '+row.error:'');}).join(' | ')+(data.issues&&data.issues.length?' — خطاهای اخیر: '+data.issues.map(function(e){return 'مشتری #'+fa(e.user_id)+' ('+e.code+')';}).join('، '):''):'هنوز کمپینی در حالت ادمین شروع نشده است.';}catch{el('campaign-progress').textContent='وضعیت کمپین دریافت نشد؛ دوباره تازه‌سازی کنید.';}}
   function schedule(delay){clearTimeout(timer);timer=setTimeout(function(){if(!document.hidden)history().catch(report);else schedule(20000);},delay);}
   async function history(){
     if(historyBusy){historyAgain=true;return;}historyBusy=true;
@@ -4564,13 +4693,13 @@ var fallbackScripts = String.raw`
     setLoading(btn,true,'در حال ثبت…');try{var r=await api('/api/admin/fallback/'+encodeURIComponent(btn.dataset.retryId)+'/retry',{method:'POST',body:{confirmDuplicateRisk:btn.dataset.uncertain==='true'}});toast(r.message,'success');await history();}catch(error){report(error);}finally{setLoading(btn,false);}
   });
   ['fallback-status','fallback-channel','fallback-handoff'].forEach(function(id){el(id).addEventListener('change',function(){page=1;history().catch(report);});});
-  el('fallback-refresh').addEventListener('click',function(){history().catch(report);campaigns();});
+  el('fallback-refresh').addEventListener('click',function(){history().catch(report);campaigns();receipts();});
   el('fb-prev').addEventListener('click',function(){if(page>1)page--;history().catch(report);});el('fb-next').addEventListener('click',function(){page++;history().catch(report);});
   document.addEventListener('sms-settings-saved',function(){api('/api/admin/fallback').then(state).catch(report);});
   window.addEventListener('pagehide',function(){clearTimeout(timer);});
   window.addEventListener('beforeunload',function(e){if(dirty){e.preventDefault();e.returnValue='';}});
   busy=true;lockConfig(true);loadConfig().then(function(){return history();}).catch(function(e){el('fallback-state').textContent='تنظیمات دریافت نشد؛ بازخوانی تنظیمات را بزنید.';report(e);}).finally(function(){busy=false;lockConfig(false);});
-  campaigns();
+  campaigns();receipts();
   history().catch(function(e){report(e);schedule(20000);});
 })();`;
 function adminFallbackPage(settings, userName) {
@@ -7695,6 +7824,70 @@ var SCHEMA_TABLES = [
         "definition": "TEXT NOT NULL DEFAULT (datetime('now'))"
       }
     ]
+  },
+  {
+    "name": "invoice_receipts",
+    "sql": "CREATE TABLE IF NOT EXISTS invoice_receipts (\n  invoice_id INTEGER PRIMARY KEY REFERENCES invoices(id),\n  status TEXT NOT NULL DEFAULT 'pending',\n  owner TEXT,\n  until_ms INTEGER NOT NULL DEFAULT 0,\n  expires_at INTEGER NOT NULL,\n  attempts INTEGER NOT NULL DEFAULT 0,\n  error TEXT,\n  created_at TEXT NOT NULL DEFAULT (datetime('now'))\n);",
+    "columns": [
+      {
+        "name": "invoice_id",
+        "definition": "INTEGER PRIMARY KEY REFERENCES invoices(id)"
+      },
+      {
+        "name": "status",
+        "definition": "TEXT NOT NULL DEFAULT 'pending'"
+      },
+      {
+        "name": "owner",
+        "definition": "TEXT"
+      },
+      {
+        "name": "until_ms",
+        "definition": "INTEGER NOT NULL DEFAULT 0"
+      },
+      {
+        "name": "expires_at",
+        "definition": "INTEGER NOT NULL"
+      },
+      {
+        "name": "attempts",
+        "definition": "INTEGER NOT NULL DEFAULT 0"
+      },
+      {
+        "name": "error",
+        "definition": "TEXT"
+      },
+      {
+        "name": "created_at",
+        "definition": "TEXT NOT NULL DEFAULT (datetime('now'))"
+      }
+    ]
+  },
+  {
+    "name": "campaign_issues",
+    "sql": "CREATE TABLE IF NOT EXISTS campaign_issues (\n  job TEXT NOT NULL,\n  day TEXT NOT NULL,\n  user_id INTEGER NOT NULL,\n  code TEXT NOT NULL,\n  created_at TEXT NOT NULL DEFAULT (datetime('now')),\n  PRIMARY KEY(job,day,user_id)\n);",
+    "columns": [
+      {
+        "name": "job",
+        "definition": "TEXT NOT NULL"
+      },
+      {
+        "name": "day",
+        "definition": "TEXT NOT NULL"
+      },
+      {
+        "name": "user_id",
+        "definition": "INTEGER NOT NULL"
+      },
+      {
+        "name": "code",
+        "definition": "TEXT NOT NULL"
+      },
+      {
+        "name": "created_at",
+        "definition": "TEXT NOT NULL DEFAULT (datetime('now'))"
+      }
+    ]
   }
 ];
 var SCHEMA_INDEXES = [
@@ -7817,12 +8010,16 @@ var SCHEMA_INDEXES = [
   {
     "name": "idx_fallback_handoff",
     "sql": "CREATE INDEX IF NOT EXISTS idx_fallback_handoff ON fallback_jobs(handoff_key,manual_sent_at);"
+  },
+  {
+    "name": "idx_invoice_receipts_due",
+    "sql": "CREATE INDEX IF NOT EXISTS idx_invoice_receipts_due ON invoice_receipts(status,until_ms);"
   }
 ];
 
 // src/lib/schema.ts
 init_db();
-var SCHEMA_VERSION = "admin-handoff-v8";
+var SCHEMA_VERSION = "delivery-reliability-v9";
 var readyCache = /* @__PURE__ */ new WeakMap();
 var controlRows = [
   { table: "fallback_dispatch", key: "state:fallback_dispatch", condition: "id=1", sql: "INSERT OR IGNORE INTO fallback_dispatch(id,until_ms) VALUES(1,0)" },
@@ -11082,6 +11279,7 @@ function staffPage(settings, user, menu, todayStats, todayInvoices, isAdmin = fa
         }
         $('#receipt-modal').classList.remove('hidden');
         toast('\u0641\u0627\u06A9\u062A\u0648\u0631 \u0628\u0627 \u0645\u0648\u0641\u0642\u06CC\u062A \u062B\u0628\u062A \u0634\u062F.', 'success');
+        if(result.deliveryWarning){if(noteEl)noteEl.textContent+=' \u2014 '+result.deliveryWarning;toast(result.deliveryWarning,'error');}
 
         if(!result.duplicate){
         // \u0628\u0647\u200C\u0631\u0648\u0632\u0631\u0633\u0627\u0646\u06CC \u0622\u0645\u0627\u0631 \u0627\u0645\u0631\u0648\u0632
@@ -15146,7 +15344,7 @@ function reportsCsv(data) {
 
 // src/index.ts
 var app = new Hono3();
-var APP_BUILD = "admin-handoff-v8";
+var APP_BUILD = "delivery-reliability-v9";
 function resolveTimeZone2(env) {
   return resolveTimeZone(env.TZ_NAME);
 }
@@ -16048,7 +16246,7 @@ app.post("/api/auth/otp/request", async (c) => {
   const result = await requestOtpCode(c.env, settings, phone, clientKey(c));
   if (result.ok === false) {
     if (result.retryAfter) c.header("Retry-After", String(result.retryAfter));
-    return fail(c, result.error, result.code === "RATE_LIMITED" ? 429 : 400, result.code);
+    return fail(c, result.error, result.code === "RATE_LIMIT_UNAVAILABLE" ? 503 : result.code === "RATE_LIMITED" ? 429 : 400, result.code);
   }
   return ok(c, { sent: result.sent, queued: result.queued ?? false, ttl: result.ttl });
 });
@@ -17028,9 +17226,23 @@ app.post("/api/admin/fallback/:id/retry", requireApiRole("admin"), async (c) => 
   await audit(c, "fallback_retry", { targetType: "message", targetId: id, details: `\u062A\u0644\u0627\u0634 \u0645\u062C\u062F\u062F \u0622\u06AF\u0627\u0647\u0627\u0646\u0647 \u0645\u062F\u06CC\u0631 (\u0628\u062F\u0648\u0646 \u062A\u063A\u06CC\u06CC\u0631 \u0645\u0627\u0644\u06CC). \u0646\u0648\u0628\u062A \u0642\u0628\u0644\u06CC: ${previous.previousAttempts} \u062A\u0644\u0627\u0634\u061B \u0646\u062A\u06CC\u062C\u0647: ${(previous.previousError ?? "\u0646\u0627\u0645\u0634\u062E\u0635").slice(0, 200)}\u061B \u067E\u0630\u06CC\u0631\u0634 \u062E\u0637\u0631 \u062A\u06A9\u0631\u0627\u0631: ${body?.confirmDuplicateRisk === true ? "\u0628\u0644\u0647" : "\u062E\u06CC\u0631"}.` });
   return ok(c, { message: "\u062F\u0648\u0628\u0627\u0631\u0647 \u062F\u0631 \u0635\u0641 \u0642\u0631\u0627\u0631 \u06AF\u0631\u0641\u062A\u061B \u0646\u062A\u06CC\u062C\u0647 \u062F\u0631 \u062A\u0627\u0631\u06CC\u062E\u0686\u0647 \u0645\u0634\u062E\u0635 \u0645\u06CC\u200C\u0634\u0648\u062F." }, 202);
 });
+app.get("/api/admin/receipts", requireApiRole("admin"), async (c) => {
+  const counts = await c.env.DB.prepare("SELECT status,COUNT(*) AS n FROM invoice_receipts GROUP BY status").all();
+  const items = await c.env.DB.prepare("SELECT invoice_id,status,error,attempts,created_at FROM invoice_receipts WHERE status IN ('pending','processing','held','expired') ORDER BY invoice_id DESC LIMIT 20").all();
+  return ok(c, { counts: counts.results ?? [], items: items.results ?? [] });
+});
+app.post("/api/admin/receipts/recover", requireApiRole("admin"), async (c) => {
+  const { dbRateLimit: dbRateLimit2 } = await Promise.resolve().then(() => (init_otp(), otp_exports));
+  const rate = await dbRateLimit2(c.env.DB, "receipts:recover:" + c.get("user").uid, 3, 60);
+  if (!rate) return fail(c, "\u06A9\u0646\u062A\u0631\u0644 \u0627\u0645\u0646 \u062F\u0631\u062E\u0648\u0627\u0633\u062A \u062F\u0631 \u062F\u0633\u062A\u0631\u0633 \u0646\u06CC\u0633\u062A.", 503, "RATE_LIMIT_UNAVAILABLE");
+  if (!rate.allowed) return fail(c, "\u062D\u062F\u0627\u06A9\u062B\u0631 \u0633\u0647 \u0628\u0631\u0631\u0633\u06CC \u062F\u0631 \u062F\u0642\u06CC\u0642\u0647.", 429, "RATE_LIMITED");
+  const { recoverInvoiceReceipt: recoverInvoiceReceipt2 } = await Promise.resolve().then(() => (init_db(), db_exports));
+  return ok(c, { checked: await recoverInvoiceReceipt2(c.env, c.get("settings")) });
+});
 app.get("/api/admin/campaigns", requireApiRole("admin"), async (c) => {
-  const rows = await c.env.DB.prepare("SELECT job,day,cursor,queued,scanned,status,error,updated_at FROM campaign_progress ORDER BY job").all();
-  return ok(c, { items: rows.results ?? [] });
+  const rows = await c.env.DB.prepare("SELECT p.job,p.day,p.cursor,p.queued,p.scanned,p.status,p.error,p.updated_at,(SELECT COUNT(*) FROM campaign_issues e WHERE e.job=p.job AND e.day=p.day) AS issues FROM campaign_progress p ORDER BY p.job").all();
+  const issues = await c.env.DB.prepare("SELECT job,day,user_id,code FROM campaign_issues ORDER BY created_at DESC LIMIT 20").all();
+  return ok(c, { items: rows.results ?? [], issues: issues.results ?? [] });
 });
 app.get("/api/admin/fallback/history", requireApiRole("admin"), async (c) => {
   const page = Math.min(1e4, Math.max(1, toPositiveInt(c.req.query("page"), 1)));
@@ -17535,6 +17747,10 @@ async function scheduled(controller, env, ctx) {
     return;
   }
   if (controller.cron === "* * * * *") {
+    if (new Date(controller.scheduledTime).getUTCMinutes() % 4 === 3) {
+      const { recoverInvoiceReceipt: recoverInvoiceReceipt2 } = await Promise.resolve().then(() => (init_db(), db_exports));
+      if (await recoverInvoiceReceipt2(env)) return;
+    }
     const hourBoundary = new Date(controller.scheduledTime).getUTCMinutes() === 0;
     if (new Date(controller.scheduledTime).getUTCMinutes() % 2 === 1) {
       const { resumeAdminCampaign: resumeAdminCampaign2 } = await Promise.resolve().then(() => (init_campaigns(), campaigns_exports));

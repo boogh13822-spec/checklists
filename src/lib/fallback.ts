@@ -105,8 +105,9 @@ export async function saveFallbackConfig(env: Bindings, body: unknown): Promise<
         NOT EXISTS (SELECT 1 FROM json_each(?) WHERE json_extract(value,'$.channel')=fallback_jobs.channel AND json_extract(value,'$.chatId')=fallback_jobs.chat_id)
         OR (reason NOT IN ('test','event','manual','admin_handoff') AND ?=0)
         OR (reason='event' AND type!='report_error' AND (?=0 OR (type='report_invoice' AND ?=0) OR (type='report_action' AND ?=0)))
-        OR (type='report_error' AND ?=0))`)
-      .bind(JSON.stringify(channels), input.enabled ? 1 : 0, notifyEnabled ? 1 : 0, notifyInvoices ? 1 : 0, notifyActions ? 1 : 0, notifyErrors ? 1 : 0),
+        OR (type='report_error' AND ?=0) OR (reason='admin_handoff' AND ?!='admin'))`)
+      .bind(JSON.stringify(channels), input.enabled ? 1 : 0, notifyEnabled ? 1 : 0, notifyInvoices ? 1 : 0, notifyActions ? 1 : 0, notifyErrors ? 1 : 0,deliveryMode),
+    env.DB.prepare("UPDATE invoice_receipts SET status='cancelled',owner=NULL,error='MODE_CHANGED' WHERE status IN ('pending','held','processing') AND ?!='admin'").bind(deliveryMode),
   ]);
 }
 
@@ -126,7 +127,7 @@ export function smsPanelActive(env: Bindings, settings: AppSettings): boolean {
   return !!(key || settings.sms_api_key).trim() && (settings.sms_provider !== 'smsir' || !!(env.SMS_SENDER || settings.sms_sender).trim());
 }
 
-export async function enqueueFallback(env: Bindings, params: { phone: string; message: string; userId: number | null; type: string; expiresAt?: number; eventKey?: string; title?: string },
+export async function enqueueFallback(env: Bindings, params: { phone: string; message: string; userId: number | null; type: string; expiresAt?: number; eventKey?: string; title?: string; receiptGuard?: {invoiceId:number;owner:string} },
   reason: 'inactive' | 'primary_failed' | 'test' | 'event' | 'manual' | 'admin_handoff', testChannel?: FallbackChannel): Promise<string[]> {
   const config = await loadFallbackConfig(env);
   if (reason==='admin_handoff' ? config.deliveryMode!=='admin' : params.type === 'report_error' ? config.notifyErrors === false : reason === 'event' ? (!config.notifyEnabled || (params.type === 'report_invoice' ? config.notifyInvoices === false : config.notifyActions === false)) : (!config.enabled && reason !== 'test' && reason !== 'manual')) return [];
@@ -151,8 +152,8 @@ export async function enqueueFallback(env: Bindings, params: { phone: string; me
   }
   // One SQL statement admits all selected channels or none, even under concurrency.
   const insert = env.DB.prepare(`INSERT OR IGNORE INTO fallback_jobs(id,channel,chat_id,user_id,type,payload,reason,next_at,expires_at,handoff_key)
-    SELECT * FROM (${rows.join(' UNION ALL ')}) WHERE (SELECT COUNT(*) FROM fallback_jobs WHERE status IN ('pending','processing')) <= ?`)
-    .bind(...bindings, 1000 - ids.length);
+    SELECT * FROM (${rows.join(' UNION ALL ')}) WHERE (SELECT COUNT(*) FROM fallback_jobs WHERE status IN ('pending','processing')) <= ? ${reason==='admin_handoff'?"AND COALESCE(json_extract((SELECT value FROM settings WHERE key=?),'$.deliveryMode'),'sms')='admin'":''} ${params.receiptGuard?"AND EXISTS(SELECT 1 FROM invoice_receipts WHERE invoice_id=? AND status='processing' AND owner=?)":''}`)
+    .bind(...bindings, 1000 - ids.length,...(reason==='admin_handoff'?['sms_fallback_config']:[]),...(params.receiptGuard?[params.receiptGuard.invoiceId,params.receiptGuard.owner]:[]));
   const inserted = params.type === 'otp' && params.userId !== null
     ? (await env.DB.batch([
       env.DB.prepare(`UPDATE fallback_jobs SET status='skipped',error='SUPERSEDED: کد جدید درخواست شد.',payload='',completed_at=datetime('now')

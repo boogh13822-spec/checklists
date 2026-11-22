@@ -108,6 +108,8 @@ export async function requestOtpCode(
     };
   }
 
+  if(!perIp)return {ok:false,code:'RATE_LIMIT_UNAVAILABLE',error:'کنترل امن درخواست کد موقتاً در دسترس نیست؛ کمی بعد تلاش کنید.',retryAfter:60};
+
   const user = await findUserByPhone(env.DB, phone);
   if (!user || user.role !== 'customer' || user.is_active !== 1) {
     // پیام یکسان برای همه؛ وجود/عدم وجود شماره افشا نمی‌شود
@@ -115,7 +117,8 @@ export async function requestOtpCode(
   }
 
   const perPhone = await dbRateLimit(env.DB, `otp:phone:${phone}`, 3, 600);
-  if (perPhone && !perPhone.allowed) {
+  if(!perPhone)return {ok:false,code:'RATE_LIMIT_UNAVAILABLE',error:'کنترل امن درخواست کد موقتاً در دسترس نیست؛ کمی بعد تلاش کنید.',retryAfter:60};
+  if (!perPhone.allowed) {
     return {
       ok: false,
       error: 'کد ورود اخیراً چند بار ارسال شده است؛ چند دقیقه بعد دوباره تلاش کنید.',
@@ -125,7 +128,8 @@ export async function requestOtpCode(
   }
 
   const perHour = await dbRateLimit(env.DB, `otp:hour:${phone}`, 8, 3600);
-  if (perHour && !perHour.allowed) {
+  if(!perHour)return {ok:false,code:'RATE_LIMIT_UNAVAILABLE',error:'کنترل امن درخواست کد موقتاً در دسترس نیست؛ کمی بعد تلاش کنید.',retryAfter:60};
+  if (!perHour.allowed) {
     return {
       ok: false,
       error: 'تعداد درخواست‌های امروز زیاد است؛ کمی بعد تلاش کنید.',

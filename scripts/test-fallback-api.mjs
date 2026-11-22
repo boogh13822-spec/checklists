@@ -4,8 +4,9 @@ import { execFileSync } from 'node:child_process';
 function localSQL(command) { execFileSync('npx',['wrangler','d1','execute','cafe-club-db','--local','--command',command],{stdio:'pipe'}); }
 const base = process.env.BASE_URL ?? 'http://127.0.0.1:8787';
 if (!['127.0.0.1', 'localhost'].includes(new URL(base).hostname)) throw new Error('Local test only');
+const TEST_IP='198.19.'+Math.floor(Math.random()*256)+'.'+Math.floor(Math.random()*256);
 async function call(path, {cookie='',method='GET',body,origin}={}) {
-  const headers = {Cookie:cookie};
+  const headers = {Cookie:cookie,'CF-Connecting-IP':TEST_IP};
   if(body!==undefined)headers['Content-Type']='application/json';
   if(origin)headers.Origin=origin;
   const response=await fetch(base+path,{method,headers,body:body===undefined?undefined:JSON.stringify(body),redirect:'manual'});
@@ -72,8 +73,19 @@ try {
     for(let i=0;i<2;i++)assert.equal((await call('/api/admin/fallback/test',{cookie:admin,method:'POST',body:i===0?null:{channel:'eitaa'}})).response.status,400);
     assert.equal((await call('/api/admin/fallback/test',{cookie:admin,method:'POST',body:{channel:'eitaa'}})).response.status,429);
   });
+  await test('admin receipt intent uses the actual D1 batch invoice ID and remains idempotent',async()=>{
+    assert.equal((await call('/api/admin/fallback',{cookie:admin,method:'PUT',body:{deliveryMode:'admin',enabled:false,channels:[{channel:'telegram',chatId:'123456',token:''}]}})).response.status,200);
+    const customer=await call('/api/staff/customers',{cookie:admin,method:'POST',body:{name:'آزمون رسید واقعی D1',phone:'0912'+String(Math.floor(Math.random()*9000000)+1000000),sms_opt_in:false}});assert.equal(customer.response.status,201,JSON.stringify(customer.json));
+    const input={userId:customer.json.data.id,items:[],amount:10000,clientRequestId:crypto.randomUUID()};const sale=await call('/api/staff/invoices',{cookie:admin,method:'POST',body:input});assert.equal(sale.response.status,201,JSON.stringify(sale.json));assert.equal(sale.json.data.receiptStatus,'queued');const duplicate=await call('/api/staff/invoices',{cookie:admin,method:'POST',body:input});assert.equal(duplicate.json.data.duplicate,true);assert.equal(duplicate.json.data.receiptStatus,'queued');assert.equal(sale.json.data.invoiceId,duplicate.json.data.invoiceId);
+  });
+  await test('actual D1 queue failure leaves a durable receipt, warns without failing sale, then recovers once',async()=>{
+    const customer=await call('/api/staff/customers',{cookie:admin,method:'POST',body:{name:'بازیابی رسید D1',phone:'0912'+String(Math.floor(Math.random()*9000000)+1000000),sms_opt_in:false}});assert.equal(customer.response.status,201);const input={userId:customer.json.data.id,items:[],amount:10000,clientRequestId:crypto.randomUUID()};
+    localSQL("CREATE TRIGGER v9_test_queue_failure BEFORE INSERT ON fallback_jobs WHEN NEW.type='invoice' BEGIN SELECT RAISE(ABORT,'injected test outage'); END");let sale;
+    try{sale=await call('/api/staff/invoices',{cookie:admin,method:'POST',body:input});assert.equal(sale.response.status,201,JSON.stringify(sale.json));assert.equal(sale.json.data.receiptStatus,'pending');assert(sale.json.data.deliveryWarning);}finally{localSQL('DROP TRIGGER IF EXISTS v9_test_queue_failure');}
+    localSQL('UPDATE invoice_receipts SET until_ms=0 WHERE invoice_id='+Number(sale.json.data.invoiceId));const recovery=await call('/api/admin/receipts/recover',{cookie:admin,method:'POST',body:{}});assert.equal(recovery.response.status,200);assert.equal(recovery.json.data.checked,true);const duplicate=await call('/api/staff/invoices',{cookie:admin,method:'POST',body:input});assert.equal(duplicate.json.data.invoiceId,sale.json.data.invoiceId);assert.equal(duplicate.json.data.receiptStatus,'queued');const history=await call('/api/admin/fallback/history?handoff=todo',{cookie:admin});assert.equal(history.json.data.items.filter(j=>j.type==='invoice'&&j.user_id===input.userId).length,1);
+  });
 } finally {
-  const restored=await call('/api/admin/fallback',{cookie:admin,method:'PUT',body:{enabled:false,channels:[]}});
+  const restored=await call('/api/admin/fallback',{cookie:admin,method:'PUT',body:{deliveryMode:'sms',enabled:false,channels:[]}});
   assert.equal(restored.response.status,200);
   localSQL("UPDATE fallback_dispatch SET until_ms=0,owner=NULL");
 }
