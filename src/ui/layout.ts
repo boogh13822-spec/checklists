@@ -152,6 +152,17 @@ export const BASE_STYLES = `
     box-shadow: 0 0 0 4px rgba(232,180,90,.12);
     background: rgba(255,255,255,.06);
   }
+  @media print {
+    body.printing-receipt { background:white!important;color:black!important; }
+    body.printing-receipt * { visibility:hidden; }
+    body.printing-receipt #receipt-modal,body.printing-receipt #receipt-modal * { visibility:visible;color:black!important;text-shadow:none!important;box-shadow:none!important; }
+    body.printing-receipt #receipt-modal { position:absolute!important;inset:0!important;background:white!important;display:block!important; }
+    body.printing-receipt #receipt-modal button { display:none!important; }
+    body.printing-receipt #receipt-modal .glass-strong { background:white!important;border:0!important;max-width:80mm!important;margin:0 auto!important; }
+  }
+  :focus-visible { outline: 2px solid #e8b45a; outline-offset: 3px; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } *,*::before,*::after { animation:none!important;transition:none!important; } }
+  @media (max-width:640px) { input.field,select.field,textarea.field { font-size:16px; } .btn { min-height:44px; } }
   .field:disabled { opacity: .55; cursor: not-allowed; }
   select.field option { background: #1b120c; color: #f6ecdd; }
   textarea.field { line-height: 1.9; resize: vertical; }
@@ -658,7 +669,8 @@ const NAV_ITEMS = {
     { href: '/admin/staff', label: 'کارمندان', icon: 'shield', key: 'staff' },
     { href: '/admin/coupons', label: 'کدهای تخفیف', icon: 'gift', key: 'coupons' },
     { href: '/admin/reports', label: 'گزارش‌ها', icon: 'chart', key: 'reports' },
-    { href: '/admin/sms', label: 'پیامک‌ها', icon: 'chat', key: 'sms' },
+    { href: '/admin/fallback', label: 'میز پیام‌ها', icon:'chat',key:'messages' },
+    { href: '/admin/sms', label: 'گزارش پیامک‌ها', icon: 'chat', key: 'sms' },
     { href: '/admin/logs', label: 'اقدامات مدیران', icon: 'clock', key: 'logs' },
     { href: '/admin/system', label: 'بررسی دیتابیس', icon: 'shield', key: 'system' },
   ],

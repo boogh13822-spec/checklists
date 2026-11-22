@@ -260,13 +260,7 @@ ON CONFLICT (phone) DO NOTHING;
 
 -- تنظیمات پیش‌فرض -------------------------------------------------------------
 INSERT INTO settings (key, value) VALUES
-  ('sms_templates', '{
-      "welcome": "سلام {name} عزیز 🌟\nبه باشگاه مشتریان کافه خوش آمدید!\nبا هر خرید امتیاز جمع کنید و از تخفیف‌های ویژه بهره‌مند شوید.",
-      "invoice": "{name} عزیز، خرید شما به مبلغ {amount} تومان ثبت شد و {points} امتیاز به حساب شما اضافه شد. موجودی: {total_points} امتیاز. سطح: {tier} ☕",
-      "birthday": "{name} عزیز، تولدت مبارک 🎂\nبه مناسبت تولدت این کد تخفیف هدیه ما به توست: {coupon}\nمنتظر دیدارت هستیم.",
-      "churn": "{name} عزیز، دلمان برایت تنگ شده ☕\n{last_visit} روز از آخرین دیدارمان گذشته؛ با این پیامک ۱۰٪ تخفیف روی فاکتور بعدی مهمان ما باش.",
-      "weather": "سلام {name}، هوای امروز {city}: {weather} و {temp} درجه است. {advice} ☕"
-    }'),
+  ('sms_templates', '{"welcome": "{name} عزیز، به جمع دوست‌های {cafe} خوش اومدی ☕\nاینجا هر دیدار، یک خاطره و هر خرید، فرصتی برای جمع‌کردن امتیازه. خوشحالیم که کنارمونی.", "invoice": "{name} عزیز، ممنون که امروز مهمان {cafe} بودی ☕\nخریدت: {amount} تومان\nامتیاز این خرید: {points} | موجودی: {total_points}\nسطح باشگاه: {tier}\nبه امید دیدار بعدی‌ات.", "birthday": "{name} عزیز، تولدت مبارک 🎂\nاز طرف {cafe} یک هدیهٔ کوچیک برای شروع سال تازه‌ات داریم: {percent}٪ تخفیف با کد {coupon}\nاعتبار هدیه تا {expiry}. منتظر دیدارت هستیم ☕", "churn": "{name} عزیز، جای تو در {cafe} خالیه ☕\nدلمون برای دیدارت تنگ شده؛ هر وقت فرصت داشتی، برای یک فنجان و یک حال خوب کنارمون باش.", "weather": "{name} عزیز، امروز هوای {city} {weather} و دما {temp} درجه‌ست.\n{advice}\nیک مکث خوش‌طعم در {cafe} منتظرته ☕", "otp": "کد ورودت به باشگاه {cafe}: {code}\nفقط ۲ دقیقه معتبر است. این کد را فقط در صفحهٔ ورود وارد کن و برای دیگران نفرست.", "redeem": "{name} عزیز، وقت لذت‌بردن از امتیازهاست 🎁\n{points} امتیازت به {value} تومان تخفیف تبدیل شد.\nکد: {code}\nاعتبار تا {expiry}\nبا مهر، {cafe}"}'),
   ('points_per_currency', '1'),
   ('currency_unit', '1000'),
   ('tiers', '{
@@ -295,6 +289,9 @@ CREATE TABLE IF NOT EXISTS fallback_jobs (
   user_id INTEGER,
   type TEXT NOT NULL,
   payload TEXT NOT NULL,
+  handoff_key TEXT,
+  manual_sent_at TEXT,
+  manual_sent_by INTEGER,
   reason TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending',
   attempts INTEGER NOT NULL DEFAULT 0,
@@ -319,3 +316,26 @@ CREATE TABLE IF NOT EXISTS fallback_channel_limits (
   until_ms INTEGER NOT NULL DEFAULT 0
 );
 INSERT OR IGNORE INTO fallback_channel_limits(channel,until_ms) VALUES('telegram',0),('bale',0);
+
+
+-- Internal transactional assertions. Successful operations never insert a row.
+CREATE TABLE IF NOT EXISTS operation_assertions (
+  valid INTEGER NOT NULL CHECK(valid = 1)
+);
+
+
+CREATE TABLE IF NOT EXISTS campaign_progress (
+  job TEXT PRIMARY KEY,
+  day TEXT NOT NULL,
+  cursor INTEGER NOT NULL DEFAULT 0,
+  queued INTEGER NOT NULL DEFAULT 0,
+  scanned INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'running',
+  error TEXT,
+  context TEXT,
+  until_ms INTEGER NOT NULL DEFAULT 0,
+  owner TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_fallback_handoff ON fallback_jobs(handoff_key,manual_sent_at);

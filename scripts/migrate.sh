@@ -15,7 +15,7 @@
 #    ۱) جدول‌های جدید را می‌سازد (کد ورود، محدودسازی نرخ، گزارش اقدامات مدیران)
 #    ۲) ستون‌های جدید جدول‌های موجود را اضافه می‌کند
 #    ۳) ایندکس‌ها را می‌سازد
-#    ۴) ستون lifetime_points را برای داده‌های قدیمی پر می‌کند
+#    ۴) شمارنده‌های موجود مشتریان را بازنویسی نمی‌کند
 #
 #  ⚠️ پیش از اجرا روی نسخهٔ ابری، بکاپ بگیرید:
 #      npx wrangler d1 export cafe-club-db --remote --output backup-$(date +%F).sql
@@ -242,9 +242,17 @@ apply "ALTER TABLE sms_logs ADD COLUMN delivery_kind TEXT NOT NULL DEFAULT 'lega
 apply "ALTER TABLE users ADD COLUMN staff_role TEXT DEFAULT NULL" "دسترسی پرسنلی مستقل برای عضو باشگاه"
 apply "ALTER TABLE users ADD COLUMN staff_active INTEGER NOT NULL DEFAULT 1" "وضعیت دسترسی پرسنلی مستقل"
 
+apply "CREATE TABLE IF NOT EXISTS operation_assertions(valid INTEGER NOT NULL CHECK(valid=1))" "حفاظ تراکنش مالی"
+apply "ALTER TABLE fallback_jobs ADD COLUMN handoff_key TEXT" "گروه تحویل دستی"
+apply "ALTER TABLE fallback_jobs ADD COLUMN manual_sent_at TEXT" "ثبت ارسال دستی"
+apply "ALTER TABLE fallback_jobs ADD COLUMN manual_sent_by INTEGER" "ثبت‌کننده ارسال دستی"
+
+apply "CREATE TABLE IF NOT EXISTS campaign_progress(job TEXT PRIMARY KEY,day TEXT NOT NULL,cursor INTEGER NOT NULL DEFAULT 0,queued INTEGER NOT NULL DEFAULT 0,scanned INTEGER NOT NULL DEFAULT 0,status TEXT NOT NULL DEFAULT 'running',error TEXT,context TEXT,until_ms INTEGER NOT NULL DEFAULT 0,owner TEXT,updated_at TEXT NOT NULL DEFAULT (datetime('now')))" "ادامه کمپین‌های ادمین"
+
+apply "CREATE INDEX IF NOT EXISTS idx_fallback_handoff ON fallback_jobs(handoff_key,manual_sent_at)" "جستجوی سریع کارهای دستی"
+
 # --- ۵) پر کردن داده‌های قدیمی ------------------------------------------------
-apply "UPDATE users SET lifetime_points = points WHERE lifetime_points = 0 AND points > 0" \
-  "هم‌تراز کردن lifetime_points با امتیاز فعلی مشتریان قدیمی"
+# Never overwrite an existing lifetime counter. For very old DB baseline use the backed-up browser upgrade.
 
 printf '\n────────────────────────────────────────────────────────────\n'
 printf 'اعمال‌شده: %d   از قبل موجود: %d   خطا: %d\n' "$APPLIED" "$SKIPPED" "$FAILED"

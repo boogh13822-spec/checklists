@@ -186,6 +186,8 @@ export function adminDashboardPage(input: {
         : ''
     }
 
+    <section id="financial-checks" class="glass rounded-2xl p-4 mb-4"><h2 class="font-bold text-sm">سلامت اصلاح فاکتورها</h2><p id="financial-checks-state" class="hint">در حال بررسی خواندنی…</p><div id="financial-checks-items" class="space-y-2"></div></section>
+    <section class="glass rounded-3xl p-5 mb-4 flex flex-wrap items-center gap-3"><div class="flex-1"><h2 class="font-bold">امروز از کجا شروع کنیم؟</h2><p class="hint">کارهای روزمره دم دست؛ تنظیمات فقط وقتی لازم دارید.</p></div><a href="/admin/fallback" class="btn btn-primary">میز پیام‌ها و ارسال دستی</a><a href="/staff" class="btn btn-ghost">ثبت خرید</a><a href="/admin/customers" class="btn btn-ghost">مشتریان</a></section>
     <div class="grid grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4 mb-4">
       ${statCard({
         label: 'کل مشتریان',
@@ -335,6 +337,10 @@ export function adminDashboardPage(input: {
   `;
 
   const scripts = `
+  (function(){
+    async function check(){try{var data=await api('/api/admin/system/checks');$('#financial-checks-state').textContent=data.corrections.length?'اصلاح نیمه‌کاره نیازمند بررسی مدیر است.':'اصلاح نیمه‌کاره‌ای در بررسی فعلی پیدا نشد.';var box=$('#financial-checks-items');box.textContent='';data.corrections.forEach(function(item){var b=document.createElement('button');b.className='btn btn-ghost btn-sm';b.textContent='بررسی و تکمیل #'+fa(item.original_id)+' ← #'+fa(item.replacement_id);b.addEventListener('click',async function(){if(!await confirmAction({title:'تکمیل اصلاح متوقف‌شده',message:'اصل فاکتور #'+item.original_id+' با مبلغ '+moneyFa(item.old_amount)+' باطل و جایگزین #'+item.replacement_id+' با مبلغ '+moneyFa(item.new_amount)+' حفظ شود؟ این کار روی امتیاز و گزارش صندوق بسته هم اثر می‌گذارد.',confirmText:'تأیید و تکمیل'}))return;setLoading(b,true);try{await api('/api/admin/invoices/'+item.original_id+'/complete-correction',{method:'POST',body:{confirm:true,allowClosedShift:true}});toast('اصلاح تکمیل شد؛ صفحه را برای تازه‌شدن آمار بازخوانی کنید.','success');await check();}catch(e){toast(e.message,'error');}finally{setLoading(b,false);}});box.appendChild(b);});}catch{ $('#financial-checks-state').textContent='بررسی انجام نشد؛ صفحه را بازخوانی کنید. این به معنی سالم‌بودن همهٔ داده‌ها نیست.';}}
+    check();
+  })();
   (function () {
     $$('.run-job').forEach(function (button) {
       button.addEventListener('click', async function () {
@@ -670,7 +676,7 @@ export function adminCustomerDetailPage(input: {
               ? `<button type="button" id="deactivate" class="btn btn-ghost btn-sm">${icon('close', 'w-4 h-4')} غیرفعال</button>`
               : `<button type="button" id="activate" class="btn btn-primary btn-sm">${icon('check', 'w-4 h-4')} فعال‌سازی</button>`
           }
-          <button type="button" id="delete-customer" class="btn btn-danger btn-sm">${icon('trash', 'w-4 h-4')} حذف</button>
+          <button type="button" id="delete-customer" class="btn btn-danger btn-sm">${icon('trash', 'w-4 h-4')} بایگانی</button>
         </div>
       </div>
     </div>
@@ -939,7 +945,7 @@ export function adminCustomerDetailPage(input: {
         setLoading(deleteBtn, true, 'در حال حذف…');
         try {
           await api('/api/admin/customers/' + userId, { method: 'DELETE' });
-          toast('مشتری حذف شد.', 'success');
+          toast('مشتری بایگانی شد؛ خریدها حفظ شدند.', 'success');
           setTimeout(function () { location.href = '/admin/customers'; }, 700);
         } catch (error) {
           toast(error.message, 'error');

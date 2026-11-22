@@ -11,7 +11,7 @@
 #    ۳) ورود به حساب Cloudflare (wrangler login) در صورت نیاز
 #    ۴) ساخت دیتابیس D1 با نام cafe-club-db (اگر از قبل نباشد)
 #    ۵) گذاشتن database_id واقعی داخل wrangler.toml
-#    ۶) اجرای schema.sql روی دیتابیس ابری + مایگریشن تکرارپذیر
+#    ۶) ساخت ساختار بدون دادهٔ نمونه فقط برای دیتابیس تازه
 #    ۷) ساخت JWT_SECRET (تصادفی و امن) و ذخیره به‌عنوان Secret
 #       — اگر از قبل تنظیم شده باشد، دست نمی‌خورد (وگرنه همه از حساب خارج می‌شدند)
 #    ۸) دیپلوی نهایی
@@ -164,9 +164,18 @@ if [[ -n "$DB_ID" ]]; then
   fi
 fi
 
-# --- ۵) اجرای schema.sql روی دیتابیس ابری ------------------------------------
-info "ساخت جدول‌ها و داده‌های اولیه (schema.sql)..."
-run "${WRANGLER[@]}" d1 execute "$DB_NAME" --remote --file=./schema.sql
+# Detect legacy tables before attempting indexes that refer to additive columns.
+node scripts/generate-schema.mjs
+HAS_USERS=0
+if [[ "$DRY_RUN" != "1" ]]; then
+  DB_STATE="$("${WRANGLER[@]}" d1 execute "$DB_NAME" --remote --command "SELECT name FROM sqlite_master WHERE type='table' AND name='users'" --json)" || die "بررسی ساختار دیتابیس ناموفق بود."
+  HAS_USERS="$(printf '%s' "$DB_STATE" | node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>{const data=JSON.parse(s);if(!Array.isArray(data)||data.some(r=>r.success===false))process.exit(1);console.log(data.some(r=>r.results?.some(t=>t.name==="users"))?1:0);});')" || die "پاسخ دیتابیس قابل خواندن نیست."
+fi
+if [[ "$HAS_USERS" == "1" ]]; then
+  die "دیتابیس دارای جدول کاربران است. برای جلوگیری از تغییر بدون بکاپ، از راهنمای ADMIN-HANDOFF-FA.md و ارتقای مرورگری /admin/system استفاده کنید؛ deploy:setup مخصوص نصب تازه است."
+fi
+info "ساخت ساختار تولید بدون حساب یا رمز نمونه..."
+run "${WRANGLER[@]}" d1 execute "$DB_NAME" --remote --file=./schema-production.sql
 
 # --- ۵.۵) مایگریشن تکرارپذیر (برای دیتابیس‌هایی که از قبل ساخته شده‌اند) ------
 if [[ -f scripts/migrate.sh ]]; then
@@ -214,7 +223,6 @@ elif [[ "$ROTATE_SECRET" == "1" ]]; then
 else
   SECRET="$(node -e 'process.stdout.write(require("crypto").randomBytes(48).toString("base64url"))')"
   warn "یک JWT_SECRET تصادفی ساخته شد. آن را جایی امن نگه دارید (با تغییر آن همهٔ نشست‌ها باطل می‌شوند)."
-  printf '   JWT_SECRET=%s\n' "$SECRET"
   SHOULD_SET_SECRET=1
 fi
 
@@ -245,12 +253,11 @@ cat <<EOF
    (لینک دقیق در خروجی «Deployed» بالا چاپ شده است)
 
 ورود اولیه:
-   مدیر   : 09120000000 / Admin@12345
-   کارمند : 09120000001 / Staff@12345
-
-⚠️ بلافاصله بعد از ورود، رمز هر دو حساب را عوض کنید
-   (پنل مدیریت → کارمندان → تغییر رمز) و رمزهای نمونه را
-   از schema.sql قبل از عمومی‌کردن مخزن حذف کنید.
+   هیچ حساب نمونه‌ای در نصب تولید ساخته نمی‌شود.
+   اگر دیتابیس تازه است، با شمارهٔ واقعی خودتان حساب مدیر بسازید:
+   read -r -p "شماره موبایل مدیر: " ADMIN_PHONE
+   bash scripts/rescue-admin.sh "$ADMIN_PHONE"
+   رمز تصادفی فقط در ترمینال خودتان نمایش داده می‌شود.
 
 دستورهای بعدی:
    npx wrangler tail                 # دیدن لاگ زنده

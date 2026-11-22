@@ -11,6 +11,8 @@
  *  ⚠️ محدودیت: هر اجرا حداکثر ۵۰ پیامک می‌فرستد تا از سقف Subrequest
  *  ورکرها (۵۰ در پلن رایگان) عبور نکنیم. بقیه در اجرای بعدی ارسال می‌شوند.
  */
+import {loadFallbackConfig} from './fallback';
+import {startAdminCampaign} from './campaigns';
 import type { AppSettings, Bindings, CouponRow, UserRow } from '../types';
 import {
   daysSince,
@@ -123,6 +125,7 @@ export async function runChurnJob(
   settings: AppSettings,
   force = false
 ): Promise<JobResult> {
+  if((await loadFallbackConfig(env)).deliveryMode==='admin')return startAdminCampaign(env,settings,'churn');
   const dateKey = todayISO();
 
   if (!force && (await alreadyRanToday(env, 'churn', dateKey))) {
@@ -228,6 +231,7 @@ export async function runBirthdayJob(
   settings: AppSettings,
   force = false
 ): Promise<JobResult> {
+  if((await loadFallbackConfig(env)).deliveryMode==='admin')return startAdminCampaign(env,settings,'birthday');
   const dateKey = todayISO();
   if (!force && (await alreadyRanToday(env, 'birthday', dateKey))) {
     return {
@@ -297,7 +301,8 @@ export async function runBirthdayJob(
       message: renderSms(settings, 'birthday', {
         name: user.name,
         coupon: coupon.code,
-        percent: toPersianDigits(settings.birthday_coupon_percent),
+        percent: toPersianDigits(coupon.value),
+        expiry: formatJalali(coupon.expires_at),
       }),
     });
 
@@ -331,6 +336,7 @@ export async function runWeatherJob(
   settings: AppSettings,
   force = false
 ): Promise<JobResult> {
+  if((await loadFallbackConfig(env)).deliveryMode==='admin')return startAdminCampaign(env,settings,'weather');
   const dateKey = todayISO();
   if (!force && (await alreadyRanToday(env, 'weather', dateKey))) {
     return {
@@ -412,12 +418,9 @@ export async function runWeatherJob(
 export async function runMaintenanceJob(env: Bindings): Promise<JobResult> {
   // هر کاربر ۲ کوئری؛ ۱۴ کاربر برای رزرو بودجهٔ dispatcher در همان invocation.
   // میانگین هر مشتری بعد از هر فاکتور نیز به‌صورت جداگانه به‌روز می‌شود.
-  const { results: users } = await env.DB.prepare(
-    `SELECT id FROM users
-     WHERE last_visit_date IS NOT NULL
-     ORDER BY last_visit_date DESC
-     LIMIT 14`
-  ).all<{ id: number }>();
+  const cursor=Number(await getRawSetting(env,'maintenance_cursor')||0)||0;
+  const { results: users } = await env.DB.prepare(`SELECT id FROM users WHERE last_visit_date IS NOT NULL AND id>? ORDER BY id LIMIT 12`).bind(cursor).all<{id:number}>();
+  await saveSetting(env,'maintenance_cursor',users?.length===12?users[users.length-1].id:0);
 
   for (const user of users ?? []) {
     await recomputeAvgInterval(env.DB, user.id);

@@ -442,7 +442,7 @@ export function staffPage(
           <div id="r-change-row" class="hidden flex items-center justify-between"><span class="text-cream/50">باقیمانده</span><span id="r-change" class="font-bold text-sky-300">—</span></div>
         </div>
 
-        <button type="button" id="new-invoice" class="btn btn-primary w-full mt-5">${icon('plus', 'w-4 h-4')} فاکتور بعدی</button>
+        <button type="button" id="print-receipt" class="btn btn-ghost w-full mt-3">چاپ رسید</button><button type="button" id="new-invoice" class="btn btn-primary w-full mt-5">${icon('plus', 'w-4 h-4')} فاکتور بعدی</button>
       </div>
     </div>
   </div>
@@ -1226,6 +1226,7 @@ export function staffPage(
 
     $('#submit-invoice').addEventListener('click', submitInvoice);
 
+    $('#print-receipt').addEventListener('click',function(){document.body.classList.add('printing-receipt');try{window.print();}finally{document.body.classList.remove('printing-receipt');}});
     $('#new-invoice').addEventListener('click', function () {
       $('#receipt-modal').classList.add('hidden');
       resetForm();

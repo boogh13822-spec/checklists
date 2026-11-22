@@ -518,7 +518,7 @@ export const SCHEMA_TABLES = [
   },
   {
     "name": "fallback_jobs",
-    "sql": "CREATE TABLE IF NOT EXISTS fallback_jobs (\n  id TEXT PRIMARY KEY,\n  channel TEXT NOT NULL CHECK(channel IN ('telegram','bale')),\n  chat_id TEXT NOT NULL,\n  user_id INTEGER,\n  type TEXT NOT NULL,\n  payload TEXT NOT NULL,\n  reason TEXT NOT NULL,\n  status TEXT NOT NULL DEFAULT 'pending',\n  attempts INTEGER NOT NULL DEFAULT 0,\n  next_at INTEGER NOT NULL,\n  expires_at INTEGER NOT NULL,\n  locked_at INTEGER,\n  provider_id TEXT,\n  error TEXT,\n  created_at TEXT NOT NULL DEFAULT (datetime('now')),\n  completed_at TEXT\n);",
+    "sql": "CREATE TABLE IF NOT EXISTS fallback_jobs (\n  id TEXT PRIMARY KEY,\n  channel TEXT NOT NULL CHECK(channel IN ('telegram','bale')),\n  chat_id TEXT NOT NULL,\n  user_id INTEGER,\n  type TEXT NOT NULL,\n  payload TEXT NOT NULL,\n  handoff_key TEXT,\n  manual_sent_at TEXT,\n  manual_sent_by INTEGER,\n  reason TEXT NOT NULL,\n  status TEXT NOT NULL DEFAULT 'pending',\n  attempts INTEGER NOT NULL DEFAULT 0,\n  next_at INTEGER NOT NULL,\n  expires_at INTEGER NOT NULL,\n  locked_at INTEGER,\n  provider_id TEXT,\n  error TEXT,\n  created_at TEXT NOT NULL DEFAULT (datetime('now')),\n  completed_at TEXT\n);",
     "columns": [
       {
         "name": "id",
@@ -543,6 +543,18 @@ export const SCHEMA_TABLES = [
       {
         "name": "payload",
         "definition": "TEXT NOT NULL"
+      },
+      {
+        "name": "handoff_key",
+        "definition": "TEXT"
+      },
+      {
+        "name": "manual_sent_at",
+        "definition": "TEXT"
+      },
+      {
+        "name": "manual_sent_by",
+        "definition": "INTEGER"
       },
       {
         "name": "reason",
@@ -615,6 +627,66 @@ export const SCHEMA_TABLES = [
       {
         "name": "until_ms",
         "definition": "INTEGER NOT NULL DEFAULT 0"
+      }
+    ]
+  },
+  {
+    "name": "operation_assertions",
+    "sql": "CREATE TABLE IF NOT EXISTS operation_assertions (\n  valid INTEGER NOT NULL CHECK(valid = 1)\n);",
+    "columns": [
+      {
+        "name": "valid",
+        "definition": "INTEGER NOT NULL CHECK(valid = 1)"
+      }
+    ]
+  },
+  {
+    "name": "campaign_progress",
+    "sql": "CREATE TABLE IF NOT EXISTS campaign_progress (\n  job TEXT PRIMARY KEY,\n  day TEXT NOT NULL,\n  cursor INTEGER NOT NULL DEFAULT 0,\n  queued INTEGER NOT NULL DEFAULT 0,\n  scanned INTEGER NOT NULL DEFAULT 0,\n  status TEXT NOT NULL DEFAULT 'running',\n  error TEXT,\n  context TEXT,\n  until_ms INTEGER NOT NULL DEFAULT 0,\n  owner TEXT,\n  updated_at TEXT NOT NULL DEFAULT (datetime('now'))\n);",
+    "columns": [
+      {
+        "name": "job",
+        "definition": "TEXT PRIMARY KEY"
+      },
+      {
+        "name": "day",
+        "definition": "TEXT NOT NULL"
+      },
+      {
+        "name": "cursor",
+        "definition": "INTEGER NOT NULL DEFAULT 0"
+      },
+      {
+        "name": "queued",
+        "definition": "INTEGER NOT NULL DEFAULT 0"
+      },
+      {
+        "name": "scanned",
+        "definition": "INTEGER NOT NULL DEFAULT 0"
+      },
+      {
+        "name": "status",
+        "definition": "TEXT NOT NULL DEFAULT 'running'"
+      },
+      {
+        "name": "error",
+        "definition": "TEXT"
+      },
+      {
+        "name": "context",
+        "definition": "TEXT"
+      },
+      {
+        "name": "until_ms",
+        "definition": "INTEGER NOT NULL DEFAULT 0"
+      },
+      {
+        "name": "owner",
+        "definition": "TEXT"
+      },
+      {
+        "name": "updated_at",
+        "definition": "TEXT NOT NULL DEFAULT (datetime('now'))"
       }
     ]
   }
@@ -735,5 +807,9 @@ export const SCHEMA_INDEXES = [
   {
     "name": "idx_fallback_jobs_created",
     "sql": "CREATE INDEX IF NOT EXISTS idx_fallback_jobs_created ON fallback_jobs(created_at DESC);"
+  },
+  {
+    "name": "idx_fallback_handoff",
+    "sql": "CREATE INDEX IF NOT EXISTS idx_fallback_handoff ON fallback_jobs(handoff_key,manual_sent_at);"
   }
 ] as const;

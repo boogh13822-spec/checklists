@@ -7,7 +7,7 @@ import { fallbackPanel, fallbackScripts } from './fallback';
  */
 import type { AppSettings, CouponRow, Role } from '../types';
 import type { CouponListItem, SmsLogListItem, StaffListItem } from '../lib/db';
-import type { MenuItem } from '../lib/settings';
+import { DEFAULT_SETTINGS, type MenuItem } from '../lib/settings';
 import {
   safeJsonParse,
   escapeHtml,
@@ -354,6 +354,7 @@ export function adminSettingsPage(input: {
           <span class="badge tone-muted me-auto">${toPersianDigits(smsToday.sent)} ارسال موفق امروز</span>
         </div>
         <div class="grid lg:grid-cols-2 gap-3">
+          <button id="templates-suggest" type="button" class="btn btn-ghost btn-sm">استفاده از متن‌های صمیمی پیشنهادی</button><p class="hint">قالب سفارشی خودکار عوض نمی‌شود. پیشنهادها را پیش‌نمایش کنید و سپس ذخیرهٔ تنظیمات را بزنید؛ وعدهٔ تخفیف بدون کوپن واقعی ننویسید.</p>
           ${templateCards}
         </div>
       </section>
@@ -513,7 +514,9 @@ export function adminSettingsPage(input: {
 
   const scripts = `
   (function () {
-    var TEMPLATE_KEYS = ['welcome', 'invoice', 'birthday', 'churn', 'weather'];
+    var TEMPLATE_KEYS = ['welcome', 'invoice', 'birthday', 'churn', 'weather','otp','redeem'];
+    var SUGGESTED = ${jsonForScript(DEFAULT_SETTINGS.sms_templates)};
+    $('#templates-suggest').addEventListener('click',async function(){if(!await confirmAction({title:'جایگزینی پیش‌نویس قالب‌ها',message:'متن‌های فعلی فرم با پیشنهادهای صمیمی جایگزین شوند؟ تا ذخیرهٔ تنظیمات، تغییری در سرور انجام نمی‌شود.',confirmText:'نمایش پیشنهادها'}))return;TEMPLATE_KEYS.forEach(function(key){var input=document.getElementById('tpl-'+key);if(input){input.value=SUGGESTED[key];input.dispatchEvent(new Event('input',{bubbles:true}));}});toast('پیشنهادها آماده‌اند؛ پیش‌نمایش و سپس ذخیره کنید.','success');});
     var SAMPLES = ${jsonForScript(
       TEMPLATE_META.reduce<Record<string, Record<string, string>>>((acc, meta) => {
         acc[meta.key] = {...meta.sample, tier:settings.tier_labels.silver,cafe:settings.cafe_name};

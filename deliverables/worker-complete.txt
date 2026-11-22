@@ -769,13 +769,13 @@ var init_settings = __esm({
     };
     DEFAULT_SETTINGS = {
       sms_templates: {
-        welcome: "\u0633\u0644\u0627\u0645 {name} \u0639\u0632\u06CC\u0632 \u{1F31F}\n\u0628\u0647 \u0628\u0627\u0634\u06AF\u0627\u0647 \u0645\u0634\u062A\u0631\u06CC\u0627\u0646 {cafe} \u062E\u0648\u0634 \u0622\u0645\u062F\u06CC\u062F!\n\u0628\u0627 \u0647\u0631 \u062E\u0631\u06CC\u062F \u0627\u0645\u062A\u06CC\u0627\u0632 \u062C\u0645\u0639 \u06A9\u0646\u06CC\u062F \u0648 \u0627\u0632 \u062A\u062E\u0641\u06CC\u0641\u200C\u0647\u0627\u06CC \u0648\u06CC\u0698\u0647 \u0628\u0647\u0631\u0647\u200C\u0645\u0646\u062F \u0634\u0648\u06CC\u062F.",
-        invoice: "{name} \u0639\u0632\u06CC\u0632\u060C \u062E\u0631\u06CC\u062F \u0634\u0645\u0627 \u0628\u0647 \u0645\u0628\u0644\u063A {amount} \u062A\u0648\u0645\u0627\u0646 \u062B\u0628\u062A \u0634\u062F \u0648 {points} \u0627\u0645\u062A\u06CC\u0627\u0632 \u0628\u0647 \u062D\u0633\u0627\u0628 \u0634\u0645\u0627 \u0627\u0636\u0627\u0641\u0647 \u0634\u062F. \u0645\u0648\u062C\u0648\u062F\u06CC: {total_points} \u0627\u0645\u062A\u06CC\u0627\u0632. \u0633\u0637\u062D: {tier} \u2615",
-        birthday: "{name} \u0639\u0632\u06CC\u0632\u060C \u062A\u0648\u0644\u062F\u062A \u0645\u0628\u0627\u0631\u06A9 \u{1F382}\n\u0628\u0647 \u0645\u0646\u0627\u0633\u0628\u062A \u062A\u0648\u0644\u062F\u062A \u0627\u06CC\u0646 \u06A9\u062F \u062A\u062E\u0641\u06CC\u0641 \u0647\u062F\u06CC\u0647 \u0645\u0627 \u0628\u0647 \u062A\u0648\u0633\u062A: {coupon}\n\u0645\u0646\u062A\u0638\u0631 \u062F\u06CC\u062F\u0627\u0631\u062A \u0647\u0633\u062A\u06CC\u0645.",
-        churn: "{name} \u0639\u0632\u06CC\u0632\u060C \u062F\u0644\u0645\u0627\u0646 \u0628\u0631\u0627\u06CC\u062A \u062A\u0646\u06AF \u0634\u062F\u0647 \u2615\n{last_visit} \u0631\u0648\u0632 \u0627\u0632 \u0622\u062E\u0631\u06CC\u0646 \u062F\u06CC\u062F\u0627\u0631\u0645\u0627\u0646 \u06AF\u0630\u0634\u062A\u0647\u061B \u0628\u0627 \u0627\u06CC\u0646 \u067E\u06CC\u0627\u0645\u06A9 \u06F1\u06F0\u066A \u062A\u062E\u0641\u06CC\u0641 \u0631\u0648\u06CC \u0641\u0627\u06A9\u062A\u0648\u0631 \u0628\u0639\u062F\u06CC \u0645\u0647\u0645\u0627\u0646 \u0645\u0627 \u0628\u0627\u0634.",
-        weather: "\u0633\u0644\u0627\u0645 {name}\u060C \u0647\u0648\u0627\u06CC \u0627\u0645\u0631\u0648\u0632 {city}: {weather} \u0648 {temp} \u062F\u0631\u062C\u0647 \u0627\u0633\u062A. {advice} \u2615",
-        otp: "\u06A9\u062F \u0648\u0631\u0648\u062F \u0634\u0645\u0627 \u0628\u0647 \u0628\u0627\u0634\u06AF\u0627\u0647 {cafe}: {code}\n\u0627\u06CC\u0646 \u06A9\u062F \u0641\u0642\u0637 \u06F2 \u062F\u0642\u06CC\u0642\u0647 \u0627\u0639\u062A\u0628\u0627\u0631 \u062F\u0627\u0631\u062F\u061B \u0622\u0646 \u0631\u0627 \u0628\u0627 \u06A9\u0633\u06CC \u0628\u0647 \u0627\u0634\u062A\u0631\u0627\u06A9 \u0646\u06AF\u0630\u0627\u0631\u06CC\u062F.",
-        redeem: "{name} \u0639\u0632\u06CC\u0632\u060C {points} \u0627\u0645\u062A\u06CC\u0627\u0632 \u0634\u0645\u0627 \u0628\u0647 \u06A9\u062F \u062A\u062E\u0641\u06CC\u0641 {coupon} \u0628\u0647 \u0627\u0631\u0632\u0634 {value} \u062A\u0648\u0645\u0627\u0646 \u062A\u0628\u062F\u06CC\u0644 \u0634\u062F.\n\u0627\u0639\u062A\u0628\u0627\u0631 \u062A\u0627 {expiry}. \u2615"
+        welcome: "{name} \u0639\u0632\u06CC\u0632\u060C \u0628\u0647 \u062C\u0645\u0639 \u062F\u0648\u0633\u062A\u200C\u0647\u0627\u06CC {cafe} \u062E\u0648\u0634 \u0627\u0648\u0645\u062F\u06CC \u2615\n\u0627\u06CC\u0646\u062C\u0627 \u0647\u0631 \u062F\u06CC\u062F\u0627\u0631\u060C \u06CC\u06A9 \u062E\u0627\u0637\u0631\u0647 \u0648 \u0647\u0631 \u062E\u0631\u06CC\u062F\u060C \u0641\u0631\u0635\u062A\u06CC \u0628\u0631\u0627\u06CC \u062C\u0645\u0639\u200C\u06A9\u0631\u062F\u0646 \u0627\u0645\u062A\u06CC\u0627\u0632\u0647. \u062E\u0648\u0634\u062D\u0627\u0644\u06CC\u0645 \u06A9\u0647 \u06A9\u0646\u0627\u0631\u0645\u0648\u0646\u06CC.",
+        invoice: "{name} \u0639\u0632\u06CC\u0632\u060C \u0645\u0645\u0646\u0648\u0646 \u06A9\u0647 \u0627\u0645\u0631\u0648\u0632 \u0645\u0647\u0645\u0627\u0646 {cafe} \u0628\u0648\u062F\u06CC \u2615\n\u062E\u0631\u06CC\u062F\u062A: {amount} \u062A\u0648\u0645\u0627\u0646\n\u0627\u0645\u062A\u06CC\u0627\u0632 \u0627\u06CC\u0646 \u062E\u0631\u06CC\u062F: {points} | \u0645\u0648\u062C\u0648\u062F\u06CC: {total_points}\n\u0633\u0637\u062D \u0628\u0627\u0634\u06AF\u0627\u0647: {tier}\n\u0628\u0647 \u0627\u0645\u06CC\u062F \u062F\u06CC\u062F\u0627\u0631 \u0628\u0639\u062F\u06CC\u200C\u0627\u062A.",
+        birthday: "{name} \u0639\u0632\u06CC\u0632\u060C \u062A\u0648\u0644\u062F\u062A \u0645\u0628\u0627\u0631\u06A9 \u{1F382}\n\u0627\u0632 \u0637\u0631\u0641 {cafe} \u06CC\u06A9 \u0647\u062F\u06CC\u0647\u0654 \u06A9\u0648\u0686\u06CC\u06A9 \u0628\u0631\u0627\u06CC \u0634\u0631\u0648\u0639 \u0633\u0627\u0644 \u062A\u0627\u0632\u0647\u200C\u0627\u062A \u062F\u0627\u0631\u06CC\u0645: {percent}\u066A \u062A\u062E\u0641\u06CC\u0641 \u0628\u0627 \u06A9\u062F {coupon}\n\u0627\u0639\u062A\u0628\u0627\u0631 \u0647\u062F\u06CC\u0647 \u062A\u0627 {expiry}. \u0645\u0646\u062A\u0638\u0631 \u062F\u06CC\u062F\u0627\u0631\u062A \u0647\u0633\u062A\u06CC\u0645 \u2615",
+        churn: "{name} \u0639\u0632\u06CC\u0632\u060C \u062C\u0627\u06CC \u062A\u0648 \u062F\u0631 {cafe} \u062E\u0627\u0644\u06CC\u0647 \u2615\n\u062F\u0644\u0645\u0648\u0646 \u0628\u0631\u0627\u06CC \u062F\u06CC\u062F\u0627\u0631\u062A \u062A\u0646\u06AF \u0634\u062F\u0647\u061B \u0647\u0631 \u0648\u0642\u062A \u0641\u0631\u0635\u062A \u062F\u0627\u0634\u062A\u06CC\u060C \u0628\u0631\u0627\u06CC \u06CC\u06A9 \u0641\u0646\u062C\u0627\u0646 \u0648 \u06CC\u06A9 \u062D\u0627\u0644 \u062E\u0648\u0628 \u06A9\u0646\u0627\u0631\u0645\u0648\u0646 \u0628\u0627\u0634.",
+        weather: "{name} \u0639\u0632\u06CC\u0632\u060C \u0627\u0645\u0631\u0648\u0632 \u0647\u0648\u0627\u06CC {city} {weather} \u0648 \u062F\u0645\u0627 {temp} \u062F\u0631\u062C\u0647\u200C\u0633\u062A.\n{advice}\n\u06CC\u06A9 \u0645\u06A9\u062B \u062E\u0648\u0634\u200C\u0637\u0639\u0645 \u062F\u0631 {cafe} \u0645\u0646\u062A\u0638\u0631\u062A\u0647 \u2615",
+        otp: "\u06A9\u062F \u0648\u0631\u0648\u062F\u062A \u0628\u0647 \u0628\u0627\u0634\u06AF\u0627\u0647 {cafe}: {code}\n\u0641\u0642\u0637 \u06F2 \u062F\u0642\u06CC\u0642\u0647 \u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A. \u0627\u06CC\u0646 \u06A9\u062F \u0631\u0627 \u0641\u0642\u0637 \u062F\u0631 \u0635\u0641\u062D\u0647\u0654 \u0648\u0631\u0648\u062F \u0648\u0627\u0631\u062F \u06A9\u0646 \u0648 \u0628\u0631\u0627\u06CC \u062F\u06CC\u06AF\u0631\u0627\u0646 \u0646\u0641\u0631\u0633\u062A.",
+        redeem: "{name} \u0639\u0632\u06CC\u0632\u060C \u0648\u0642\u062A \u0644\u0630\u062A\u200C\u0628\u0631\u062F\u0646 \u0627\u0632 \u0627\u0645\u062A\u06CC\u0627\u0632\u0647\u0627\u0633\u062A \u{1F381}\n{points} \u0627\u0645\u062A\u06CC\u0627\u0632\u062A \u0628\u0647 {value} \u062A\u0648\u0645\u0627\u0646 \u062A\u062E\u0641\u06CC\u0641 \u062A\u0628\u062F\u06CC\u0644 \u0634\u062F.\n\u06A9\u062F: {code}\n\u0627\u0639\u062A\u0628\u0627\u0631 \u062A\u0627 {expiry}\n\u0628\u0627 \u0645\u0647\u0631\u060C {cafe}"
       },
       points_mode: "amount",
       points_per_currency: 1,
@@ -837,6 +837,24 @@ var init_settings = __esm({
 });
 
 // src/lib/fallback.ts
+var fallback_exports = {};
+__export(fallback_exports, {
+  diagnoseFallback: () => diagnoseFallback,
+  drainFallbackQueue: () => drainFallbackQueue,
+  enqueueDeliveryAlert: () => enqueueDeliveryAlert,
+  enqueueFallback: () => enqueueFallback,
+  fallbackHistory: () => fallbackHistory,
+  formatFallbackMessage: () => formatFallbackMessage,
+  loadFallbackConfig: () => loadFallbackConfig,
+  markManualSent: () => markManualSent,
+  processFallbackQueue: () => processFallbackQueue,
+  retryFallbackJob: () => retryFallbackJob,
+  safeFallbackConfig: () => safeFallbackConfig,
+  saveFallbackConfig: () => saveFallbackConfig,
+  seal: () => seal,
+  smsPanelActive: () => smsPanelActive,
+  unseal: () => unseal
+});
 async function encryptionKey(env) {
   let bytes;
   try {
@@ -883,6 +901,7 @@ function safeFallbackConfig(env, config) {
   } catch {
   }
   return {
+    deliveryMode: config.deliveryMode ?? "sms",
     enabled: config.enabled,
     notifyEnabled: config.notifyEnabled === true,
     notifyErrors: config.notifyErrors !== false,
@@ -902,6 +921,8 @@ async function saveFallbackConfig(env, body) {
   const input = body;
   if (typeof input.enabled !== "boolean" || !Array.isArray(input.channels) || input.channels.length > 2) throw new Error("\u0633\u0648\u0626\u06CC\u0686 \u0648 \u0641\u0647\u0631\u0633\u062A \u0645\u0642\u0635\u062F\u0647\u0627 \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.");
   const previous = await loadFallbackConfig(env);
+  if (input.deliveryMode !== void 0 && !["admin", "sms"].includes(String(input.deliveryMode))) throw new Error("\u062D\u0627\u0644\u062A \u0627\u0631\u0633\u0627\u0644 \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.");
+  const deliveryMode = input.deliveryMode === void 0 ? previous.deliveryMode ?? "sms" : input.deliveryMode;
   for (const key of ["notifyEnabled", "notifyInvoices", "notifyActions", "notifyErrors"]) {
     if (input[key] !== void 0 && typeof input[key] !== "boolean") throw new Error("\u0633\u0648\u0626\u06CC\u0686 \u06AF\u0632\u0627\u0631\u0634 \u0645\u062F\u06CC\u0631\u06CC\u062A \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.");
   }
@@ -924,21 +945,21 @@ async function saveFallbackConfig(env, body) {
     const old = previous.channels.find((x) => x.channel === c.channel);
     const encrypted = c.clearToken === true ? "" : token ? await seal(env, token, `token:${c.channel}`) : old?.token ?? "";
     const candidate = { channel: c.channel, chatId: c.chatId.trim(), token: encrypted };
-    if ((input.enabled || notifyEnabled) && !validBotToken(await channelToken(env, candidate))) throw new Error("\u0628\u0631\u0627\u06CC \u0647\u0631 \u0645\u0642\u0635\u062F \u0627\u0646\u062A\u062E\u0627\u0628\u200C\u0634\u062F\u0647 \u06CC\u06A9 \u062A\u0648\u06A9\u0646 \u0645\u0639\u062A\u0628\u0631 \u0644\u0627\u0632\u0645 \u0627\u0633\u062A.");
+    if ((input.enabled || notifyEnabled || deliveryMode === "admin") && !validBotToken(await channelToken(env, candidate))) throw new Error("\u0628\u0631\u0627\u06CC \u0647\u0631 \u0645\u0642\u0635\u062F \u0627\u0646\u062A\u062E\u0627\u0628\u200C\u0634\u062F\u0647 \u06CC\u06A9 \u062A\u0648\u06A9\u0646 \u0645\u0639\u062A\u0628\u0631 \u0644\u0627\u0632\u0645 \u0627\u0633\u062A.");
     channels.push(candidate);
   }
-  if (input.enabled || notifyEnabled) {
+  if (input.enabled || notifyEnabled || deliveryMode === "admin") {
     await encryptionKey(env);
     if (!channels.length) throw new Error("\u062D\u062F\u0627\u0642\u0644 \u06CC\u06A9 \u0645\u0642\u0635\u062F \u0627\u0646\u062A\u062E\u0627\u0628 \u06A9\u0646\u06CC\u062F.");
   }
   await env.DB.batch([
-    env.DB.prepare(`INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).bind(CONFIG_KEY, JSON.stringify({ enabled: input.enabled, channels, notifyErrors, notifyEnabled, notifyInvoices, notifyActions })),
+    env.DB.prepare(`INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`).bind(CONFIG_KEY, JSON.stringify({ deliveryMode, enabled: input.enabled, channels, notifyErrors, notifyEnabled, notifyInvoices, notifyActions })),
     // Pending work for removed destinations must not be sent or kept indefinitely.
     env.DB.prepare(`UPDATE fallback_jobs SET status='skipped',error='CONFIG_CHANGED: \u0645\u0642\u0635\u062F \u062D\u0630\u0641 \u06CC\u0627 \u0645\u0633\u06CC\u0631 \u062E\u0627\u0645\u0648\u0634 \u0634\u062F.',
       payload=CASE WHEN type='otp' THEN '' ELSE payload END,completed_at=datetime('now')
       WHERE status='pending' AND (
         NOT EXISTS (SELECT 1 FROM json_each(?) WHERE json_extract(value,'$.channel')=fallback_jobs.channel AND json_extract(value,'$.chatId')=fallback_jobs.chat_id)
-        OR (reason NOT IN ('test','event','manual') AND ?=0)
+        OR (reason NOT IN ('test','event','manual','admin_handoff') AND ?=0)
         OR (reason='event' AND type!='report_error' AND (?=0 OR (type='report_invoice' AND ?=0) OR (type='report_action' AND ?=0)))
         OR (type='report_error' AND ?=0))`).bind(JSON.stringify(channels), input.enabled ? 1 : 0, notifyEnabled ? 1 : 0, notifyInvoices ? 1 : 0, notifyActions ? 1 : 0, notifyErrors ? 1 : 0)
   ]);
@@ -958,7 +979,7 @@ function smsPanelActive(env, settings) {
 }
 async function enqueueFallback(env, params, reason, testChannel) {
   const config = await loadFallbackConfig(env);
-  if (params.type === "report_error" ? config.notifyErrors === false : reason === "event" ? !config.notifyEnabled || (params.type === "report_invoice" ? config.notifyInvoices === false : config.notifyActions === false) : !config.enabled && reason !== "test" && reason !== "manual") return [];
+  if (reason === "admin_handoff" ? config.deliveryMode !== "admin" : params.type === "report_error" ? config.notifyErrors === false : reason === "event" ? !config.notifyEnabled || (params.type === "report_invoice" ? config.notifyInvoices === false : config.notifyActions === false) : !config.enabled && reason !== "test" && reason !== "manual") return [];
   const phone = normalizePhone(params.phone);
   if (reason !== "event" && reason !== "manual" && !/^09\d{9}$/.test(phone) || phone && !/^09\d{9}$/.test(phone) || !params.message.trim()) throw new Error("INVALID_FALLBACK_MESSAGE");
   if (params.message.length > 2e3) throw new Error("MESSAGE_TOO_LONG");
@@ -971,15 +992,16 @@ async function enqueueFallback(env, params, reason, testChannel) {
   const ids = [];
   const bindings = [];
   const rows = [];
+  const handoffKey = phone && params.type !== "otp" && !params.type.startsWith("report_") && reason !== "test" ? params.eventKey ? "handoff-" + await sha256Hex(params.eventKey) : "handoff-" + crypto.randomUUID() : null;
   for (const c of selected) {
     if (!validChatId(c.chatId) || !validBotToken(await channelToken(env, c))) throw new Error("\u062A\u0646\u0638\u06CC\u0645\u0627\u062A \u0645\u0642\u0635\u062F \u06A9\u0627\u0645\u0644 \u0646\u06CC\u0633\u062A.");
     const id = params.eventKey ? "event-" + await sha256Hex(params.eventKey + ":" + c.channel + ":" + c.chatId) : crypto.randomUUID();
-    const payload = await seal(env, { phone, message: params.message, requestedAt: new Date(now).toISOString(), userId: params.userId, title: params.title, reason }, `job:${id}`);
-    rows.push("SELECT ? AS id,? AS channel,? AS chat_id,? AS user_id,? AS type,? AS payload,? AS reason,? AS next_at,? AS expires_at");
-    bindings.push(id, c.channel, c.chatId, params.userId, params.type, payload, reason, now, Math.min(now + (params.type === "otp" ? 11e4 : 864e5), params.expiresAt ?? Infinity));
+    const payload = await seal(env, { phone, message: params.message, requestedAt: new Date(now).toISOString(), userId: params.userId, title: params.title, reason, handoffRef: handoffKey?.slice(-12) }, `job:${id}`);
+    rows.push("SELECT ? AS id,? AS channel,? AS chat_id,? AS user_id,? AS type,? AS payload,? AS reason,? AS next_at,? AS expires_at,? AS handoff_key");
+    bindings.push(id, c.channel, c.chatId, params.userId, params.type, payload, reason, now, Math.min(now + (params.type === "otp" ? 11e4 : 864e5), params.expiresAt ?? Infinity), handoffKey);
     ids.push(id);
   }
-  const insert = env.DB.prepare(`INSERT OR IGNORE INTO fallback_jobs(id,channel,chat_id,user_id,type,payload,reason,next_at,expires_at)
+  const insert = env.DB.prepare(`INSERT OR IGNORE INTO fallback_jobs(id,channel,chat_id,user_id,type,payload,reason,next_at,expires_at,handoff_key)
     SELECT * FROM (${rows.join(" UNION ALL ")}) WHERE (SELECT COUNT(*) FROM fallback_jobs WHERE status IN ('pending','processing')) <= ?`).bind(...bindings, 1e3 - ids.length);
   const inserted = params.type === "otp" && params.userId !== null ? (await env.DB.batch([
     env.DB.prepare(`UPDATE fallback_jobs SET status='skipped',error='SUPERSEDED: \u06A9\u062F \u062C\u062F\u06CC\u062F \u062F\u0631\u062E\u0648\u0627\u0633\u062A \u0634\u062F.',payload='',completed_at=datetime('now')
@@ -1013,16 +1035,19 @@ ${p.phone}` : "", p.message].filter(Boolean).join("\n\n");
   if (type.startsWith("report_")) return [p.title || "\u06AF\u0632\u0627\u0631\u0634 \u0645\u062F\u06CC\u0631\u06CC\u062A", `\u0632\u0645\u0627\u0646: ${formatJalaliDateTime(p.requestedAt)}`, p.phone ? `\u0634\u0645\u0627\u0631\u0647 \u0645\u0634\u062A\u0631\u06CC:
 ${p.phone}` : "", p.message].filter(Boolean).join("\n\n");
   return [
-    "\u0627\u0631\u0633\u0627\u0644 \u062F\u0633\u062A\u06CC \u067E\u06CC\u0627\u0645\u06A9 \u2014 \u0627\u06CC\u0646 \u067E\u06CC\u0627\u0645 \u0641\u0642\u0637 \u0628\u0647 \u0627\u062F\u0645\u06CC\u0646 \u0631\u0633\u06CC\u062F\u0647 \u0627\u0633\u062A",
+    "\u2615 \u0622\u0645\u0627\u062F\u0647\u0654 \u0627\u0631\u0633\u0627\u0644 \u0628\u0647 \u0645\u0634\u062A\u0631\u06CC | \u0641\u0642\u0637 \u0628\u0631\u0627\u06CC \u0627\u062F\u0645\u06CC\u0646",
+    "\u0634\u0645\u0627\u0631\u0647 \u0631\u0627 \u06A9\u067E\u06CC \u06A9\u0646\u06CC\u062F \u0648 \u0641\u0642\u0637 \u0645\u062A\u0646 \u0632\u06CC\u0631\u0650 \xAB\u067E\u06CC\u0627\u0645 \u0645\u0634\u062A\u0631\u06CC\xBB \u0631\u0627 \u0628\u0631\u0627\u06CC \u0627\u0648 \u0628\u0641\u0631\u0633\u062A\u06CC\u062F. \u0631\u0633\u06CC\u062F\u0646 \u0628\u0647 \u0627\u062F\u0645\u06CC\u0646 \u0628\u0647 \u0645\u0639\u0646\u06CC \u0627\u0631\u0633\u0627\u0644 \u0628\u0647 \u0645\u0634\u062A\u0631\u06CC \u0646\u06CC\u0633\u062A.",
     p.reason === "primary_failed" ? "\u26A0\uFE0F \u0627\u0631\u0633\u0627\u0644 \u0627\u0635\u0644\u06CC \u067E\u06CC\u0627\u0645\u06A9 \u0646\u0627\u0645\u0648\u0641\u0642 \u0628\u0648\u062F\u061B \u0631\u0633\u06CC\u062F\u0646 \u0627\u06CC\u0646 \u067E\u06CC\u0627\u0645 \u0628\u0647 \u0627\u062F\u0645\u06CC\u0646\u060C \u062A\u062D\u0648\u06CC\u0644 \u067E\u06CC\u0627\u0645\u06A9 \u0628\u0647 \u0645\u0634\u062A\u0631\u06CC \u0646\u06CC\u0633\u062A." : "",
+    p.handoffRef ? `\u067E\u06CC\u06AF\u06CC\u0631\u06CC \u06A9\u0627\u0631 (\u062F\u0631 \u0647\u0631 \u062F\u0648 \u067E\u06CC\u0627\u0645\u200C\u0631\u0633\u0627\u0646 \u06CC\u06A9\u0633\u0627\u0646): ${p.handoffRef}` : "",
     `\u0634\u0645\u0627\u0631\u0647 \u0645\u0634\u062A\u0631\u06A9:
 ${p.phone}`,
     `\u0632\u0645\u0627\u0646 \u062F\u0631\u062E\u0648\u0627\u0633\u062A: ${formatJalaliDateTime(p.requestedAt)}`,
     `\u0646\u0648\u0639: ${{ welcome: "\u062E\u0648\u0634\u200C\u0622\u0645\u062F", invoice: "\u0631\u0633\u06CC\u062F \u062E\u0631\u06CC\u062F", birthday: "\u062A\u0648\u0644\u062F", churn: "\u06CC\u0627\u062F\u0622\u0648\u0631\u06CC \u062D\u0636\u0648\u0631", weather: "\u0622\u0628\u200C\u0648\u0647\u0648\u0627", referral: "\u0645\u0639\u0631\u0641\u06CC", otp: "\u06A9\u062F \u0648\u0631\u0648\u062F", redeem: "\u062A\u0628\u062F\u06CC\u0644 \u0627\u0645\u062A\u06CC\u0627\u0632", admin: "\u062A\u0633\u062A \u0627\u062A\u0635\u0627\u0644" }[type] || type}`,
     p.userId !== null ? `\u0634\u0646\u0627\u0633\u0647 \u06A9\u0627\u0631\u0628\u0631: ${p.userId}` : "",
     type === "otp" ? "\u26A0\uFE0F \u06A9\u062F \u0648\u0631\u0648\u062F \u0645\u062D\u0631\u0645\u0627\u0646\u0647 \u0627\u0633\u062A\u061B \u062D\u062F\u0627\u06A9\u062B\u0631 \u062A\u0627 \u06F2 \u062F\u0642\u06CC\u0642\u0647 \u067E\u0633 \u0627\u0632 \u062F\u0631\u062E\u0648\u0627\u0633\u062A \u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A. \u062F\u0631 \u06A9\u0627\u0646\u0627\u0644 \u0639\u0645\u0648\u0645\u06CC \u0646\u0641\u0631\u0633\u062A\u06CC\u062F." : "",
-    `\u0645\u062A\u0646 \u06A9\u0627\u0645\u0644 \u067E\u06CC\u0627\u0645:
-${p.message}`
+    `\u2500\u2500\u2500\u2500 \u067E\u06CC\u0627\u0645 \u0645\u0634\u062A\u0631\u06CC \u2500\u2500\u2500\u2500
+${p.message}
+\u2500\u2500\u2500\u2500 \u067E\u0627\u06CC\u0627\u0646 \u0645\u062A\u0646 \u0645\u0634\u062A\u0631\u06CC \u2500\u2500\u2500\u2500`
   ].filter(Boolean).join("\n\n");
 }
 async function processFallbackQueue(env, maintenance = false) {
@@ -1053,7 +1078,7 @@ async function processFallbackQueue(env, maintenance = false) {
       const channel = config.channels.find((c) => c.channel === job.channel && c.chatId === job.chat_id);
       const { loadSettings: loadSettings2 } = await Promise.resolve().then(() => (init_settings(), settings_exports));
       const settings = job.reason === "inactive" ? await loadSettings2(env, true) : null;
-      if (!channel || (job.type === "report_error" ? config.notifyErrors === false : job.reason === "event" ? !config.notifyEnabled || (job.type === "report_invoice" ? config.notifyInvoices === false : config.notifyActions === false) : !config.enabled && job.reason !== "test" && job.reason !== "manual") || job.reason === "inactive" && settings && smsPanelActive(env, settings)) {
+      if (!channel || (job.reason === "admin_handoff" ? config.deliveryMode !== "admin" : job.type === "report_error" ? config.notifyErrors === false : job.reason === "event" ? !config.notifyEnabled || (job.type === "report_invoice" ? config.notifyInvoices === false : config.notifyActions === false) : !config.enabled && job.reason !== "test" && job.reason !== "manual") || job.reason === "inactive" && settings && smsPanelActive(env, settings)) {
         status = "skipped";
         error = "CONFIG_CHANGED: \u0645\u0633\u06CC\u0631 \u062C\u0627\u06CC\u06AF\u0632\u06CC\u0646 \u062E\u0627\u0645\u0648\u0634 \u06CC\u0627 \u0645\u0642\u0635\u062F/\u067E\u0646\u0644 \u0627\u0635\u0644\u06CC \u062A\u063A\u06CC\u06CC\u0631 \u06A9\u0631\u062F\u0647 \u0627\u0633\u062A.";
       } else if (job.expires_at <= Date.now() + 12e3) {
@@ -1097,7 +1122,7 @@ async function processFallbackQueue(env, maintenance = false) {
     await env.DB.prepare("UPDATE fallback_dispatch SET until_ms=?,owner=NULL WHERE id=1 AND owner=?").bind(Date.now() + 3e3, owner).run();
   }
 }
-async function fallbackHistory(env, page = 1, status = "", channel = "") {
+async function fallbackHistory(env, page = 1, status = "", channel = "", handoff = "") {
   page = Math.max(1, Math.min(1e4, Math.floor(page) || 1));
   const where = ["1=1"];
   const binds = [];
@@ -1109,6 +1134,11 @@ async function fallbackHistory(env, page = 1, status = "", channel = "") {
     where.push("channel=?");
     binds.push(channel);
   }
+  if (handoff === "todo") {
+    where.push("handoff_key IS NOT NULL AND manual_sent_at IS NULL AND expires_at>? AND status NOT IN ('expired','skipped')");
+    binds.push(Date.now());
+  }
+  if (handoff === "done") where.push("manual_sent_at IS NOT NULL");
   const filter = where.join(" AND ");
   const { results } = await env.DB.prepare(`SELECT * FROM fallback_jobs WHERE ${filter} ORDER BY created_at DESC,id DESC LIMIT 30 OFFSET ?`).bind(...binds, (page - 1) * 30).all();
   const count = await env.DB.prepare(`SELECT COUNT(*) AS n FROM fallback_jobs WHERE ${filter}`).bind(...binds).first();
@@ -1125,7 +1155,8 @@ async function fallbackHistory(env, page = 1, status = "", channel = "") {
   }));
   const { results: counts } = await env.DB.prepare("SELECT status,COUNT(*) AS n FROM fallback_jobs GROUP BY status").all();
   const stats = Object.fromEntries((counts ?? []).map((c) => [c.status, c.n]));
-  return { items, total: count?.n ?? 0, page, stats };
+  const manual = await env.DB.prepare("SELECT COUNT(DISTINCT handoff_key) AS n FROM fallback_jobs WHERE handoff_key IS NOT NULL AND manual_sent_at IS NULL AND expires_at>? AND status NOT IN ('expired','skipped')").bind(Date.now()).first();
+  return { items, total: count?.n ?? 0, page, stats, manualTodo: manual?.n ?? 0 };
 }
 async function drainFallbackQueue(env) {
   if (await processFallbackQueue(env, true)) {
@@ -1142,7 +1173,7 @@ async function retryFallbackJob(env, id, confirmDuplicateRisk = false) {
   if (!certain && !confirmDuplicateRisk) throw new Error("CONFIRM_DUPLICATE_RISK");
   const config = await loadFallbackConfig(env);
   const channel = config.channels.find((c) => c.channel === job.channel && c.chatId === job.chat_id);
-  if (!channel || (job.type === "report_error" ? config.notifyErrors === false : job.reason === "event" ? !config.notifyEnabled || (job.type === "report_invoice" ? config.notifyInvoices === false : config.notifyActions === false) : !config.enabled && job.reason !== "test" && job.reason !== "manual"))
+  if (!channel || (job.reason === "admin_handoff" ? config.deliveryMode !== "admin" : job.type === "report_error" ? config.notifyErrors === false : job.reason === "event" ? !config.notifyEnabled || (job.type === "report_invoice" ? config.notifyInvoices === false : config.notifyActions === false) : !config.enabled && job.reason !== "test" && job.reason !== "manual"))
     throw new Error("CONFIG_CHANGED");
   if (!validBotToken(await channelToken(env, channel))) throw new Error("INVALID_TOKEN");
   await unseal(env, job.payload, `job:${job.id}`);
@@ -1150,6 +1181,13 @@ async function retryFallbackJob(env, id, confirmDuplicateRisk = false) {
     WHERE id=? AND status='failed' AND expires_at>? RETURNING id`).bind(Date.now(), id, Date.now() + 12e3).first();
   if (!changed) throw new Error("NOT_RETRYABLE");
   return { previousAttempts: job.attempts, previousError: job.error };
+}
+async function markManualSent(env, id, actor) {
+  const job = await env.DB.prepare("SELECT * FROM fallback_jobs WHERE id=?").bind(id).first();
+  if (!job || job.type === "otp" || job.type.startsWith("report_") || job.reason === "test") throw Error("NOT_MANUAL_CUSTOMER_MESSAGE");
+  const content = await unseal(env, job.payload, "job:" + job.id);
+  if (!/^09\d{9}$/.test(content.phone) || !content.message) throw Error("NOT_MANUAL_CUSTOMER_MESSAGE");
+  await env.DB.prepare("UPDATE fallback_jobs SET manual_sent_at=datetime('now'),manual_sent_by=? WHERE manual_sent_at IS NULL AND " + (job.handoff_key ? "handoff_key=?" : "id=?")).bind(actor, job.handoff_key || job.id).run();
 }
 var CONFIG_KEY;
 var init_fallback = __esm({
@@ -1328,6 +1366,21 @@ async function sendSms(env, settings, params) {
     const result2 = { status: "failed", error: "\u0634\u0645\u0627\u0631\u0647 \u0645\u0648\u0628\u0627\u06CC\u0644 \u06AF\u06CC\u0631\u0646\u062F\u0647 \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A." };
     await finalizeSmsResult(env, params, result2);
     return result2;
+  }
+  const delivery = await loadFallbackConfig(env);
+  if (params.adminOnly && delivery.deliveryMode !== "admin") return { status: "skipped", error: "ADMIN_MODE_CHANGED" };
+  if (delivery.deliveryMode === "admin") {
+    try {
+      const ids = await enqueueFallback(env, { ...params, phone: mobile, message: sanitizeMessage(params.message, Infinity) }, "admin_handoff");
+      if (!ids.length) throw Error("NO_DESTINATION");
+      const result2 = { status: "pending", fallbackIds: ids, deliveryKind: "admin_handoff", error: "\u0622\u0645\u0627\u062F\u0647\u0654 \u062A\u062D\u0648\u06CC\u0644 \u0628\u0647 \u0627\u062F\u0645\u06CC\u0646\u061B \u0627\u0631\u0633\u0627\u0644 \u0646\u0647\u0627\u06CC\u06CC \u0628\u0647 \u0645\u0634\u062A\u0631\u06CC \u062F\u0633\u062A\u06CC \u0627\u0633\u062A." };
+      await finalizeSmsResult(env, params, result2);
+      return result2;
+    } catch {
+      const result2 = { status: "skipped", error: "ADMIN_QUEUE_UNAVAILABLE: \u067E\u06CC\u0627\u0645 \u0628\u0647 \u0645\u0634\u062A\u0631\u06CC \u0627\u0631\u0633\u0627\u0644 \u0646\u0634\u062F\u061B \u0627\u062A\u0635\u0627\u0644 \u0645\u0642\u0635\u062F\u060C \u06A9\u0644\u06CC\u062F \u0648 \u0638\u0631\u0641\u06CC\u062A \u0635\u0641 \u0631\u0627 \u0628\u0631\u0631\u0633\u06CC \u06A9\u0646\u06CC\u062F." };
+      await finalizeSmsResult(env, params, result2);
+      return result2;
+    }
   }
   if (!smsPanelActive(env, settings)) {
     try {
@@ -2001,7 +2054,13 @@ async function recordInvoice(env, settings, input) {
         customer.id
       )
     ];
+    if (input.replacesInvoiceId) list.unshift(env.DB.prepare(`INSERT INTO operation_assertions(valid) SELECT 0 WHERE
+      NOT EXISTS(SELECT 1 FROM invoices WHERE id=? AND voided_at IS NULL) OR
+      EXISTS(SELECT 1 FROM invoices WHERE replaces_invoice_id=? AND voided_at IS NULL)`).bind(input.replacesInvoiceId, input.replacesInvoiceId));
     if (coupon) {
+      list.unshift(env.DB.prepare(`INSERT INTO operation_assertions(valid) SELECT 0 WHERE NOT EXISTS
+        (SELECT 1 FROM coupons WHERE id=? AND is_active=1 AND used_count<max_uses
+          AND (user_id IS NULL OR user_id=?) AND (expires_at IS NULL OR julianday(expires_at)>=julianday('now')))`).bind(coupon.id, customer.id));
       list.push(
         env.DB.prepare("UPDATE coupons SET used_count = used_count + 1 WHERE id = ?").bind(coupon.id)
       );
@@ -2011,9 +2070,11 @@ async function recordInvoice(env, settings, input) {
   let invoiceId = 0;
   try {
     const results = await env.DB.batch(buildStatements(pointsEarned, visitDay));
-    invoiceId = Number(results[0]?.meta?.last_row_id ?? 0);
+    invoiceId = Number(results[(coupon ? 1 : 0) + (input.replacesInvoiceId ? 1 : 0)]?.meta?.last_row_id ?? 0);
   } catch (error) {
     const message = String(error);
+    if (input.replacesInvoiceId && message.includes("CHECK constraint failed")) return { ok: false, error: "\u0627\u0635\u0644\u0627\u062D \u0642\u0628\u0644\u06CC \u0646\u06CC\u0645\u0647\u200C\u06A9\u0627\u0631\u0647 \u06CC\u0627 \u0641\u0627\u06A9\u062A\u0648\u0631 \u0627\u0635\u0644\u06CC \u062A\u063A\u06CC\u06CC\u0631 \u06A9\u0631\u062F\u0647 \u0627\u0633\u062A\u061B \u0628\u0631\u0631\u0633\u06CC \u0645\u0627\u0644\u06CC \u0631\u0627 \u0628\u0627\u0632 \u06A9\u0646\u06CC\u062F.", code: "CORRECTION_PENDING_REVIEW" };
+    if (coupon && message.includes("CHECK constraint failed")) return { ok: false, error: "\u06A9\u062F \u062A\u062E\u0641\u06CC\u0641 \u0647\u0645\u200C\u0632\u0645\u0627\u0646 \u0645\u0635\u0631\u0641 \u06CC\u0627 \u063A\u06CC\u0631\u0641\u0639\u0627\u0644 \u0634\u062F\u0647 \u0627\u0633\u062A\u061B \u0641\u0627\u06A9\u062A\u0648\u0631 \u062B\u0628\u062A \u0646\u0634\u062F.", code: "COUPON_CONFLICT" };
     if (requestId && message.includes("client_request_id")) {
       const existing = await env.DB.prepare(
         "SELECT * FROM invoices WHERE client_request_id = ? LIMIT 1"
@@ -2026,7 +2087,7 @@ async function recordInvoice(env, settings, input) {
     if (visitDay && (message.includes("visit_day") || message.includes("ux_invoices_visit_day"))) {
       try {
         const results = await env.DB.batch(buildStatements(0, null));
-        invoiceId = Number(results[0]?.meta?.last_row_id ?? 0);
+        invoiceId = Number(results[(coupon ? 1 : 0) + (input.replacesInvoiceId ? 1 : 0)]?.meta?.last_row_id ?? 0);
         pointsEarned = 0;
         pointsNote = "\u0627\u0645\u062A\u06CC\u0627\u0632 \u062D\u0636\u0648\u0631 \u0627\u0645\u0631\u0648\u0632 \u0642\u0628\u0644\u0627\u064B \u0628\u0631\u0627\u06CC \u0627\u06CC\u0646 \u0645\u0634\u062A\u0631\u06CC \u062B\u0628\u062A \u0634\u062F\u0647 \u0627\u0633\u062A.";
         visitDay = null;
@@ -2579,16 +2640,11 @@ async function voidInvoice(env, settings, invoiceId, adminId, options = {}) {
   if (!customer) return { ok: false, error: "\u0645\u0634\u062A\u0631\u06CC \u0641\u0627\u06A9\u062A\u0648\u0631 \u06CC\u0627\u0641\u062A \u0646\u0634\u062F.", code: "NOT_FOUND" };
   const nowISO = (/* @__PURE__ */ new Date()).toISOString().slice(0, 19).replace("T", " ");
   const reason = String(options.reason ?? "").trim().slice(0, 200) || null;
-  const claim = await env.DB.prepare(
-    `UPDATE invoices
-     SET voided_at = ?, voided_by = ?, visit_day = NULL, void_reason = ?
-     WHERE id = ? AND voided_at IS NULL`
-  ).bind(nowISO, adminId, reason, invoiceId).run();
-  if (!claim.meta?.changes) {
-    return { ok: false, error: "\u0627\u06CC\u0646 \u0641\u0627\u06A9\u062A\u0648\u0631 \u0642\u0628\u0644\u0627\u064B \u0627\u0628\u0637\u0627\u0644 \u0634\u062F\u0647 \u0627\u0633\u062A.", code: "ALREADY_VOID" };
-  }
+  const claim = env.DB.prepare(`UPDATE invoices SET voided_at=?,voided_by=?,visit_day=NULL,void_reason=? WHERE id=? AND voided_at IS NULL`).bind(nowISO, adminId, reason, invoiceId);
   const points = Math.max(0, Math.floor(invoice.points_earned));
   const statements = [
+    claim,
+    env.DB.prepare("INSERT INTO operation_assertions(valid) SELECT 0 WHERE changes()!=1"),
     env.DB.prepare(
       `UPDATE users
        SET points = MAX(0, points - ?),
@@ -2627,16 +2683,8 @@ async function voidInvoice(env, settings, invoiceId, adminId, options = {}) {
   try {
     await env.DB.batch(statements);
   } catch (error) {
-    console.error("voidInvoice: reversal batch failed, rolling back:", error);
-    try {
-      await env.DB.prepare(
-        `UPDATE invoices
-         SET voided_at = NULL, voided_by = NULL, void_reason = NULL, visit_day = ?
-         WHERE id = ? AND voided_at = ?`
-      ).bind(invoice.visit_day, invoiceId, nowISO).run();
-    } catch (rollbackError) {
-      console.error("voidInvoice: rollback failed:", rollbackError);
-    }
+    console.error("VOID_TRANSACTION_FAILED");
+    if (String(error).includes("CHECK constraint failed")) return { ok: false, error: "\u0627\u06CC\u0646 \u0641\u0627\u06A9\u062A\u0648\u0631 \u0642\u0628\u0644\u0627\u064B \u0627\u0628\u0637\u0627\u0644 \u0634\u062F\u0647 \u0627\u0633\u062A.", code: "ALREADY_VOID" };
     return {
       ok: false,
       error: "\u0627\u0628\u0637\u0627\u0644 \u06A9\u0627\u0645\u0644 \u0646\u0634\u062F \u0648 \u0647\u06CC\u0686 \u062A\u063A\u06CC\u06CC\u0631\u06CC \u0627\u0639\u0645\u0627\u0644 \u0646\u0634\u062F. \u0644\u0637\u0641\u0627\u064B \u062F\u0648\u0628\u0627\u0631\u0647 \u062A\u0644\u0627\u0634 \u06A9\u0646\u06CC\u062F.",
@@ -3105,6 +3153,125 @@ var init_db = __esm({
   }
 });
 
+// src/lib/campaigns.ts
+var campaigns_exports = {};
+__export(campaigns_exports, {
+  resumeAdminCampaign: () => resumeAdminCampaign,
+  startAdminCampaign: () => startAdminCampaign
+});
+async function startAdminCampaign(env, settings, job) {
+  const day = todayISO();
+  const existing = await env.DB.prepare("SELECT * FROM campaign_progress WHERE job=?").bind(job).first();
+  if (!existing || existing.day !== day) {
+    let context = null;
+    if (job === "weather") {
+      const weather = await fetchWeather(env, settings);
+      if (!weather.ok) return { job, ok: false, sent: 0, failed: 1, skipped: 0, message: "\u0622\u0628\u200C\u0648\u0647\u0648\u0627 \u062F\u0631\u06CC\u0627\u0641\u062A \u0646\u0634\u062F\u061B \u06A9\u0645\u067E\u06CC\u0646 \u0627\u06CC\u062C\u0627\u062F \u0646\u0634\u062F." };
+      context = JSON.stringify(weather);
+    }
+    await env.DB.prepare(`INSERT INTO campaign_progress(job,day,context) VALUES(?,?,?) ON CONFLICT(job) DO UPDATE SET
+      day=excluded.day,context=excluded.context,cursor=0,queued=0,scanned=0,status='running',error=NULL,until_ms=0,owner=NULL,updated_at=datetime('now') WHERE campaign_progress.day!=excluded.day`).bind(job, day, context).run();
+  }
+  await resumeAdminCampaign(env, job, settings);
+  const current = await env.DB.prepare("SELECT * FROM campaign_progress WHERE job=?").bind(job).first();
+  return {
+    job,
+    ok: current?.status !== "paused",
+    sent: 0,
+    queued: current?.queued ?? 0,
+    failed: 0,
+    skipped: 0,
+    message: current?.status === "done" ? "\u0622\u0645\u0627\u062F\u0647\u200C\u0633\u0627\u0632\u06CC \u06A9\u0645\u067E\u06CC\u0646 \u06A9\u0627\u0645\u0644 \u0634\u062F\u061B \u067E\u06CC\u0627\u0645\u200C\u0647\u0627 \u0628\u0631\u0627\u06CC \u0627\u0631\u0633\u0627\u0644 \u062F\u0633\u062A\u06CC \u0627\u062F\u0645\u06CC\u0646 \u062F\u0631 \u0635\u0641\u200C\u0627\u0646\u062F." : "\u0622\u0645\u0627\u062F\u0647\u200C\u0633\u0627\u0632\u06CC \u0645\u0631\u062D\u0644\u0647\u200C\u0627\u06CC \u0641\u0639\u0627\u0644 \u0627\u0633\u062A\u061B \u0627\u062F\u0627\u0645\u0647 \u0628\u0647\u200C\u0637\u0648\u0631 \u062E\u0648\u062F\u06A9\u0627\u0631 \u062F\u0631 Cron \u062F\u0642\u06CC\u0642\u0647\u200C\u0627\u06CC \u0627\u0646\u062C\u0627\u0645 \u0645\u06CC\u200C\u0634\u0648\u062F.",
+    details: { ...current, owner: void 0 }
+  };
+}
+async function resumeAdminCampaign(env, only, provided) {
+  const now = Date.now(), owner = crypto.randomUUID();
+  const candidate = await env.DB.prepare(`SELECT * FROM campaign_progress WHERE status IN ('running','paused') AND until_ms<=? ${only ? "AND job=?" : ""} ORDER BY updated_at,job LIMIT 1`).bind(now, ...only ? [only] : []).first();
+  if (!candidate) return false;
+  if (candidate.day !== todayISO()) {
+    await env.DB.prepare("UPDATE campaign_progress SET status='expired',error='\u0645\u0647\u0644\u062A \u0631\u0648\u0632 \u06A9\u0645\u067E\u06CC\u0646 \u062A\u0645\u0627\u0645 \u0634\u062F\u061B \u067E\u06CC\u0627\u0645 \u0642\u062F\u06CC\u0645\u06CC \u062E\u0648\u062F\u06A9\u0627\u0631 \u0627\u0631\u0633\u0627\u0644 \u0646\u0645\u06CC\u200C\u0634\u0648\u062F.' WHERE job=? AND day=?").bind(candidate.job, candidate.day).run();
+    return true;
+  }
+  const config = await loadFallbackConfig(env);
+  if (config.deliveryMode !== "admin") return false;
+  const row = await env.DB.prepare(`UPDATE campaign_progress SET until_ms=?,owner=?,status='running' WHERE job=? AND day=? AND until_ms<=? RETURNING *`).bind(now + 9e4, owner, candidate.job, candidate.day, now).first();
+  if (!row) return true;
+  let cursor = row.cursor, queued = 0, scanned = 0, attempts = 0, failed = false, more = false;
+  const churnIds = [];
+  try {
+    const { loadSettings: loadSettings2 } = await Promise.resolve().then(() => (init_settings(), settings_exports));
+    const settings = provided ?? await loadSettings2(env, true);
+    const users = await env.DB.prepare(`SELECT u.*,(SELECT COUNT(*) FROM invoices i WHERE i.user_id=u.id AND i.voided_at IS NULL) AS visits FROM users u
+      WHERE u.id>? AND u.role='customer' AND u.is_active=1 AND u.sms_opt_in=1 ORDER BY u.id LIMIT 50`).bind(cursor).all();
+    const today = todayJalali();
+    for (const user of users.results ?? []) {
+      if (attempts >= 3) {
+        more = true;
+        break;
+      }
+      let eligible = false;
+      if (row.job === "birthday" && user.birth_date) {
+        const [y, m, d] = user.birth_date.split("-").map(Number);
+        const j = toJalali(y, m, d);
+        eligible = j.jm === today.jm && j.jd === today.jd;
+      }
+      if (row.job === "churn" && user.last_visit_date) {
+        const baseline = user.visits >= settings.churn_min_visits && user.avg_visit_interval > 0 ? user.avg_visit_interval : 30;
+        eligible = daysSince(user.last_visit_date) > baseline + settings.churn_grace_days && (!user.last_churn_sms_at || daysSince(user.last_churn_sms_at) >= 30);
+      }
+      if (row.job === "weather") eligible = daysSince(user.last_visit_date || user.created_at) <= 30;
+      if (eligible) {
+        attempts++;
+        const vars = { name: user.name, tier: tierLabel(user.tier, settings), last_visit: daysSince(user.last_visit_date) };
+        if (row.job === "birthday") {
+          const start = toGregorian(today.jy, 1, 1), startISO = utcStamp(Date.UTC(start.gy, start.gm - 1, start.gd) - 3.5 * 36e5);
+          const old = await env.DB.prepare("SELECT code,value,expires_at,is_active,used_count,max_uses FROM coupons WHERE user_id=? AND reason='birthday' AND created_at>=? ORDER BY id DESC LIMIT 1").bind(user.id, startISO).first();
+          if (old && (!old.is_active || old.used_count >= old.max_uses || old.expires_at && Date.parse(old.expires_at.replace(" ", "T") + "Z") <= now)) {
+            cursor = user.id;
+            scanned++;
+            continue;
+          }
+          const coupon = old ?? await createCoupon(env.DB, { userId: user.id, kind: "percent", value: settings.birthday_coupon_percent, reason: "birthday", expiresAt: utcStamp(now + 14 * 864e5), maxUses: 1 });
+          if (!coupon) throw Error("COUPON_PREPARATION_FAILED");
+          vars.coupon = coupon.code;
+          vars.percent = toPersianDigits(coupon.value);
+          vars.expiry = formatJalali(coupon.expires_at);
+        }
+        if (row.job === "weather") {
+          const w = JSON.parse(row.context || "{}");
+          Object.assign(vars, { city: w.city, weather: w.label, temp: w.temp, advice: w.advice });
+        }
+        const result = await sendSms(env, settings, { userId: user.id, phone: user.phone, type: row.job, message: renderSms(settings, row.job, vars), expiresAt: row.job === "birthday" ? Date.parse(row.day + "T20:30:00Z") : void 0, eventKey: `campaign:${row.job}:${row.day}:${user.id}`, adminOnly: true });
+        if (result.status !== "pending") {
+          failed = true;
+          break;
+        }
+        queued++;
+        if (row.job === "churn") churnIds.push(user.id);
+      }
+      cursor = user.id;
+      scanned++;
+    }
+    more = more || users.results?.length === 50;
+    const checkpoint = env.DB.prepare(`UPDATE campaign_progress SET cursor=?,queued=queued+?,scanned=scanned+?,status=?,error=?,until_ms=?,owner=NULL,updated_at=datetime('now') WHERE job=? AND owner=?`).bind(cursor, queued, scanned, failed ? "paused" : more ? "running" : "done", failed ? "\u0635\u0641 \u0645\u0642\u0635\u062F \u0622\u0645\u0627\u062F\u0647 \u0646\u06CC\u0633\u062A\u061B \u067E\u0633 \u0627\u0632 \u0631\u0641\u0639 \u0627\u062A\u0635\u0627\u0644/\u0638\u0631\u0641\u06CC\u062A\u060C \u0627\u062F\u0627\u0645\u0647 \u0628\u062F\u0648\u0646 \u062A\u06A9\u0631\u0627\u0631 \u067E\u06CC\u0627\u0645 \u0642\u0628\u0644\u06CC \u0627\u0646\u062C\u0627\u0645 \u0645\u06CC\u200C\u0634\u0648\u062F." : null, failed ? now + 3e5 : 0, row.job, owner);
+    const updates = churnIds.length ? [env.DB.prepare(`UPDATE users SET last_churn_sms_at=? WHERE id IN (${churnIds.map(() => "?").join(",")})`).bind(utcStamp(now), ...churnIds)] : [];
+    await env.DB.batch([...updates, checkpoint]);
+  } catch {
+    await env.DB.prepare("UPDATE campaign_progress SET status='paused',error='\u0622\u0645\u0627\u062F\u0647\u200C\u0633\u0627\u0632\u06CC \u0645\u062A\u0648\u0642\u0641 \u0634\u062F\u061B \u062A\u0646\u0638\u06CC\u0645\u0627\u062A \u0648 \u062F\u06CC\u062A\u0627\u0628\u06CC\u0633 \u0631\u0627 \u0628\u0631\u0631\u0633\u06CC \u06A9\u0646\u06CC\u062F.',until_ms=?,owner=NULL,updated_at=datetime('now') WHERE job=? AND owner=?").bind(now + 3e5, row.job, owner).run();
+  }
+  return true;
+}
+var init_campaigns = __esm({
+  "src/lib/campaigns.ts"() {
+    "use strict";
+    init_db();
+    init_fallback();
+    init_sms();
+    init_utils();
+  }
+});
+
 // src/lib/otp.ts
 var otp_exports = {};
 __export(otp_exports, {
@@ -3255,7 +3422,9 @@ async function verifyOtpCode(env, phone, code) {
   if (!user || user.role !== "customer" || user.is_active !== 1) {
     return { ok: false, error: "\u0627\u06CC\u0646 \u062D\u0633\u0627\u0628 \u062F\u0631 \u062F\u0633\u062A\u0631\u0633 \u0646\u06CC\u0633\u062A.", code: "ACCOUNT_DISABLED" };
   }
-  await env.DB.prepare("UPDATE otp_codes SET used_at = ? WHERE id = ?").bind(utcStamp(Date.now()), row.id).run();
+  const consumed = await env.DB.prepare(`UPDATE otp_codes SET used_at=? WHERE id=? AND used_at IS NULL
+    AND attempts<=? AND expires_at>datetime('now')`).bind(utcStamp(Date.now()), row.id, OTP_MAX_ATTEMPTS).run();
+  if (!consumed.meta?.changes) return { ok: false, error: "\u06A9\u062F \u0645\u0635\u0631\u0641 \u06CC\u0627 \u0645\u0646\u0642\u0636\u06CC \u0634\u062F\u0647 \u0627\u0633\u062A\u061B \u06A9\u062F \u062C\u062F\u06CC\u062F \u0628\u06AF\u06CC\u0631\u06CC\u062F.", code: "CODE_ALREADY_USED" };
   return { ok: true, userId: user.id };
 }
 var OTP_TTL_SECONDS, OTP_MAX_ATTEMPTS;
@@ -3423,6 +3592,17 @@ var BASE_STYLES = `
     box-shadow: 0 0 0 4px rgba(232,180,90,.12);
     background: rgba(255,255,255,.06);
   }
+  @media print {
+    body.printing-receipt { background:white!important;color:black!important; }
+    body.printing-receipt * { visibility:hidden; }
+    body.printing-receipt #receipt-modal,body.printing-receipt #receipt-modal * { visibility:visible;color:black!important;text-shadow:none!important;box-shadow:none!important; }
+    body.printing-receipt #receipt-modal { position:absolute!important;inset:0!important;background:white!important;display:block!important; }
+    body.printing-receipt #receipt-modal button { display:none!important; }
+    body.printing-receipt #receipt-modal .glass-strong { background:white!important;border:0!important;max-width:80mm!important;margin:0 auto!important; }
+  }
+  :focus-visible { outline: 2px solid #e8b45a; outline-offset: 3px; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } *,*::before,*::after { animation:none!important;transition:none!important; } }
+  @media (max-width:640px) { input.field,select.field,textarea.field { font-size:16px; } .btn { min-height:44px; } }
   .field:disabled { opacity: .55; cursor: not-allowed; }
   select.field option { background: #1b120c; color: #f6ecdd; }
   textarea.field { line-height: 1.9; resize: vertical; }
@@ -3919,7 +4099,8 @@ var NAV_ITEMS = {
     { href: "/admin/staff", label: "\u06A9\u0627\u0631\u0645\u0646\u062F\u0627\u0646", icon: "shield", key: "staff" },
     { href: "/admin/coupons", label: "\u06A9\u062F\u0647\u0627\u06CC \u062A\u062E\u0641\u06CC\u0641", icon: "gift", key: "coupons" },
     { href: "/admin/reports", label: "\u06AF\u0632\u0627\u0631\u0634\u200C\u0647\u0627", icon: "chart", key: "reports" },
-    { href: "/admin/sms", label: "\u067E\u06CC\u0627\u0645\u06A9\u200C\u0647\u0627", icon: "chat", key: "sms" },
+    { href: "/admin/fallback", label: "\u0645\u06CC\u0632 \u067E\u06CC\u0627\u0645\u200C\u0647\u0627", icon: "chat", key: "messages" },
+    { href: "/admin/sms", label: "\u06AF\u0632\u0627\u0631\u0634 \u067E\u06CC\u0627\u0645\u06A9\u200C\u0647\u0627", icon: "chat", key: "sms" },
     { href: "/admin/logs", label: "\u0627\u0642\u062F\u0627\u0645\u0627\u062A \u0645\u062F\u06CC\u0631\u0627\u0646", icon: "clock", key: "logs" },
     { href: "/admin/system", label: "\u0628\u0631\u0631\u0633\u06CC \u062F\u06CC\u062A\u0627\u0628\u06CC\u0633", icon: "shield", key: "system" }
   ],
@@ -4179,9 +4360,31 @@ function errorPage(status, message, cafeName, options = {}) {
 // src/ui/fallback.ts
 var fallbackPanel = `
 <section id="fallback" class="glass rounded-3xl p-4 sm:p-5 scroll-mt-24 space-y-4">
-  <div><h2 class="font-bold text-base">\u067E\u06CC\u0627\u0645\u200C\u0647\u0627\u06CC \u0627\u062F\u0645\u06CC\u0646</h2>
-    <p class="hint">\u06CC\u06A9\u200C\u0628\u0627\u0631 \u0645\u0642\u0635\u062F \u0631\u0627 \u0648\u0635\u0644 \u06A9\u0646\u06CC\u062F\u061B \u06AF\u0632\u0627\u0631\u0634\u200C\u0647\u0627\u06CC \u0645\u062F\u06CC\u0631\u06CC\u062A\u06CC \u0648 \u067E\u06CC\u0627\u0645\u06A9\u200C\u0647\u0627\u06CC \u0646\u06CC\u0627\u0632\u0645\u0646\u062F \u0627\u0631\u0633\u0627\u0644 \u062F\u0633\u062A\u06CC \u0631\u0627 \u062C\u062F\u0627\u06AF\u0627\u0646\u0647 \u06A9\u0646\u062A\u0631\u0644 \u06A9\u0646\u06CC\u062F.</p></div>
+  <div><h2 class="font-bold text-base">\u0645\u06CC\u0632 \u067E\u06CC\u0627\u0645\u200C\u0647\u0627\u06CC \u0645\u0634\u062A\u0631\u06CC</h2>
+    <p class="hint">\u06F1. \u062F\u0631\u06CC\u0627\u0641\u062A \u062F\u0631 \u0628\u0644\u0647/\u062A\u0644\u06AF\u0631\u0627\u0645  \u2190  \u06F2. \u06A9\u067E\u06CC \u0645\u062A\u0646 \u0648 \u0634\u0645\u0627\u0631\u0647  \u2190  \u06F3. \u0627\u0631\u0633\u0627\u0644 \u062F\u0633\u062A\u06CC \u0648 \u062B\u0628\u062A \u0627\u0646\u062C\u0627\u0645 \u06A9\u0627\u0631</p></div>
   <p id="fallback-state" class="rounded-xl bg-white/5 p-3 text-xs leading-6" role="status">\u062F\u0631 \u062D\u0627\u0644 \u062F\u0631\u06CC\u0627\u0641\u062A \u062A\u0646\u0638\u06CC\u0645\u0627\u062A\u2026</p>
+    <div class="border-t border-white/10 pt-4 space-y-3">
+    <div class="flex flex-wrap gap-3 items-center justify-between"><h3 class="font-bold text-sm">\u06A9\u0627\u0631\u0647\u0627\u06CC \u0627\u0631\u0633\u0627\u0644 \u062F\u0633\u062A\u06CC</h3>
+      <button id="fallback-refresh" type="button" class="btn btn-ghost btn-sm">\u062A\u0627\u0632\u0647\u200C\u0633\u0627\u0632\u06CC</button></div>
+    <label class="label" for="fallback-handoff">\u0646\u0645\u0627\u06CC\u0634 \u06A9\u0627\u0631\u0647\u0627</label><select id="fallback-handoff" class="field"><option value="">\u0647\u0645\u0647\u0654 \u067E\u06CC\u0627\u0645\u200C\u0647\u0627 \u0648 \u06AF\u0632\u0627\u0631\u0634\u200C\u0647\u0627</option><option value="todo">\u0646\u06CC\u0627\u0632\u0645\u0646\u062F \u0627\u0631\u0633\u0627\u0644 \u062F\u0633\u062A\u06CC \u0628\u0647 \u0645\u0634\u062A\u0631\u06CC</option><option value="done">\u0627\u0631\u0633\u0627\u0644 \u062F\u0633\u062A\u06CC \u062B\u0628\u062A\u200C\u0634\u062F\u0647 \u062A\u0648\u0633\u0637 \u0645\u062F\u06CC\u0631</option></select>
+    <details class="rounded-xl border border-white/10 p-3"><summary class="cursor-pointer">\u0622\u0645\u0627\u062F\u0647\u200C\u0633\u0627\u0632\u06CC \u06A9\u0645\u067E\u06CC\u0646\u200C\u0647\u0627\u06CC \u062E\u0648\u062F\u06A9\u0627\u0631</summary><div id="campaign-progress" class="hint" role="status"></div></details>
+    <div id="fallback-stats" class="text-xs text-cream/60" aria-live="polite"></div>
+    <p class="hint">\u0627\u0631\u0633\u0627\u0644 \u0645\u0648\u0641\u0642 \u06CC\u0639\u0646\u06CC \u062A\u0623\u06CC\u06CC\u062F API \u067E\u06CC\u0627\u0645\u200C\u0631\u0633\u0627\u0646\u061B \u062E\u0648\u0627\u0646\u062F\u0646 \u067E\u06CC\u0627\u0645 \u062A\u0648\u0633\u0637 \u0627\u062F\u0645\u06CC\u0646 \u06CC\u0627 \u0631\u0633\u06CC\u062F\u0646 \u067E\u06CC\u0627\u0645\u06A9 \u0628\u0647 \u0645\u0634\u062A\u0631\u06CC \u0631\u0627 \u062A\u0623\u06CC\u06CC\u062F \u0646\u0645\u06CC\u200C\u06A9\u0646\u062F.</p>
+    <div class="flex flex-wrap gap-2">
+      <label class="text-xs">\u0648\u0636\u0639\u06CC\u062A<select id="fallback-status" class="field mt-1"><option value="">\u0647\u0645\u0647</option><option value="failed">\u0646\u0627\u0645\u0648\u0641\u0642</option><option value="pending">\u062F\u0631 \u0635\u0641</option><option value="processing">\u062F\u0631 \u062D\u0627\u0644 \u0627\u0631\u0633\u0627\u0644</option><option value="sent">\u0627\u0631\u0633\u0627\u0644\u200C\u0634\u062F\u0647</option><option value="skipped">\u0644\u063A\u0648\u0634\u062F\u0647</option><option value="expired">\u0645\u0646\u0642\u0636\u06CC</option></select></label>
+      <label class="text-xs">\u0645\u0642\u0635\u062F<select id="fallback-channel" class="field mt-1"><option value="">\u0647\u0631 \u062F\u0648</option><option value="telegram">\u062A\u0644\u06AF\u0631\u0627\u0645</option><option value="bale">\u0628\u0644\u0647</option></select></label>
+    </div>
+    <div id="fallback-history" class="space-y-3" aria-live="polite"></div>
+    <div class="flex gap-3 items-center">
+      <button id="fb-prev" type="button" class="btn btn-ghost btn-sm">\u0642\u0628\u0644\u06CC</button><span id="fb-page" class="text-xs"></span><button id="fb-next" type="button" class="btn btn-ghost btn-sm">\u0628\u0639\u062F\u06CC</button>
+      <a href="/admin/fallback" class="btn btn-ghost btn-sm">\u0635\u0641\u062D\u0647 \u06A9\u0627\u0645\u0644 \u062A\u0627\u0631\u06CC\u062E\u0686\u0647</a>
+    </div>
+  </div>
+  <details id="fallback-connection" open class="rounded-2xl border border-white/10 p-4"><summary class="font-bold cursor-pointer">\u0627\u062A\u0635\u0627\u0644 \u0648 \u0631\u0648\u0634 \u0627\u0631\u0633\u0627\u0644 (\u06CC\u06A9\u200C\u0628\u0627\u0631 \u062A\u0646\u0638\u06CC\u0645 \u06A9\u0646\u06CC\u062F)</summary><div class="space-y-4 mt-4">
+  <label class="label" for="fallback-mode">\u0631\u0648\u0634 \u0627\u0631\u0633\u0627\u0644 \u067E\u06CC\u0627\u0645\u200C\u0647\u0627\u06CC \u0645\u0634\u062A\u0631\u06CC</label>
+  <select id="fallback-mode" class="field"><option value="admin">\u067E\u06CC\u0634\u0646\u0647\u0627\u062F\u06CC: \u0641\u0642\u0637 \u0628\u0647 \u0627\u062F\u0645\u06CC\u0646 \u062F\u0631 \u0628\u0644\u0647 \u0648 \u062A\u0644\u06AF\u0631\u0627\u0645\u061B \u0627\u0631\u0633\u0627\u0644 \u0646\u0647\u0627\u06CC\u06CC \u062F\u0633\u062A\u06CC</option><option value="sms">\u062D\u0627\u0644\u062A \u0642\u0628\u0644\u06CC: \u067E\u0646\u0644 \u067E\u06CC\u0627\u0645\u06A9 \u0628\u0627 \u0645\u0633\u06CC\u0631 \u062C\u0627\u06CC\u06AF\u0632\u06CC\u0646</option></select>
+  <button id="fallback-recommend" type="button" class="btn btn-ghost btn-sm">\u0627\u0646\u062A\u062E\u0627\u0628 \u062D\u0627\u0644\u062A \u067E\u06CC\u0634\u0646\u0647\u0627\u062F\u06CC \u0627\u062F\u0645\u06CC\u0646</button>
+  <p class="hint">\u062F\u0631 \u062D\u0627\u0644\u062A \u0627\u062F\u0645\u06CC\u0646\u060C \u062D\u062A\u06CC \u0628\u0627 \u062F\u0627\u0634\u062A\u0646 \u0627\u0639\u062A\u0628\u0627\u0631 sms.ir \u0647\u06CC\u0686 \u067E\u06CC\u0627\u0645\u06A9\u06CC \u062E\u0648\u062F\u06A9\u0627\u0631 \u0628\u0647 \u0645\u0634\u062A\u0631\u06CC \u0646\u0645\u06CC\u200C\u0631\u0648\u062F. \u067E\u0633 \u0627\u0632 \u0627\u0646\u062A\u062E\u0627\u0628\u060C \u0630\u062E\u06CC\u0631\u0647 \u06A9\u0646\u06CC\u062F.</p>
   <div class="grid sm:grid-cols-2 gap-3">
     <label class="rounded-2xl border border-white/10 p-4 flex gap-3 items-start">
       <input id="fallback-notify" type="checkbox" role="switch" class="mt-1" />
@@ -4233,26 +4436,13 @@ var fallbackPanel = `
     <button id="fallback-reload" type="button" class="btn btn-ghost btn-sm">\u0628\u0627\u0632\u062E\u0648\u0627\u0646\u06CC \u062A\u0646\u0638\u06CC\u0645\u0627\u062A</button>
     <span id="fallback-dirty" class="text-xs text-amber-300" aria-live="polite"></span>
   </div>
+  </div></details>
   <details class="rounded-2xl border border-white/10 p-4"><summary class="font-bold cursor-pointer text-sm">\u0646\u0648\u0634\u062A\u0646 \u0648 \u0627\u0631\u0633\u0627\u0644 \u067E\u06CC\u0627\u0645 \u062F\u0633\u062A\u06CC \u0628\u0647 \u0627\u062F\u0645\u06CC\u0646</summary><div class="space-y-3 mt-4">
     <p class="hint">\u0641\u0642\u0637 \u0628\u0647 \u0645\u0642\u0635\u062F\u0647\u0627\u06CC \u0630\u062E\u06CC\u0631\u0647\u200C\u0634\u062F\u0647\u0654 \u0645\u062F\u06CC\u0631 \u0627\u0631\u0633\u0627\u0644 \u0645\u06CC\u200C\u0634\u0648\u062F\u061B \u067E\u06CC\u0627\u0645\u06A9 \u0628\u0647 \u0645\u0634\u062A\u0631\u06CC \u0646\u06CC\u0633\u062A. \u0631\u0633\u06CC\u062F\u0646 \u0628\u0647 API \u0647\u0645 \u062A\u0623\u06CC\u06CC\u062F \u062E\u0648\u0627\u0646\u062F\u0646 \u067E\u06CC\u0627\u0645 \u0646\u06CC\u0633\u062A.</p>
     <fieldset id="fb-manual-fields" class="space-y-3"><label class="label" for="fb-manual-channel">\u067E\u06CC\u0627\u0645\u200C\u0631\u0633\u0627\u0646</label><select id="fb-manual-channel" class="field"><option value="both">\u0647\u0631 \u062F\u0648 \u0645\u0642\u0635\u062F \u0630\u062E\u06CC\u0631\u0647\u200C\u0634\u062F\u0647</option><option value="telegram">\u0641\u0642\u0637 \u062A\u0644\u06AF\u0631\u0627\u0645</option><option value="bale">\u0641\u0642\u0637 \u0628\u0644\u0647</option></select><label class="label" for="fb-manual-phone">\u0634\u0645\u0627\u0631\u0647\u0654 \u0645\u0631\u062A\u0628\u0637 (\u0627\u062E\u062A\u06CC\u0627\u0631\u06CC\u061B \u0628\u0631\u0627\u06CC \u06A9\u067E\u06CC \u0648 \u0627\u0631\u0633\u0627\u0644 \u062F\u0633\u062A\u06CC SMS)</label><input id="fb-manual-phone" type="tel" class="field" dir="ltr" maxlength="13" /><label class="label" for="fb-manual-text">\u0645\u062A\u0646 \u06A9\u0627\u0645\u0644</label><textarea id="fb-manual-text" class="field" rows="5" maxlength="2000"></textarea><p class="hint">\u062D\u062F\u0627\u06A9\u062B\u0631 \u06F2\u06F0\u06F0\u06F0 \u06A9\u0627\u0631\u0627\u06A9\u062A\u0631\u061B \u0645\u062A\u0646 \u0646\u0627\u0642\u0635 \u0627\u0631\u0633\u0627\u0644 \u0646\u0645\u06CC\u200C\u0634\u0648\u062F.</p><label class="flex gap-2 text-xs"><input id="fb-manual-confirm" type="checkbox" /> \u0645\u06CC\u200C\u062F\u0627\u0646\u0645 \u0627\u06CC\u0646 \u067E\u06CC\u0627\u0645 \u0628\u0647 \u0627\u062F\u0645\u06CC\u0646 \u0645\u06CC\u200C\u0631\u0633\u062F\u060C \u0646\u0647 \u0628\u0647 \u0645\u0634\u062A\u0631\u06CC</label></fieldset>
     <button id="fb-manual-send" type="button" class="btn btn-primary btn-sm">\u062B\u0628\u062A \u062F\u0631 \u0635\u0641 \u0627\u0631\u0633\u0627\u0644 \u062F\u0633\u062A\u06CC</button><p id="fb-manual-result" class="hint whitespace-pre-line" role="status" aria-live="polite"></p>
   </div></details>
-  <div class="border-t border-white/10 pt-4 space-y-3">
-    <div class="flex flex-wrap gap-3 items-center justify-between"><h3 class="font-bold text-sm">\u062A\u0627\u0631\u06CC\u062E\u0686\u0647 \u0627\u0631\u0633\u0627\u0644</h3>
-      <button id="fallback-refresh" type="button" class="btn btn-ghost btn-sm">\u062A\u0627\u0632\u0647\u200C\u0633\u0627\u0632\u06CC</button></div>
-    <div id="fallback-stats" class="text-xs text-cream/60" aria-live="polite"></div>
-    <p class="hint">\u0627\u0631\u0633\u0627\u0644 \u0645\u0648\u0641\u0642 \u06CC\u0639\u0646\u06CC \u062A\u0623\u06CC\u06CC\u062F API \u067E\u06CC\u0627\u0645\u200C\u0631\u0633\u0627\u0646\u061B \u062E\u0648\u0627\u0646\u062F\u0646 \u067E\u06CC\u0627\u0645 \u062A\u0648\u0633\u0637 \u0627\u062F\u0645\u06CC\u0646 \u06CC\u0627 \u0631\u0633\u06CC\u062F\u0646 \u067E\u06CC\u0627\u0645\u06A9 \u0628\u0647 \u0645\u0634\u062A\u0631\u06CC \u0631\u0627 \u062A\u0623\u06CC\u06CC\u062F \u0646\u0645\u06CC\u200C\u06A9\u0646\u062F.</p>
-    <div class="flex flex-wrap gap-2">
-      <label class="text-xs">\u0648\u0636\u0639\u06CC\u062A<select id="fallback-status" class="field mt-1"><option value="">\u0647\u0645\u0647</option><option value="failed">\u0646\u0627\u0645\u0648\u0641\u0642</option><option value="pending">\u062F\u0631 \u0635\u0641</option><option value="processing">\u062F\u0631 \u062D\u0627\u0644 \u0627\u0631\u0633\u0627\u0644</option><option value="sent">\u0627\u0631\u0633\u0627\u0644\u200C\u0634\u062F\u0647</option><option value="skipped">\u0644\u063A\u0648\u0634\u062F\u0647</option><option value="expired">\u0645\u0646\u0642\u0636\u06CC</option></select></label>
-      <label class="text-xs">\u0645\u0642\u0635\u062F<select id="fallback-channel" class="field mt-1"><option value="">\u0647\u0631 \u062F\u0648</option><option value="telegram">\u062A\u0644\u06AF\u0631\u0627\u0645</option><option value="bale">\u0628\u0644\u0647</option></select></label>
-    </div>
-    <div id="fallback-history" class="space-y-3" aria-live="polite"></div>
-    <div class="flex gap-3 items-center">
-      <button id="fb-prev" type="button" class="btn btn-ghost btn-sm">\u0642\u0628\u0644\u06CC</button><span id="fb-page" class="text-xs"></span><button id="fb-next" type="button" class="btn btn-ghost btn-sm">\u0628\u0639\u062F\u06CC</button>
-      <a href="/admin/fallback" class="btn btn-ghost btn-sm">\u0635\u0641\u062D\u0647 \u06A9\u0627\u0645\u0644 \u062A\u0627\u0631\u06CC\u062E\u0686\u0647</a>
-    </div>
-  </div>
+
 </section>`;
 var fallbackScripts = String.raw`
 (function () {
@@ -4268,11 +4458,11 @@ var fallbackScripts = String.raw`
   function faDate(value){if(!value)return '—';var d=new Date(value.indexOf('T')<0?value.replace(' ','T')+'Z':value);return isNaN(d.getTime())?'—':d.toLocaleString('fa-IR',{timeZone:'Asia/Tehran'});}
   function report(e){toast(e.message||'ارتباط برقرار نشد؛ دوباره تلاش کنید.','error');}
   function setDirty(value){dirty=value;el('fallback-dirty').textContent=value?'تغییرات ذخیره نشده‌اند.':'';}
-  function state(config){el('fallback-state').textContent=!config.encryptionKeyConfigured?'کلید رمزنگاری تنظیم نیست. در Secrets ورکر FALLBACK_ENCRYPTION_KEY را طبق راهنما تنظیم کنید.':config.primaryActive?'اتصال پیامک اصلی تنظیم شده؛ گزارش مدیریت مستقل است و پیامک جایگزین فقط هنگام شکست ارسال استفاده می‌شود.':'پنل پیامکی خاموش یا ناقص است؛ برای ارسال دستی به ادمین، سوئیچ مربوط را روشن کنید.';}
+  function state(config){el('fallback-state').textContent=config.deliveryMode==='admin'&&config.channels.length?'حالت ادمین فعال است: برنامه فقط در بله/تلگرام به شما پیام می‌دهد؛ ارسال به مشتری با خودتان است. '+(!config.encryptionKeyConfigured?'کلید رمزنگاری را بررسی کنید.':'شماره و متن را جدا کپی کنید و پس از ارسال، انجام کار را ثبت کنید.'):!config.encryptionKeyConfigured?'کلید رمزنگاری تنظیم نیست. در Secrets ورکر FALLBACK_ENCRYPTION_KEY را طبق راهنما تنظیم کنید.':config.primaryActive?'اتصال پیامک اصلی تنظیم شده؛ گزارش مدیریت مستقل است و پیامک جایگزین فقط هنگام شکست ارسال استفاده می‌شود.':'پنل پیامکی خاموش یا ناقص است؛ برای ارسال دستی به ادمین، سوئیچ مربوط را روشن کنید.';}
   function selectedFields(){channels.forEach(function(ch){el('fb-'+ch+'-fields').classList.toggle('hidden',!el('fb-'+ch+'-selected').checked);});}
   async function loadConfig(){
     var c=await api('/api/admin/fallback');lastConfig=c;
-    el('fallback-enabled').checked=c.enabled;el('fallback-notify').checked=!!c.notifyEnabled;
+    if(!ready&&c.deliveryMode==='admin')el('fallback-handoff').value='todo';el('fallback-mode').value=c.deliveryMode||'sms';el('fallback-connection').open=!(c.deliveryMode==='admin'&&c.channels.length);el('fallback-enabled').checked=c.enabled;el('fallback-notify').checked=!!c.notifyEnabled;
     el('fallback-invoices').checked=c.notifyInvoices!==false;el('fallback-actions').checked=c.notifyActions!==false;el('fallback-errors').checked=c.notifyErrors!==false;
     channels.forEach(function(ch){
       var row=c.channels.find(function(x){return x.channel===ch;});
@@ -4285,7 +4475,7 @@ var fallbackScripts = String.raw`
     });
     selectedFields();state(c);ready=true;setDirty(false);el('fallback-save').disabled=false;
   }
-  function payload(){return{enabled:el('fallback-enabled').checked,notifyEnabled:el('fallback-notify').checked,notifyInvoices:el('fallback-invoices').checked,notifyActions:el('fallback-actions').checked,notifyErrors:el('fallback-errors').checked,
+  function payload(){return{deliveryMode:el('fallback-mode').value,enabled:el('fallback-enabled').checked,notifyEnabled:el('fallback-notify').checked,notifyInvoices:el('fallback-invoices').checked,notifyActions:el('fallback-actions').checked,notifyErrors:el('fallback-errors').checked,
     channels:channels.filter(function(ch){return el('fb-'+ch+'-selected').checked;}).map(function(ch){return{channel:ch,chatId:el('fb-'+ch+'-chat').value.trim(),token:el('fb-'+ch+'-token').value.trim(),clearToken:el('fb-'+ch+'-clear').checked};})};}
   async function save(){
     if(!ready)throw new Error('ابتدا تنظیمات را بازخوانی کنید.');
@@ -4293,16 +4483,17 @@ var fallbackScripts = String.raw`
     if(lastConfig&&lastConfig.channels.some(function(c){return !data.channels.some(function(n){return n.channel===c.channel;});})&&!window.confirm('حذف مقصد، پیام‌های معلق آن را لغو می‌کند. ادامه می‌دهید؟'))throw new Error('حذف مقصد لغو شد.');
     await api('/api/admin/fallback',{method:'PUT',body:data});await loadConfig();
   }
+  async function campaigns(){try{var data=await api('/api/admin/campaigns');el('campaign-progress').textContent=data.items.length?data.items.map(function(row){return({birthday:'تولد',churn:'یادآوری دیدار',weather:'آب‌وهوا'}[row.job]||row.job)+' · '+({running:'در حال آماده‌سازی',paused:'متوقف؛ نیازمند بررسی',done:'آماده‌سازی کامل',expired:'مهلت روز تمام شد'}[row.status]||row.status)+' · '+fa(row.queued)+' پیام آماده'+(row.error?' — '+row.error:'');}).join(' | '):'هنوز کمپینی در حالت ادمین شروع نشده است.';}catch{el('campaign-progress').textContent='وضعیت کمپین دریافت نشد؛ دوباره تازه‌سازی کنید.';}}
   function schedule(delay){clearTimeout(timer);timer=setTimeout(function(){if(!document.hidden)history().catch(report);else schedule(20000);},delay);}
   async function history(){
     if(historyBusy){historyAgain=true;return;}historyBusy=true;
     try{
-      var q=new URLSearchParams({page:String(page),status:el('fallback-status').value,channel:el('fallback-channel').value});
+      var q=new URLSearchParams({page:String(page),status:el('fallback-status').value,channel:el('fallback-channel').value,handoff:el('fallback-handoff').value});
       var data=await api('/api/admin/fallback/history?'+q.toString());
-      if(q.get('page')!==String(page)||q.get('status')!==el('fallback-status').value||q.get('channel')!==el('fallback-channel').value){historyAgain=true;return;}
+      if(q.get('page')!==String(page)||q.get('status')!==el('fallback-status').value||q.get('channel')!==el('fallback-channel').value||q.get('handoff')!==el('fallback-handoff').value){historyAgain=true;return;}
       var maxPage=Math.max(1,Math.ceil(data.total/30));if(page>maxPage){page=maxPage;historyAgain=true;return;}
       var stats=data.stats||{};
-      el('fallback-stats').textContent='آمار کل — در صف: '+fa((stats.pending||0)+(stats.processing||0))+' | ارسال موفق: '+fa(stats.sent)+' | ناموفق: '+fa(stats.failed);
+      el('fallback-stats').textContent='نیازمند اقدام دستی: '+fa(data.manualTodo)+' | در صف ادمین: '+fa((stats.pending||0)+(stats.processing||0))+' | ارسال موفق: '+fa(stats.sent)+' | ناموفق: '+fa(stats.failed);
       var labels={pending:'در صف',processing:'در حال ارسال',sent:'ارسال موفق به مقصد',failed:'ناموفق',skipped:'لغوشده',expired:'مهلت تمام شده'};
       var types={manual:'پیام دستی مدیر',report_error:'هشدار خطای ارسال',report_invoice:'گزارش فاکتور',report_action:'گزارش عملیات',invoice:'پیامک رسید خرید',otp:'کد ورود محرمانه',admin:'تست اتصال',welcome:'خوش‌آمد',birthday:'تولد',churn:'یادآوری حضور',weather:'آب‌وهوا',redeem:'تبدیل امتیاز',referral:'معرفی'};
       lastHistoryItems=data.items;
@@ -4316,6 +4507,8 @@ var fallbackScripts = String.raw`
           (phone?'<button type="button" data-copy-phone="'+esc(phone)+'" class="font-mono select-all" dir="ltr" title="کپی شماره">'+esc(phone)+' ⧉</button>':'')+
           (j.type==='otp'?'<p class="text-amber-200">متن و شماره کد ورود در تاریخچه نمایش داده نمی‌شود.</p>':text?'<p class="whitespace-pre-wrap break-words">'+esc(text.slice(0,150))+(text.length>150?'…':'')+'</p>':'<p class="hint">محتوا در دسترس نیست؛ کلید رمزنگاری را بررسی کنید.</p>')+
           (j.type!=='otp'&&text?'<button type="button" class="btn btn-ghost btn-sm" data-copy-message="'+esc(j.id)+'">کپی متن کامل برای ارسال دستی</button>':'')+
+          (j.expires_at<=Date.now()?'<p class="text-amber-200">مهلت این پیام تمام شده است؛ پیش از ارسال، اعتبار محتوا را بررسی کنید.</p>':'')+
+          (j.manual_sent_at?'<p class="text-emerald-300">✓ ارسال دستی توسط مدیر ثبت شد · '+esc(faDate(j.manual_sent_at))+' (اظهار مدیر، نه رسید تحویل)</p>':phone&&text&&j.type!=='otp'&&!j.type.startsWith('report_')&&j.reason!=='test'?'<button type="button" class="btn btn-primary btn-sm" data-manual-done="'+esc(j.id)+'">به مشتری فرستادم؛ ثبت انجام کار</button>':'')+
           (j.error?'<p class="text-amber-200 whitespace-pre-wrap break-words">'+esc(j.error)+'</p>':'')+
           '<details><summary class="cursor-pointer text-cream/50">جزئیات'+(text.length>150?' و متن کامل':'')+'</summary><div class="mt-2 space-y-2">'+
           (text.length>150?'<pre class="whitespace-pre-wrap break-words font-sans">'+esc(text)+'</pre>':'')+
@@ -4329,7 +4522,7 @@ var fallbackScripts = String.raw`
   }
   el('fallback-save').addEventListener('click',async function(){if(busy)return;busy=true;lockConfig(true);setLoading(this,true,'در حال ذخیره…');try{await save();toast('تنظیمات ذخیره شد.','success');await history();}catch(e){report(e);}finally{busy=false;lockConfig(false);setLoading(this,false);}});
   el('fallback-reload').addEventListener('click',async function(){if(busy)return;if(dirty&&!window.confirm('تغییرات ذخیره‌نشده کنار گذاشته شوند؟'))return;busy=true;lockConfig(true);try{await loadConfig();}catch(e){report(e);}finally{busy=false;lockConfig(false);}});
-  ['fallback-enabled','fallback-notify','fallback-invoices','fallback-actions','fallback-errors'].forEach(function(id){el(id).addEventListener('change',function(){setDirty(true);});});
+  ['fallback-mode','fallback-enabled','fallback-notify','fallback-invoices','fallback-actions','fallback-errors'].forEach(function(id){el(id).addEventListener('change',function(){setDirty(true);});});
   channels.forEach(function(ch){
     ['selected','chat','token','clear'].forEach(function(key){el('fb-'+ch+'-'+key).addEventListener(key==='chat'||key==='token'?'input':'change',function(){setDirty(true);selectedFields();});});
     el('fb-'+ch+'-reveal').addEventListener('click',function(){var input=el('fb-'+ch+'-token');input.type=input.type==='password'?'text':'password';this.textContent=input.type==='password'?'نمایش':'مخفی';});
@@ -4360,20 +4553,24 @@ var fallbackScripts = String.raw`
     catch(error){el('fb-manual-result').textContent=error.message;if(error.status===400||error.status===409)manualSnapshot=null;else el('fb-manual-result').textContent+=' همان دکمه را برای پیگیری همان درخواست بزنید؛ ارسال تازه نسازید.';}
     finally{busy=false;lockConfig(false);el('fb-manual-fields').disabled=!!manualSnapshot;setLoading(button,false);}
   });
+  el('fallback-recommend').addEventListener('click',function(){el('fallback-mode').value='admin';setDirty(true);toast('حالت ادمین انتخاب شد؛ مقصدها را بررسی و ذخیره کنید.','info');});
   el('fallback-history').addEventListener('click',async function(e){
+    var done=e.target.closest('[data-manual-done]');if(done){if(!await confirmAction({title:'ثبت ارسال دستی',message:'آیا متن را خودتان به شمارهٔ مشتری فرستاده‌اید؟ این ثبت به معنی تحویل یا خواندن پیام نیست.',confirmText:'بله، خودم فرستادم'}))return;setLoading(done,true);try{await api('/api/admin/fallback/'+encodeURIComponent(done.dataset.manualDone)+'/forwarded',{method:'POST',body:{confirmSent:true}});toast('انجام کار برای هر دو نسخهٔ پیام ثبت شد.','success');await history();}catch(error){report(error);}finally{setLoading(done,false);}return;}
+
     var messageCopy=e.target.closest('[data-copy-message]');if(messageCopy){var job=lastHistoryItems.find(function(item){return item.id===messageCopy.dataset.copyMessage;});if(job&&job.type!=='otp'&&job.content){try{await navigator.clipboard.writeText(job.content.message);toast('متن کامل کپی شد.','success');}catch(_){window.prompt('متن کامل پیام:',job.content.message);}}return;}
     var copy=e.target.closest('[data-copy-phone]');if(copy){try{await navigator.clipboard.writeText(copy.dataset.copyPhone);toast('شماره کپی شد.','success');}catch(_){window.prompt('شماره را کپی کنید:',copy.dataset.copyPhone);}return;}
     var btn=e.target.closest('[data-retry-id]');if(!btn)return;
     if(!window.confirm(btn.dataset.uncertain==='true'?'ممکن است پیام قبلاً تحویل شده باشد. خطر ارسال تکراری را می‌پذیرید؟':'خطای مقصد را برطرف کرده‌اید و پیام دوباره ارسال شود؟'))return;
     setLoading(btn,true,'در حال ثبت…');try{var r=await api('/api/admin/fallback/'+encodeURIComponent(btn.dataset.retryId)+'/retry',{method:'POST',body:{confirmDuplicateRisk:btn.dataset.uncertain==='true'}});toast(r.message,'success');await history();}catch(error){report(error);}finally{setLoading(btn,false);}
   });
-  ['fallback-status','fallback-channel'].forEach(function(id){el(id).addEventListener('change',function(){page=1;history().catch(report);});});
-  el('fallback-refresh').addEventListener('click',function(){history().catch(report);});
+  ['fallback-status','fallback-channel','fallback-handoff'].forEach(function(id){el(id).addEventListener('change',function(){page=1;history().catch(report);});});
+  el('fallback-refresh').addEventListener('click',function(){history().catch(report);campaigns();});
   el('fb-prev').addEventListener('click',function(){if(page>1)page--;history().catch(report);});el('fb-next').addEventListener('click',function(){page++;history().catch(report);});
   document.addEventListener('sms-settings-saved',function(){api('/api/admin/fallback').then(state).catch(report);});
   window.addEventListener('pagehide',function(){clearTimeout(timer);});
   window.addEventListener('beforeunload',function(e){if(dirty){e.preventDefault();e.returnValue='';}});
-  busy=true;lockConfig(true);loadConfig().catch(function(e){el('fallback-state').textContent='تنظیمات دریافت نشد؛ بازخوانی تنظیمات را بزنید.';report(e);}).finally(function(){busy=false;lockConfig(false);});
+  busy=true;lockConfig(true);loadConfig().then(function(){return history();}).catch(function(e){el('fallback-state').textContent='تنظیمات دریافت نشد؛ بازخوانی تنظیمات را بزنید.';report(e);}).finally(function(){busy=false;lockConfig(false);});
+  campaigns();
   history().catch(function(e){report(e);schedule(20000);});
 })();`;
 function adminFallbackPage(settings, userName) {
@@ -4381,7 +4578,7 @@ function adminFallbackPage(settings, userName) {
     title: "\u067E\u06CC\u0627\u0645\u200C\u0647\u0627\u06CC \u0627\u062F\u0645\u06CC\u0646",
     role: "admin",
     userName,
-    active: "settings",
+    active: "messages",
     body: `<div class="max-w-6xl mx-auto p-4 sm:p-6"><a href="/admin/settings" class="btn btn-ghost mb-4">\u0628\u0627\u0632\u06AF\u0634\u062A \u0628\u0647 \u062A\u0646\u0638\u06CC\u0645\u0627\u062A</a>${fallbackPanel}</div>`,
     scripts: fallbackScripts,
     cafeName: settings.cafe_name
@@ -7327,7 +7524,7 @@ var SCHEMA_TABLES = [
   },
   {
     "name": "fallback_jobs",
-    "sql": "CREATE TABLE IF NOT EXISTS fallback_jobs (\n  id TEXT PRIMARY KEY,\n  channel TEXT NOT NULL CHECK(channel IN ('telegram','bale')),\n  chat_id TEXT NOT NULL,\n  user_id INTEGER,\n  type TEXT NOT NULL,\n  payload TEXT NOT NULL,\n  reason TEXT NOT NULL,\n  status TEXT NOT NULL DEFAULT 'pending',\n  attempts INTEGER NOT NULL DEFAULT 0,\n  next_at INTEGER NOT NULL,\n  expires_at INTEGER NOT NULL,\n  locked_at INTEGER,\n  provider_id TEXT,\n  error TEXT,\n  created_at TEXT NOT NULL DEFAULT (datetime('now')),\n  completed_at TEXT\n);",
+    "sql": "CREATE TABLE IF NOT EXISTS fallback_jobs (\n  id TEXT PRIMARY KEY,\n  channel TEXT NOT NULL CHECK(channel IN ('telegram','bale')),\n  chat_id TEXT NOT NULL,\n  user_id INTEGER,\n  type TEXT NOT NULL,\n  payload TEXT NOT NULL,\n  handoff_key TEXT,\n  manual_sent_at TEXT,\n  manual_sent_by INTEGER,\n  reason TEXT NOT NULL,\n  status TEXT NOT NULL DEFAULT 'pending',\n  attempts INTEGER NOT NULL DEFAULT 0,\n  next_at INTEGER NOT NULL,\n  expires_at INTEGER NOT NULL,\n  locked_at INTEGER,\n  provider_id TEXT,\n  error TEXT,\n  created_at TEXT NOT NULL DEFAULT (datetime('now')),\n  completed_at TEXT\n);",
     "columns": [
       {
         "name": "id",
@@ -7352,6 +7549,18 @@ var SCHEMA_TABLES = [
       {
         "name": "payload",
         "definition": "TEXT NOT NULL"
+      },
+      {
+        "name": "handoff_key",
+        "definition": "TEXT"
+      },
+      {
+        "name": "manual_sent_at",
+        "definition": "TEXT"
+      },
+      {
+        "name": "manual_sent_by",
+        "definition": "INTEGER"
       },
       {
         "name": "reason",
@@ -7424,6 +7633,66 @@ var SCHEMA_TABLES = [
       {
         "name": "until_ms",
         "definition": "INTEGER NOT NULL DEFAULT 0"
+      }
+    ]
+  },
+  {
+    "name": "operation_assertions",
+    "sql": "CREATE TABLE IF NOT EXISTS operation_assertions (\n  valid INTEGER NOT NULL CHECK(valid = 1)\n);",
+    "columns": [
+      {
+        "name": "valid",
+        "definition": "INTEGER NOT NULL CHECK(valid = 1)"
+      }
+    ]
+  },
+  {
+    "name": "campaign_progress",
+    "sql": "CREATE TABLE IF NOT EXISTS campaign_progress (\n  job TEXT PRIMARY KEY,\n  day TEXT NOT NULL,\n  cursor INTEGER NOT NULL DEFAULT 0,\n  queued INTEGER NOT NULL DEFAULT 0,\n  scanned INTEGER NOT NULL DEFAULT 0,\n  status TEXT NOT NULL DEFAULT 'running',\n  error TEXT,\n  context TEXT,\n  until_ms INTEGER NOT NULL DEFAULT 0,\n  owner TEXT,\n  updated_at TEXT NOT NULL DEFAULT (datetime('now'))\n);",
+    "columns": [
+      {
+        "name": "job",
+        "definition": "TEXT PRIMARY KEY"
+      },
+      {
+        "name": "day",
+        "definition": "TEXT NOT NULL"
+      },
+      {
+        "name": "cursor",
+        "definition": "INTEGER NOT NULL DEFAULT 0"
+      },
+      {
+        "name": "queued",
+        "definition": "INTEGER NOT NULL DEFAULT 0"
+      },
+      {
+        "name": "scanned",
+        "definition": "INTEGER NOT NULL DEFAULT 0"
+      },
+      {
+        "name": "status",
+        "definition": "TEXT NOT NULL DEFAULT 'running'"
+      },
+      {
+        "name": "error",
+        "definition": "TEXT"
+      },
+      {
+        "name": "context",
+        "definition": "TEXT"
+      },
+      {
+        "name": "until_ms",
+        "definition": "INTEGER NOT NULL DEFAULT 0"
+      },
+      {
+        "name": "owner",
+        "definition": "TEXT"
+      },
+      {
+        "name": "updated_at",
+        "definition": "TEXT NOT NULL DEFAULT (datetime('now'))"
       }
     ]
   }
@@ -7544,12 +7813,16 @@ var SCHEMA_INDEXES = [
   {
     "name": "idx_fallback_jobs_created",
     "sql": "CREATE INDEX IF NOT EXISTS idx_fallback_jobs_created ON fallback_jobs(created_at DESC);"
+  },
+  {
+    "name": "idx_fallback_handoff",
+    "sql": "CREATE INDEX IF NOT EXISTS idx_fallback_handoff ON fallback_jobs(handoff_key,manual_sent_at);"
   }
 ];
 
 // src/lib/schema.ts
 init_db();
-var SCHEMA_VERSION = "customer-staff-fixes-v7";
+var SCHEMA_VERSION = "admin-handoff-v8";
 var readyCache = /* @__PURE__ */ new WeakMap();
 var controlRows = [
   { table: "fallback_dispatch", key: "state:fallback_dispatch", condition: "id=1", sql: "INSERT OR IGNORE INTO fallback_dispatch(id,until_ms) VALUES(1,0)" },
@@ -8072,6 +8345,8 @@ init_settings();
 init_sms();
 
 // src/lib/jobs.ts
+init_fallback();
+init_campaigns();
 init_utils();
 init_sms();
 init_db();
@@ -8115,6 +8390,7 @@ async function getJobRuns(env) {
   return out;
 }
 async function runChurnJob(env, settings, force = false) {
+  if ((await loadFallbackConfig(env)).deliveryMode === "admin") return startAdminCampaign(env, settings, "churn");
   const dateKey = todayISO();
   if (!force && await alreadyRanToday(env, "churn", dateKey)) {
     return {
@@ -8196,6 +8472,7 @@ async function runChurnJob(env, settings, force = false) {
   };
 }
 async function runBirthdayJob(env, settings, force = false) {
+  if ((await loadFallbackConfig(env)).deliveryMode === "admin") return startAdminCampaign(env, settings, "birthday");
   const dateKey = todayISO();
   if (!force && await alreadyRanToday(env, "birthday", dateKey)) {
     return {
@@ -8258,7 +8535,8 @@ async function runBirthdayJob(env, settings, force = false) {
       message: renderSms(settings, "birthday", {
         name: user.name,
         coupon: coupon.code,
-        percent: toPersianDigits(settings.birthday_coupon_percent)
+        percent: toPersianDigits(coupon.value),
+        expiry: formatJalali(coupon.expires_at)
       })
     });
     if (result.status === "sent") sent += 1;
@@ -8280,6 +8558,7 @@ async function runBirthdayJob(env, settings, force = false) {
   };
 }
 async function runWeatherJob(env, settings, force = false) {
+  if ((await loadFallbackConfig(env)).deliveryMode === "admin") return startAdminCampaign(env, settings, "weather");
   const dateKey = todayISO();
   if (!force && await alreadyRanToday(env, "weather", dateKey)) {
     return {
@@ -8345,12 +8624,9 @@ async function runWeatherJob(env, settings, force = false) {
   };
 }
 async function runMaintenanceJob(env) {
-  const { results: users } = await env.DB.prepare(
-    `SELECT id FROM users
-     WHERE last_visit_date IS NOT NULL
-     ORDER BY last_visit_date DESC
-     LIMIT 14`
-  ).all();
+  const cursor = Number(await getRawSetting(env, "maintenance_cursor") || 0) || 0;
+  const { results: users } = await env.DB.prepare(`SELECT id FROM users WHERE last_visit_date IS NOT NULL AND id>? ORDER BY id LIMIT 12`).bind(cursor).all();
+  await saveSetting(env, "maintenance_cursor", users?.length === 12 ? users[users.length - 1].id : 0);
   for (const user of users ?? []) {
     await recomputeAvgInterval(env.DB, user.id);
   }
@@ -10053,7 +10329,7 @@ function staffPage(settings, user, menu, todayStats, todayInvoices, isAdmin = fa
           <div id="r-change-row" class="hidden flex items-center justify-between"><span class="text-cream/50">\u0628\u0627\u0642\u06CC\u0645\u0627\u0646\u062F\u0647</span><span id="r-change" class="font-bold text-sky-300">\u2014</span></div>
         </div>
 
-        <button type="button" id="new-invoice" class="btn btn-primary w-full mt-5">${icon("plus", "w-4 h-4")} \u0641\u0627\u06A9\u062A\u0648\u0631 \u0628\u0639\u062F\u06CC</button>
+        <button type="button" id="print-receipt" class="btn btn-ghost w-full mt-3">\u0686\u0627\u067E \u0631\u0633\u06CC\u062F</button><button type="button" id="new-invoice" class="btn btn-primary w-full mt-5">${icon("plus", "w-4 h-4")} \u0641\u0627\u06A9\u062A\u0648\u0631 \u0628\u0639\u062F\u06CC</button>
       </div>
     </div>
   </div>
@@ -10836,6 +11112,7 @@ function staffPage(settings, user, menu, todayStats, todayInvoices, isAdmin = fa
 
     $('#submit-invoice').addEventListener('click', submitInvoice);
 
+    $('#print-receipt').addEventListener('click',function(){document.body.classList.add('printing-receipt');try{window.print();}finally{document.body.classList.remove('printing-receipt');}});
     $('#new-invoice').addEventListener('click', function () {
       $('#receipt-modal').classList.add('hidden');
       resetForm();
@@ -11692,6 +11969,8 @@ function adminDashboardPage(input) {
             <a href="/admin/staff" class="btn btn-danger btn-sm shrink-0">\u062A\u063A\u06CC\u06CC\u0631 \u0631\u0645\u0632</a>
           </div>` : ""}
 
+    <section id="financial-checks" class="glass rounded-2xl p-4 mb-4"><h2 class="font-bold text-sm">\u0633\u0644\u0627\u0645\u062A \u0627\u0635\u0644\u0627\u062D \u0641\u0627\u06A9\u062A\u0648\u0631\u0647\u0627</h2><p id="financial-checks-state" class="hint">\u062F\u0631 \u062D\u0627\u0644 \u0628\u0631\u0631\u0633\u06CC \u062E\u0648\u0627\u0646\u062F\u0646\u06CC\u2026</p><div id="financial-checks-items" class="space-y-2"></div></section>
+    <section class="glass rounded-3xl p-5 mb-4 flex flex-wrap items-center gap-3"><div class="flex-1"><h2 class="font-bold">\u0627\u0645\u0631\u0648\u0632 \u0627\u0632 \u06A9\u062C\u0627 \u0634\u0631\u0648\u0639 \u06A9\u0646\u06CC\u0645\u061F</h2><p class="hint">\u06A9\u0627\u0631\u0647\u0627\u06CC \u0631\u0648\u0632\u0645\u0631\u0647 \u062F\u0645 \u062F\u0633\u062A\u061B \u062A\u0646\u0638\u06CC\u0645\u0627\u062A \u0641\u0642\u0637 \u0648\u0642\u062A\u06CC \u0644\u0627\u0632\u0645 \u062F\u0627\u0631\u06CC\u062F.</p></div><a href="/admin/fallback" class="btn btn-primary">\u0645\u06CC\u0632 \u067E\u06CC\u0627\u0645\u200C\u0647\u0627 \u0648 \u0627\u0631\u0633\u0627\u0644 \u062F\u0633\u062A\u06CC</a><a href="/staff" class="btn btn-ghost">\u062B\u0628\u062A \u062E\u0631\u06CC\u062F</a><a href="/admin/customers" class="btn btn-ghost">\u0645\u0634\u062A\u0631\u06CC\u0627\u0646</a></section>
     <div class="grid grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4 mb-4">
       ${statCard({
     label: "\u06A9\u0644 \u0645\u0634\u062A\u0631\u06CC\u0627\u0646",
@@ -11826,6 +12105,10 @@ function adminDashboardPage(input) {
   </div>
   `;
   const scripts = `
+  (function(){
+    async function check(){try{var data=await api('/api/admin/system/checks');$('#financial-checks-state').textContent=data.corrections.length?'\u0627\u0635\u0644\u0627\u062D \u0646\u06CC\u0645\u0647\u200C\u06A9\u0627\u0631\u0647 \u0646\u06CC\u0627\u0632\u0645\u0646\u062F \u0628\u0631\u0631\u0633\u06CC \u0645\u062F\u06CC\u0631 \u0627\u0633\u062A.':'\u0627\u0635\u0644\u0627\u062D \u0646\u06CC\u0645\u0647\u200C\u06A9\u0627\u0631\u0647\u200C\u0627\u06CC \u062F\u0631 \u0628\u0631\u0631\u0633\u06CC \u0641\u0639\u0644\u06CC \u067E\u06CC\u062F\u0627 \u0646\u0634\u062F.';var box=$('#financial-checks-items');box.textContent='';data.corrections.forEach(function(item){var b=document.createElement('button');b.className='btn btn-ghost btn-sm';b.textContent='\u0628\u0631\u0631\u0633\u06CC \u0648 \u062A\u06A9\u0645\u06CC\u0644 #'+fa(item.original_id)+' \u2190 #'+fa(item.replacement_id);b.addEventListener('click',async function(){if(!await confirmAction({title:'\u062A\u06A9\u0645\u06CC\u0644 \u0627\u0635\u0644\u0627\u062D \u0645\u062A\u0648\u0642\u0641\u200C\u0634\u062F\u0647',message:'\u0627\u0635\u0644 \u0641\u0627\u06A9\u062A\u0648\u0631 #'+item.original_id+' \u0628\u0627 \u0645\u0628\u0644\u063A '+moneyFa(item.old_amount)+' \u0628\u0627\u0637\u0644 \u0648 \u062C\u0627\u06CC\u06AF\u0632\u06CC\u0646 #'+item.replacement_id+' \u0628\u0627 \u0645\u0628\u0644\u063A '+moneyFa(item.new_amount)+' \u062D\u0641\u0638 \u0634\u0648\u062F\u061F \u0627\u06CC\u0646 \u06A9\u0627\u0631 \u0631\u0648\u06CC \u0627\u0645\u062A\u06CC\u0627\u0632 \u0648 \u06AF\u0632\u0627\u0631\u0634 \u0635\u0646\u062F\u0648\u0642 \u0628\u0633\u062A\u0647 \u0647\u0645 \u0627\u062B\u0631 \u0645\u06CC\u200C\u06AF\u0630\u0627\u0631\u062F.',confirmText:'\u062A\u0623\u06CC\u06CC\u062F \u0648 \u062A\u06A9\u0645\u06CC\u0644'}))return;setLoading(b,true);try{await api('/api/admin/invoices/'+item.original_id+'/complete-correction',{method:'POST',body:{confirm:true,allowClosedShift:true}});toast('\u0627\u0635\u0644\u0627\u062D \u062A\u06A9\u0645\u06CC\u0644 \u0634\u062F\u061B \u0635\u0641\u062D\u0647 \u0631\u0627 \u0628\u0631\u0627\u06CC \u062A\u0627\u0632\u0647\u200C\u0634\u062F\u0646 \u0622\u0645\u0627\u0631 \u0628\u0627\u0632\u062E\u0648\u0627\u0646\u06CC \u06A9\u0646\u06CC\u062F.','success');await check();}catch(e){toast(e.message,'error');}finally{setLoading(b,false);}});box.appendChild(b);});}catch{ $('#financial-checks-state').textContent='\u0628\u0631\u0631\u0633\u06CC \u0627\u0646\u062C\u0627\u0645 \u0646\u0634\u062F\u061B \u0635\u0641\u062D\u0647 \u0631\u0627 \u0628\u0627\u0632\u062E\u0648\u0627\u0646\u06CC \u06A9\u0646\u06CC\u062F. \u0627\u06CC\u0646 \u0628\u0647 \u0645\u0639\u0646\u06CC \u0633\u0627\u0644\u0645\u200C\u0628\u0648\u062F\u0646 \u0647\u0645\u0647\u0654 \u062F\u0627\u062F\u0647\u200C\u0647\u0627 \u0646\u06CC\u0633\u062A.';}}
+    check();
+  })();
   (function () {
     $$('.run-job').forEach(function (button) {
       button.addEventListener('click', async function () {
@@ -12107,7 +12390,7 @@ function adminCustomerDetailPage(input) {
         <div class="flex items-center gap-2">
           <button type="button" id="open-coupon" class="btn btn-ghost btn-sm">${icon("gift", "w-4 h-4")} \u06A9\u062F \u062A\u062E\u0641\u06CC\u0641</button>
           ${user.is_active === 1 ? `<button type="button" id="deactivate" class="btn btn-ghost btn-sm">${icon("close", "w-4 h-4")} \u063A\u06CC\u0631\u0641\u0639\u0627\u0644</button>` : `<button type="button" id="activate" class="btn btn-primary btn-sm">${icon("check", "w-4 h-4")} \u0641\u0639\u0627\u0644\u200C\u0633\u0627\u0632\u06CC</button>`}
-          <button type="button" id="delete-customer" class="btn btn-danger btn-sm">${icon("trash", "w-4 h-4")} \u062D\u0630\u0641</button>
+          <button type="button" id="delete-customer" class="btn btn-danger btn-sm">${icon("trash", "w-4 h-4")} \u0628\u0627\u06CC\u06AF\u0627\u0646\u06CC</button>
         </div>
       </div>
     </div>
@@ -12350,7 +12633,7 @@ function adminCustomerDetailPage(input) {
         setLoading(deleteBtn, true, '\u062F\u0631 \u062D\u0627\u0644 \u062D\u0630\u0641\u2026');
         try {
           await api('/api/admin/customers/' + userId, { method: 'DELETE' });
-          toast('\u0645\u0634\u062A\u0631\u06CC \u062D\u0630\u0641 \u0634\u062F.', 'success');
+          toast('\u0645\u0634\u062A\u0631\u06CC \u0628\u0627\u06CC\u06AF\u0627\u0646\u06CC \u0634\u062F\u061B \u062E\u0631\u06CC\u062F\u0647\u0627 \u062D\u0641\u0638 \u0634\u062F\u0646\u062F.', 'success');
           setTimeout(function () { location.href = '/admin/customers'; }, 700);
         } catch (error) {
           toast(error.message, 'error');
@@ -13088,6 +13371,7 @@ function csvCell(value) {
 }
 
 // src/ui/adminManage.ts
+init_settings();
 init_utils();
 var TEMPLATE_META = [
   {
@@ -13395,6 +13679,7 @@ function adminSettingsPage(input) {
           <span class="badge tone-muted me-auto">${toPersianDigits(smsToday.sent)} \u0627\u0631\u0633\u0627\u0644 \u0645\u0648\u0641\u0642 \u0627\u0645\u0631\u0648\u0632</span>
         </div>
         <div class="grid lg:grid-cols-2 gap-3">
+          <button id="templates-suggest" type="button" class="btn btn-ghost btn-sm">\u0627\u0633\u062A\u0641\u0627\u062F\u0647 \u0627\u0632 \u0645\u062A\u0646\u200C\u0647\u0627\u06CC \u0635\u0645\u06CC\u0645\u06CC \u067E\u06CC\u0634\u0646\u0647\u0627\u062F\u06CC</button><p class="hint">\u0642\u0627\u0644\u0628 \u0633\u0641\u0627\u0631\u0634\u06CC \u062E\u0648\u062F\u06A9\u0627\u0631 \u0639\u0648\u0636 \u0646\u0645\u06CC\u200C\u0634\u0648\u062F. \u067E\u06CC\u0634\u0646\u0647\u0627\u062F\u0647\u0627 \u0631\u0627 \u067E\u06CC\u0634\u200C\u0646\u0645\u0627\u06CC\u0634 \u06A9\u0646\u06CC\u062F \u0648 \u0633\u067E\u0633 \u0630\u062E\u06CC\u0631\u0647\u0654 \u062A\u0646\u0638\u06CC\u0645\u0627\u062A \u0631\u0627 \u0628\u0632\u0646\u06CC\u062F\u061B \u0648\u0639\u062F\u0647\u0654 \u062A\u062E\u0641\u06CC\u0641 \u0628\u062F\u0648\u0646 \u06A9\u0648\u067E\u0646 \u0648\u0627\u0642\u0639\u06CC \u0646\u0646\u0648\u06CC\u0633\u06CC\u062F.</p>
           ${templateCards}
         </div>
       </section>
@@ -13545,7 +13830,9 @@ function adminSettingsPage(input) {
   `;
   const scripts = `
   (function () {
-    var TEMPLATE_KEYS = ['welcome', 'invoice', 'birthday', 'churn', 'weather'];
+    var TEMPLATE_KEYS = ['welcome', 'invoice', 'birthday', 'churn', 'weather','otp','redeem'];
+    var SUGGESTED = ${jsonForScript(DEFAULT_SETTINGS.sms_templates)};
+    $('#templates-suggest').addEventListener('click',async function(){if(!await confirmAction({title:'\u062C\u0627\u06CC\u06AF\u0632\u06CC\u0646\u06CC \u067E\u06CC\u0634\u200C\u0646\u0648\u06CC\u0633 \u0642\u0627\u0644\u0628\u200C\u0647\u0627',message:'\u0645\u062A\u0646\u200C\u0647\u0627\u06CC \u0641\u0639\u0644\u06CC \u0641\u0631\u0645 \u0628\u0627 \u067E\u06CC\u0634\u0646\u0647\u0627\u062F\u0647\u0627\u06CC \u0635\u0645\u06CC\u0645\u06CC \u062C\u0627\u06CC\u06AF\u0632\u06CC\u0646 \u0634\u0648\u0646\u062F\u061F \u062A\u0627 \u0630\u062E\u06CC\u0631\u0647\u0654 \u062A\u0646\u0638\u06CC\u0645\u0627\u062A\u060C \u062A\u063A\u06CC\u06CC\u0631\u06CC \u062F\u0631 \u0633\u0631\u0648\u0631 \u0627\u0646\u062C\u0627\u0645 \u0646\u0645\u06CC\u200C\u0634\u0648\u062F.',confirmText:'\u0646\u0645\u0627\u06CC\u0634 \u067E\u06CC\u0634\u0646\u0647\u0627\u062F\u0647\u0627'}))return;TEMPLATE_KEYS.forEach(function(key){var input=document.getElementById('tpl-'+key);if(input){input.value=SUGGESTED[key];input.dispatchEvent(new Event('input',{bubbles:true}));}});toast('\u067E\u06CC\u0634\u0646\u0647\u0627\u062F\u0647\u0627 \u0622\u0645\u0627\u062F\u0647\u200C\u0627\u0646\u062F\u061B \u067E\u06CC\u0634\u200C\u0646\u0645\u0627\u06CC\u0634 \u0648 \u0633\u067E\u0633 \u0630\u062E\u06CC\u0631\u0647 \u06A9\u0646\u06CC\u062F.','success');});
     var SAMPLES = ${jsonForScript(
     TEMPLATE_META.reduce((acc, meta) => {
       acc[meta.key] = { ...meta.sample, tier: settings.tier_labels.silver, cafe: settings.cafe_name };
@@ -14859,7 +15146,7 @@ function reportsCsv(data) {
 
 // src/index.ts
 var app = new Hono3();
-var APP_BUILD = "customer-staff-fixes-v7";
+var APP_BUILD = "admin-handoff-v8";
 function resolveTimeZone2(env) {
   return resolveTimeZone(env.TZ_NAME);
 }
@@ -15566,6 +15853,20 @@ async function handleStaffLogin(c) {
     return reject("\u0631\u0645\u0632 \u0639\u0628\u0648\u0631 \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "INVALID_INPUT");
   }
   const rateKey = `login:${clientKey(c)}:${phone}`;
+  const { dbRateLimit: dbRateLimit2 } = await Promise.resolve().then(() => (init_otp(), otp_exports));
+  const durableRate = await dbRateLimit2(c.env.DB, "auth:" + rateKey, 20, 15 * 60);
+  if (!durableRate) {
+    try {
+      const ready = await c.env.DB.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='rate_limits'").first();
+      if (ready) return reject("\u06A9\u0646\u062A\u0631\u0644 \u0627\u0645\u0646 \u0648\u0631\u0648\u062F \u0645\u0648\u0642\u062A\u0627\u064B \u062F\u0631 \u062F\u0633\u062A\u0631\u0633 \u0646\u06CC\u0633\u062A\u061B \u06A9\u0645\u06CC \u0628\u0639\u062F \u062A\u0644\u0627\u0634 \u06A9\u0646\u06CC\u062F.", 503, "AUTH_DATABASE_UNAVAILABLE");
+    } catch {
+      return reject("\u062F\u06CC\u062A\u0627\u0628\u06CC\u0633 \u0645\u0648\u0642\u062A\u0627\u064B \u062F\u0631 \u062F\u0633\u062A\u0631\u0633 \u0646\u06CC\u0633\u062A\u061B \u062F\u0648\u0628\u0627\u0631\u0647 \u062A\u0644\u0627\u0634 \u06A9\u0646\u06CC\u062F.", 503, "AUTH_DATABASE_UNAVAILABLE");
+    }
+  }
+  if (durableRate && !durableRate.allowed) {
+    c.header("Retry-After", String(durableRate.retryAfter));
+    return reject("\u062A\u0644\u0627\u0634\u200C\u0647\u0627\u06CC \u0648\u0631\u0648\u062F \u0632\u06CC\u0627\u062F \u0627\u0633\u062A\u061B \u06F1\u06F5 \u062F\u0642\u06CC\u0642\u0647 \u0628\u0639\u062F \u062F\u0648\u0628\u0627\u0631\u0647 \u062A\u0644\u0627\u0634 \u06A9\u0646\u06CC\u062F.", 429, "RATE_LIMITED");
+  }
   const rate = checkRateLimit(rateKey, 8, 15 * 6e4);
   if (!rate.allowed) {
     c.header("Retry-After", String(rate.retryAfter));
@@ -16264,6 +16565,32 @@ app.get("/api/admin/invoices/:id", requireApiRole("admin"), async (c) => {
   if (!invoice) return fail(c, "\u0641\u0627\u06A9\u062A\u0648\u0631 \u06CC\u0627\u0641\u062A \u0646\u0634\u062F.", 404, "NOT_FOUND");
   return ok(c, invoice);
 });
+app.get("/api/admin/system/checks", requireApiRole("admin"), async (c) => {
+  const issues = await c.env.DB.prepare(`SELECT o.id AS original_id,r.id AS replacement_id,o.amount AS old_amount,r.amount AS new_amount
+    FROM invoices r JOIN invoices o ON o.id=r.replaces_invoice_id WHERE o.voided_at IS NULL AND r.voided_at IS NULL ORDER BY r.id LIMIT 20`).all();
+  return ok(c, { corrections: issues.results ?? [], note: "\u0628\u0631\u0631\u0633\u06CC \u0641\u0642\u0637 \u062E\u0648\u0627\u0646\u062F\u0646\u06CC \u0627\u0633\u062A\u061B \u0647\u06CC\u0686 \u0641\u0627\u06A9\u062A\u0648\u0631\u06CC \u062E\u0648\u062F\u06A9\u0627\u0631 \u062A\u063A\u06CC\u06CC\u0631 \u0646\u0645\u06CC\u200C\u06A9\u0646\u062F." });
+});
+app.post("/api/admin/invoices/:id/complete-correction", requireApiRole("admin"), async (c) => {
+  let body;
+  try {
+    body = await c.req.json();
+  } catch {
+    return fail(c, "\u062F\u0631\u062E\u0648\u0627\u0633\u062A \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "BAD_JSON");
+  }
+  if (body?.confirm !== true) return fail(c, "\u062A\u06A9\u0645\u06CC\u0644 \u0627\u0635\u0644\u0627\u062D \u062B\u0628\u062A\u200C\u0634\u062F\u0647 \u0631\u0627 \u062A\u0623\u06CC\u06CC\u062F \u06A9\u0646\u06CC\u062F.", 400, "CONFIRM_REQUIRED");
+  const id = toPositiveInt(c.req.param("id"), 0);
+  const original = await c.env.DB.prepare("SELECT * FROM invoices WHERE id=?").bind(id).first();
+  if (!original) return fail(c, "\u0641\u0627\u06A9\u062A\u0648\u0631 \u0627\u0635\u0644\u06CC \u0645\u0648\u062C\u0648\u062F \u0646\u06CC\u0633\u062A.", 404, "NOT_FOUND");
+  if (original.voided_at) return ok(c, { completed: true, duplicate: true });
+  const replacements = await c.env.DB.prepare("SELECT id FROM invoices WHERE replaces_invoice_id=? AND voided_at IS NULL LIMIT 2").bind(id).all();
+  if (replacements.results?.length !== 1) return fail(c, "\u062A\u0639\u062F\u0627\u062F \u062C\u0627\u06CC\u06AF\u0632\u06CC\u0646\u200C\u0647\u0627 \u0642\u0627\u0628\u0644 \u0628\u0627\u0632\u06CC\u0627\u0628\u06CC \u062E\u0648\u062F\u06A9\u0627\u0631 \u0646\u06CC\u0633\u062A\u061B \u0628\u0631\u0631\u0633\u06CC \u0627\u0646\u0633\u0627\u0646\u06CC \u0644\u0627\u0632\u0645 \u0627\u0633\u062A.", 409, "MANUAL_REVIEW_REQUIRED");
+  const replacementId = replacements.results[0].id;
+  const result = await voidInvoice(c.env, c.get("settings"), id, c.get("user").uid, { reason: "\u062A\u06A9\u0645\u06CC\u0644 \u0627\u0635\u0644\u0627\u062D \u0645\u062A\u0648\u0642\u0641\u200C\u0634\u062F\u0647\u061B \u062C\u0627\u06CC\u06AF\u0632\u06CC\u0646 #" + replacementId, replacementInvoiceId: replacementId, allowClosedShift: body.allowClosedShift === true });
+  if (!result.ok) return fail(c, result.error, 409, result.code);
+  await sendInvoiceReceipt(c.env, c.get("settings"), replacementId);
+  await audit(c, "invoice_correct", { targetType: "invoice", targetId: id, details: "\u0627\u0635\u0644\u0627\u062D \u0646\u06CC\u0645\u0647\u200C\u06A9\u0627\u0631\u0647 \u0628\u0627 \u062A\u0623\u06CC\u06CC\u062F \u0645\u062F\u06CC\u0631 \u062A\u06A9\u0645\u06CC\u0644 \u0634\u062F\u061B \u062C\u0627\u06CC\u06AF\u0632\u06CC\u0646 #" + replacementId });
+  return ok(c, { completed: true, replacementId });
+});
 app.post("/api/admin/invoices/:id/correct", requireApiRole("admin"), async (c) => {
   const user = c.get("user");
   const settings = c.get("settings");
@@ -16438,14 +16765,14 @@ app.delete("/api/admin/customers/:id", requireApiRole("admin"), async (c) => {
     return fail(c, "\u0645\u0634\u062A\u0631\u06CC \u06CC\u0627\u0641\u062A \u0646\u0634\u062F.", 404, "NOT_FOUND");
   }
   if (personnelRole(user)) return fail(c, "\u0627\u06CC\u0646 \u0645\u0634\u062A\u0631\u06CC \u062F\u0633\u062A\u0631\u0633\u06CC \u067E\u0631\u0633\u0646\u0644\u06CC \u062F\u0627\u0631\u062F\u061B \u0627\u0628\u062A\u062F\u0627 \u062F\u0633\u062A\u0631\u0633\u06CC \u0631\u0627 \u0627\u0632 \u0628\u062E\u0634 \u06A9\u0627\u0631\u06A9\u0646\u0627\u0646 \u0628\u0631\u062F\u0627\u0631\u06CC\u062F.", 409, "CUSTOMER_HAS_STAFF_ACCESS");
-  const removed = await c.env.DB.prepare("DELETE FROM users WHERE id = ? AND role = 'customer' AND staff_role IS NULL").bind(id).run();
+  const removed = await c.env.DB.prepare("UPDATE users SET is_active=0,token_version=token_version+1 WHERE id = ? AND role = 'customer' AND staff_role IS NULL").bind(id).run();
   if (!removed.meta?.changes) return fail(c, "\u0648\u0636\u0639\u06CC\u062A \u062D\u0633\u0627\u0628 \u062A\u063A\u06CC\u06CC\u0631 \u06A9\u0631\u062F\u061B \u062F\u0648\u0628\u0627\u0631\u0647 \u0628\u0631\u0631\u0633\u06CC \u06A9\u0646\u06CC\u062F.", 409, "ACCOUNT_CHANGED");
   await audit(c, "customer_delete", {
     targetType: "customer",
     targetId: id,
-    details: `\u0645\u0634\u062A\u0631\u06CC \xAB${user.name}\xBB \u0628\u0627 \u0634\u0645\u0627\u0631\u0647 ${user.phone} \u062D\u0630\u0641 \u0634\u062F.`
+    details: `\u0645\u0634\u062A\u0631\u06CC \xAB${user.name}\xBB \u0628\u0627\u06CC\u06AF\u0627\u0646\u06CC \u0634\u062F\u061B \u0633\u0648\u0627\u0628\u0642 \u0645\u0627\u0644\u06CC \u0645\u062D\u0641\u0648\u0638 \u0627\u0633\u062A.`
   });
-  return ok(c, { deleted: true, id });
+  return ok(c, { deleted: false, archived: true, id });
 });
 app.post("/api/admin/sms/test", requireApiRole("admin"), async (c) => {
   const settings = c.get("settings");
@@ -16595,6 +16922,23 @@ app.post("/api/admin/fallback/diagnose", requireApiRole("admin"), async (c) => {
   });
   return ok(c, report);
 });
+app.post("/api/admin/fallback/:id/forwarded", requireApiRole("admin"), async (c) => {
+  let body;
+  try {
+    body = await c.req.json();
+  } catch {
+    return fail(c, "\u062F\u0631\u062E\u0648\u0627\u0633\u062A \u0646\u0627\u0645\u0639\u062A\u0628\u0631 \u0627\u0633\u062A.", 400, "BAD_JSON");
+  }
+  if (body?.confirmSent !== true) return fail(c, "\u0627\u0631\u0633\u0627\u0644 \u062F\u0633\u062A\u06CC \u0648\u0627\u0642\u0639\u06CC \u0628\u0647 \u0645\u0634\u062A\u0631\u06CC \u0631\u0627 \u062A\u0623\u06CC\u06CC\u062F \u06A9\u0646\u06CC\u062F.", 400, "CONFIRM_REQUIRED");
+  try {
+    const { markManualSent: markManualSent2 } = await Promise.resolve().then(() => (init_fallback(), fallback_exports));
+    await markManualSent2(c.env, c.req.param("id"), c.get("user").uid);
+  } catch {
+    return fail(c, "\u0627\u06CC\u0646 \u067E\u06CC\u0627\u0645 \u0642\u0627\u0628\u0644 \u062B\u0628\u062A\u0650 \u0627\u0631\u0633\u0627\u0644 \u062F\u0633\u062A\u06CC \u0646\u06CC\u0633\u062A\u061B \u06A9\u062F \u0648\u0631\u0648\u062F\u060C \u06AF\u0632\u0627\u0631\u0634 \u06CC\u0627 \u0645\u062D\u062A\u0648\u0627\u06CC \u0646\u0627\u0645\u0648\u062C\u0648\u062F \u0631\u0627 \u0646\u0645\u06CC\u200C\u062A\u0648\u0627\u0646 \u062A\u0623\u06CC\u06CC\u062F \u06A9\u0631\u062F.", 400, "NOT_MANUAL_MESSAGE");
+  }
+  await logAdminAction(c.env.DB, { adminId: c.get("user").uid, adminName: c.get("user").name, action: "manual_customer_sent", targetType: "message", targetId: c.req.param("id"), details: "\u0627\u0638\u0647\u0627\u0631 \u0645\u062F\u06CC\u0631: \u0645\u062A\u0646 \u0628\u0647 \u0645\u0634\u062A\u0631\u06CC \u0627\u0631\u0633\u0627\u0644 \u0634\u062F\u061B \u062A\u0623\u06CC\u06CC\u062F \u062A\u062D\u0648\u06CC\u0644 \u06CC\u0627 \u062E\u0648\u0627\u0646\u062F\u0646 \u0646\u06CC\u0633\u062A." });
+  return ok(c, { recorded: true });
+});
 app.post("/api/admin/fallback/send", requireApiRole("admin"), async (c) => {
   const { dbRateLimit: dbRateLimit2 } = await Promise.resolve().then(() => (init_otp(), otp_exports));
   const rate = await dbRateLimit2(c.env.DB, "fallback:manual:" + c.get("user").uid, 3, 60);
@@ -16684,9 +17028,13 @@ app.post("/api/admin/fallback/:id/retry", requireApiRole("admin"), async (c) => 
   await audit(c, "fallback_retry", { targetType: "message", targetId: id, details: `\u062A\u0644\u0627\u0634 \u0645\u062C\u062F\u062F \u0622\u06AF\u0627\u0647\u0627\u0646\u0647 \u0645\u062F\u06CC\u0631 (\u0628\u062F\u0648\u0646 \u062A\u063A\u06CC\u06CC\u0631 \u0645\u0627\u0644\u06CC). \u0646\u0648\u0628\u062A \u0642\u0628\u0644\u06CC: ${previous.previousAttempts} \u062A\u0644\u0627\u0634\u061B \u0646\u062A\u06CC\u062C\u0647: ${(previous.previousError ?? "\u0646\u0627\u0645\u0634\u062E\u0635").slice(0, 200)}\u061B \u067E\u0630\u06CC\u0631\u0634 \u062E\u0637\u0631 \u062A\u06A9\u0631\u0627\u0631: ${body?.confirmDuplicateRisk === true ? "\u0628\u0644\u0647" : "\u062E\u06CC\u0631"}.` });
   return ok(c, { message: "\u062F\u0648\u0628\u0627\u0631\u0647 \u062F\u0631 \u0635\u0641 \u0642\u0631\u0627\u0631 \u06AF\u0631\u0641\u062A\u061B \u0646\u062A\u06CC\u062C\u0647 \u062F\u0631 \u062A\u0627\u0631\u06CC\u062E\u0686\u0647 \u0645\u0634\u062E\u0635 \u0645\u06CC\u200C\u0634\u0648\u062F." }, 202);
 });
+app.get("/api/admin/campaigns", requireApiRole("admin"), async (c) => {
+  const rows = await c.env.DB.prepare("SELECT job,day,cursor,queued,scanned,status,error,updated_at FROM campaign_progress ORDER BY job").all();
+  return ok(c, { items: rows.results ?? [] });
+});
 app.get("/api/admin/fallback/history", requireApiRole("admin"), async (c) => {
   const page = Math.min(1e4, Math.max(1, toPositiveInt(c.req.query("page"), 1)));
-  return ok(c, await fallbackHistory(c.env, page, c.req.query("status") ?? "", c.req.query("channel") ?? ""));
+  return ok(c, await fallbackHistory(c.env, page, c.req.query("status") ?? "", c.req.query("channel") ?? "", c.req.query("handoff") ?? ""));
 });
 app.get("/api/admin/settings", requireApiRole("admin"), async (c) => {
   const settings = c.get("settings");
@@ -17188,6 +17536,10 @@ async function scheduled(controller, env, ctx) {
   }
   if (controller.cron === "* * * * *") {
     const hourBoundary = new Date(controller.scheduledTime).getUTCMinutes() === 0;
+    if (new Date(controller.scheduledTime).getUTCMinutes() % 2 === 1) {
+      const { resumeAdminCampaign: resumeAdminCampaign2 } = await Promise.resolve().then(() => (init_campaigns(), campaigns_exports));
+      if (await resumeAdminCampaign2(env)) return;
+    }
     ctx.waitUntil((hourBoundary ? processFallbackQueue(env, true) : drainFallbackQueue(env)).catch(() => console.error("fallback cron failed")));
     if (!hourBoundary) return;
   }

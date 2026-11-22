@@ -12,7 +12,7 @@
     "rescue:admin": "bash scripts/rescue-admin.sh",
     "typecheck": "tsc --noEmit",
     "db:init:local": "wrangler d1 execute cafe-club-db --local --file=./schema.sql",
-    "db:init:remote": "wrangler d1 execute cafe-club-db --remote --file=./schema.sql",
+    "db:init:remote": "npm run schema:check && wrangler d1 execute cafe-club-db --remote --file=./schema-production.sql",
     "hash-password": "node scripts/hash-password.mjs",
     "build:single": "npm run schema:check && esbuild src/index.ts --bundle --format=esm --platform=neutral --conditions=workerd,worker,browser --target=es2022 --outfile=single-file/worker.js --log-level=warning",
     "preview": "wrangler dev --ip 0.0.0.0 --port 8787",

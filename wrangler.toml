@@ -10,7 +10,7 @@
 #   1) npm install
 #   2) npx wrangler d1 create cafe-club-db
 #      → مقدار database_id خروجی را در پایین جای‌گذاری کنید.
-#   3) npx wrangler d1 execute cafe-club-db --remote --file=./schema.sql
+#   3) npx wrangler d1 execute cafe-club-db --remote --file=./schema-production.sql
 #   4) npx wrangler secret put JWT_SECRET
 #   5) npx wrangler deploy
 # ============================================================================

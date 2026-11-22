@@ -226,9 +226,9 @@ export async function verifyOtpCode(
     return { ok: false, error: 'این حساب در دسترس نیست.', code: 'ACCOUNT_DISABLED' };
   }
 
-  await env.DB.prepare('UPDATE otp_codes SET used_at = ? WHERE id = ?')
-    .bind(utcStamp(Date.now()), row.id)
-    .run();
+  const consumed=await env.DB.prepare(`UPDATE otp_codes SET used_at=? WHERE id=? AND used_at IS NULL
+    AND attempts<=? AND expires_at>datetime('now')`).bind(utcStamp(Date.now()),row.id,OTP_MAX_ATTEMPTS).run();
+  if(!consumed.meta?.changes)return {ok:false,error:'کد مصرف یا منقضی شده است؛ کد جدید بگیرید.',code:'CODE_ALREADY_USED'};
 
   return { ok: true, userId: user.id };
 }

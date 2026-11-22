@@ -12,7 +12,7 @@
  *  برای sms.ir علاوه بر کلید API، «شماره خط» (LineNumber) هم لازم است.
  */
 import type { AppSettings, Bindings } from '../types';
-import { enqueueFallback, enqueueDeliveryAlert, smsPanelActive } from './fallback';
+import { enqueueFallback, enqueueDeliveryAlert, loadFallbackConfig, smsPanelActive } from './fallback';
 import { renderTemplate, toPersianDigits, sqliteToMs, normalizePhone } from './utils';
 
 export type SmsType =
@@ -32,6 +32,8 @@ export type SendSmsParams = {
   message: string;
   type: SmsType;
   /** Absolute deadline for short-lived content (OTP). */
+  eventKey?: string;
+  adminOnly?: boolean;
   expiresAt?: number;
 };
 
@@ -265,6 +267,21 @@ export async function sendSms(
     const result: SendSmsResult = { status: 'failed', error: 'شماره موبایل گیرنده نامعتبر است.' };
     await finalizeSmsResult(env, params, result);
     return result;
+  }
+
+  // Explicit admin-first mode never calls sms.ir, even with valid paid SMS credentials.
+  const delivery=await loadFallbackConfig(env);
+  if(params.adminOnly && delivery.deliveryMode!=='admin')return {status:'skipped',error:'ADMIN_MODE_CHANGED'};
+  if(delivery.deliveryMode==='admin'){
+    try {
+      const ids=await enqueueFallback(env,{...params,phone:mobile,message:sanitizeMessage(params.message,Infinity)},'admin_handoff');
+      if(!ids.length)throw Error('NO_DESTINATION');
+      const result:SendSmsResult={status:'pending',fallbackIds:ids,deliveryKind:'admin_handoff',error:'آمادهٔ تحویل به ادمین؛ ارسال نهایی به مشتری دستی است.'};
+      await finalizeSmsResult(env,params,result);return result;
+    }catch{
+      const result:SendSmsResult={status:'skipped',error:'ADMIN_QUEUE_UNAVAILABLE: پیام به مشتری ارسال نشد؛ اتصال مقصد، کلید و ظرفیت صف را بررسی کنید.'};
+      await finalizeSmsResult(env,params,result);return result;
+    }
   }
 
   if (!smsPanelActive(env, settings)) {

@@ -10,14 +10,14 @@ import { pathToFileURL } from 'node:url';
 const dir = await mkdtemp(join(tmpdir(), 'fallback-tests-'));
 try {
   const file = join(dir, 'module.mjs');
-  await build({ stdin: { contents: `export * from './src/lib/fallback'; export * from './src/lib/fallback-adapters'; export * from './src/lib/permissions'; export { sign } from 'hono/jwt'; export { hashOtp } from './src/lib/otp'; export { registerCustomer, listCustomers, tierLabel, listSmsLogs, recordInvoice } from './src/lib/db'; export { isValidBirthDate } from './src/lib/utils'; export { sendSms } from './src/lib/sms'; export { DEFAULT_SETTINGS, loadSettings, invalidateSettingsCache } from './src/lib/settings'; export { default as worker } from './src/index'; export { createToken } from './src/lib/auth';`, resolveDir: process.cwd() }, bundle: true, platform: 'node', format: 'esm', outfile: file });
+  await build({ stdin: { contents: `export * from './src/lib/fallback'; export * from './src/lib/fallback-adapters'; export * from './src/lib/permissions'; export { sign } from 'hono/jwt'; export { startAdminCampaign,resumeAdminCampaign } from './src/lib/campaigns'; export { todayISO } from './src/lib/utils'; export { hashOtp } from './src/lib/otp'; export { registerCustomer, listCustomers, tierLabel, listSmsLogs, recordInvoice } from './src/lib/db'; export { isValidBirthDate } from './src/lib/utils'; export { sendSms } from './src/lib/sms'; export { DEFAULT_SETTINGS, loadSettings, invalidateSettingsCache } from './src/lib/settings'; export { default as worker } from './src/index'; export { createToken,resetRateLimit } from './src/lib/auth';`, resolveDir: process.cwd() }, bundle: true, platform: 'node', format: 'esm', outfile: file });
   const m = await import(pathToFileURL(file));
   let passed = 0;
   async function test(name, fn) { await fn(); passed++; console.log('✅ ' + name); }
   const sql = await readFile('schema.sql', 'utf8');
   // D1 compatibility shim backed by real SQLite (including UPDATE RETURNING / atomic batch).
   function database() {
-    const db = new DatabaseSync(':memory:'); db.exec(sql);
+    const db = new DatabaseSync(':memory:'); db.exec(sql);let batchQueue=Promise.resolve();
     const api = { queries:0, prepare(query) {
       let args = [];
       const stmt = { bind(...a) { args = a; return stmt; },
@@ -25,7 +25,7 @@ try {
         async all() { api.queries++; return { results: db.prepare(query).all(...args) }; },
         async run() { api.queries++; const info = db.prepare(query).run(...args); return { success:true,meta:{ changes:Number(info.changes),last_row_id:Number(info.lastInsertRowid) } }; } };
       return stmt;
-    }, async batch(statements) { db.exec('BEGIN'); try { const results=[]; for(const s of statements)results.push(await s.run()); db.exec('COMMIT'); return results; } catch(e) { db.exec('ROLLBACK'); throw e; } } };
+    }, batch(statements) { const run=async()=>{ db.exec('BEGIN'); try { const results=[]; for(const s of statements)results.push(await s.run()); db.exec('COMMIT'); return results; } catch(e) { db.exec('ROLLBACK'); throw e; } };const result=batchQueue.then(run,run);batchQueue=result.catch(()=>{});return result; } };
     return { db, api };
   }
   let db, env;
@@ -42,9 +42,9 @@ try {
   function hold(){db.exec('UPDATE fallback_dispatch SET until_ms='+ (Date.now()+120000));}
   function caps(values){db.prepare('UPDATE users SET permissions=? WHERE id=2').run(values===null?null:JSON.stringify(values));}
   function customer(phone='09123334444',nickname='لقب مشترک'){return Number(db.prepare("INSERT INTO users(name,phone,nickname,role,sms_opt_in) VALUES('مشتری آزمون',?,?,'customer',0)").run(phone,nickname).lastInsertRowid);}
-  async function request(path,{role='admin',anonymous=false,method='GET',body,origin,cookie:providedCookie}={}){
+  async function request(path,{role='admin',anonymous=false,method='GET',body,origin,ip,cookie:providedCookie}={}){
     const cookie=providedCookie??'cc_session='+await m.createToken(env.JWT_SECRET,{id:role==='admin'?1:2,role,name:'آزمون'});
-    const tasks=[];const r=await m.worker.fetch(new Request('https://app.test'+path,{method,headers:{'Content-Type':'application/json','CF-Connecting-IP':'198.51.100.'+(++requestSequence%250),...(!anonymous?{Cookie:cookie}:{}),...(origin?{Origin:origin}:{})},...(body===undefined?{}:{body:JSON.stringify(body)})}),env,{waitUntil:p=>tasks.push(p)});
+    const tasks=[];const r=await m.worker.fetch(new Request('https://app.test'+path,{method,headers:{'Content-Type':'application/json','CF-Connecting-IP':ip??'198.51.100.'+(++requestSequence%250),...(!anonymous?{Cookie:cookie}:{}),...(origin?{Origin:origin}:{})},...(body===undefined?{}:{body:JSON.stringify(body)})}),env,{waitUntil:p=>tasks.push(p)});
     const text=await r.text();let data;try{data=JSON.parse(text);}catch{}
     await Promise.all(tasks);return {r,data,text};
   }
@@ -222,6 +222,77 @@ try {
     });
     await test('removing dual access with an open shift requires closing shift and preserves the customer',async()=>{
       reset();const id=await linkCustomer();db.prepare("INSERT INTO shifts(staff_id,staff_name) VALUES(?,?)").run(id,'مشتری پرسنلی');const result=await request('/api/admin/staff/'+id,{method:'DELETE'});assert.equal(result.r.status,409);assert.equal(result.data.code,'OPEN_SHIFT');assert.equal(db.prepare('SELECT staff_role FROM users WHERE id=?').get(id).staff_role,'staff');
+    });
+    await test('admin-first ignores live SMS credentials and forwards to both saved admin channels',async()=>{
+      reset();const id=customer();await configured({deliveryMode:'admin',enabled:false});const result=await m.sendSms(env,{...m.DEFAULT_SETTINGS,sms_enabled:1,sms_provider:'smsir',sms_api_key:'secret-api-key',sms_sender:'3000000000'},{phone:'09123334444',userId:id,type:'invoice',message:'پیام زیبا برای مشتری'});assert.equal(result.status,'pending');assert.equal(calls.length,0);assert.equal(rows().length,2);assert(rows().every(j=>j.reason==='admin_handoff'));assert(rows()[0].handoff_key);assert.equal(rows()[0].handoff_key,rows()[1].handoff_key);
+    });
+    await test('admin-only campaign never falls through to provider after mode changes',async()=>{
+      reset();const id=customer();await configured({deliveryMode:'sms'});const r=await m.sendSms(env,{...m.DEFAULT_SETTINGS,sms_provider:'smsir',sms_api_key:'secret-api-key',sms_sender:'3000000000'},{userId:id,phone:'09123334444',type:'birthday',message:'تولد',adminOnly:true});assert.equal(r.status,'skipped');assert.equal(calls.length,0);
+    });
+    await test('admin-mode configuration validation is atomic and requires key, target and valid mode',async()=>{
+      reset();for(const body of [{enabled:false,deliveryMode:'admin',channels:[]},{enabled:false,deliveryMode:'invalid',channels:[]}])await assert.rejects(()=>m.saveFallbackConfig(env,body));assert.equal(db.prepare("SELECT COUNT(*) n FROM settings WHERE key='sms_fallback_config'").get().n,0);
+    });
+    await test('switching away from admin mode cancels pending handoff instead of sending to customer',async()=>{
+      reset();await configured({deliveryMode:'admin'});await m.enqueueFallback(env,{...params,type:'welcome'},'admin_handoff');await configured({deliveryMode:'sms'});unlock();await m.processFallbackQueue(env);assert.equal(rows().filter(r=>r.status==='sent').length,0);assert.equal(calls.length,0);
+    });
+    await test('human declaration marks both channel copies but never claims provider/customer delivery',async()=>{
+      reset();const id=customer();await configured({deliveryMode:'admin'});const ids=await m.enqueueFallback(env,{...params,userId:id,type:'welcome'},'admin_handoff');hold();assert.equal((await m.fallbackHistory(env)).manualTodo,1);
+      const no=await post('/api/admin/fallback/'+ids[0]+'/forwarded',{});assert.equal(no.r.status,400);assert.equal((await post('/api/admin/fallback/'+ids[0]+'/forwarded',{confirmSent:true},{role:'staff'})).r.status,403);
+      const yes=await post('/api/admin/fallback/'+ids[0]+'/forwarded',{confirmSent:true});assert.equal(yes.r.status,200);assert(rows().every(j=>!!j.manual_sent_at&&j.status==='pending'));assert.equal((await m.fallbackHistory(env)).manualTodo,0);assert.equal((await m.fallbackHistory(env,1,'','','done')).total,2);assert.equal((await m.fallbackHistory(env,1,'','','todo')).total,0);
+    });
+    await test('OTP and internal reports cannot be marked as manually delivered to customer',async()=>{
+      reset();await configured({deliveryMode:'admin',notifyEnabled:true});hold();for(const type of ['otp','report_invoice']){const ids=await m.enqueueFallback(env,{...params,type},type==='otp'?'admin_handoff':'event');assert.equal((await post('/api/admin/fallback/'+ids[0]+'/forwarded',{confirmSent:true})).r.status,400);}
+    });
+    await test('archive customer retains invoices, coupon, points and rejects new sale for inactive customer',async()=>{
+      reset();const id=customer();await m.recordInvoice(env,m.DEFAULT_SETTINGS,{userId:id,registeredBy:2,items:[],amount:10000,clientRequestId:'archive-keep'});const before=db.prepare('SELECT * FROM invoices').all();db.prepare("INSERT INTO coupons(code,user_id,value) VALUES('KEEP',?,10)").run(id);const r=await request('/api/admin/customers/'+id,{method:'DELETE'});assert.equal(r.r.status,200);assert.equal(r.data.data.archived,true);assert.equal(r.data.data.deleted,false);assert.deepEqual(db.prepare('SELECT * FROM invoices').all(),before);assert.equal(db.prepare('SELECT COUNT(*) n FROM coupons WHERE user_id=?').get(id).n,1);assert.equal(db.prepare('SELECT is_active FROM users WHERE id=?').get(id).is_active,0);assert.equal((await m.recordInvoice(env,m.DEFAULT_SETTINGS,{userId:id,registeredBy:2,items:[],amount:20000})).ok,false);
+    });
+    await test('racing one-use coupon produces one sale only, no extra points or coupon overuse',async()=>{
+      reset();const id=customer();db.prepare("INSERT INTO coupons(code,user_id,value,max_uses) VALUES('RACE',?,20,1)").run(id);const input={userId:id,registeredBy:2,items:[],amount:10000,couponCode:'RACE'};const results=await Promise.all([m.recordInvoice(env,m.DEFAULT_SETTINGS,{...input,clientRequestId:'race-a'}),m.recordInvoice(env,m.DEFAULT_SETTINGS,{...input,clientRequestId:'race-b'})]);assert.equal(results.filter(r=>r.ok).length,1);assert.equal(db.prepare('SELECT COUNT(*) n FROM invoices').get().n,1);assert.equal(db.prepare("SELECT used_count FROM coupons WHERE code='RACE'").get().used_count,1);assert.equal(db.prepare('SELECT COUNT(*) n FROM operation_assertions').get().n,0);
+    });
+    await test('coupon validation is repeated inside write batch after stale preflight and rolls back entirely',async()=>{
+      reset();const id=customer();db.prepare("INSERT INTO coupons(code,user_id,value,max_uses) VALUES('LATE',?,20,1)").run(id);const prepare=env.DB.prepare.bind(env.DB);let changed=false;env.DB.prepare=q=>{const stmt=prepare(q);if(q.includes('SELECT * FROM coupons WHERE UPPER(code)')){const first=stmt.first;stmt.first=async(...args)=>{const row=await first(...args);if(!changed){changed=true;db.prepare("UPDATE coupons SET used_count=1 WHERE code='LATE'").run();}return row;};}return stmt;};const result=await m.recordInvoice(env,m.DEFAULT_SETTINGS,{userId:id,registeredBy:2,items:[],amount:10000,couponCode:'LATE'});assert.equal(result.ok,false);assert.equal(result.code,'COUPON_CONFLICT');assert.equal(db.prepare('SELECT COUNT(*) n FROM invoices').get().n,0);assert.equal(db.prepare('SELECT points FROM users WHERE id=?').get(id).points,0);
+    });
+    await test('OTP concurrent verification issues exactly one authenticated session',async()=>{
+      reset();await linkCustomer();const code='543210',hash=await m.hashOtp(code,staffInput.phone,env.JWT_SECRET);db.prepare("INSERT INTO otp_codes(phone,code_hash,expires_at) VALUES(?,?,datetime('now','+5 minutes'))").run(staffInput.phone,hash);const results=await Promise.all([post('/api/auth/otp/verify',{phone:staffInput.phone,code},{anonymous:true}),post('/api/auth/otp/verify',{phone:staffInput.phone,code},{anonymous:true})]);assert.equal(results.filter(r=>r.r.status===200).length,1);assert.equal(results.filter(r=>r.r.headers.has('set-cookie')).length,1);
+    });
+    await test('birthday campaign prepares more than six recipients through resumable bounded batches',async()=>{
+      reset();await configured({deliveryMode:'admin'});for(let i=0;i<9;i++)db.prepare("INSERT INTO users(name,phone,birth_date,role,sms_opt_in) VALUES('تولد صف',?,?,'customer',1)").run('091255500'+String(i).padStart(2,'0'),m.todayISO());
+      env.DB.queries=0;await m.startAdminCampaign(env,m.DEFAULT_SETTINGS,'birthday');assert(env.DB.queries<=50,'first batch queries '+env.DB.queries);
+      for(let i=0;i<8;i++){env.DB.queries=0;const running=await m.resumeAdminCampaign(env);assert(env.DB.queries<=50,'resume queries '+env.DB.queries);if(!running)break;}
+      assert.equal(rows().filter(j=>j.type==='birthday').length,18);assert.equal(db.prepare("SELECT queued FROM campaign_progress WHERE job='birthday'").get().queued,9);assert.equal(db.prepare("SELECT status FROM campaign_progress WHERE job='birthday'").get().status,'done');assert.equal(db.prepare("SELECT COUNT(*) n FROM coupons WHERE reason='birthday'").get().n,9);assert.equal(calls.length,0);
+    });
+    await test('campaign cursor failure can resume without duplicate handoff or duplicate birthday coupon',async()=>{
+      reset();await configured({deliveryMode:'admin'});for(let i=0;i<4;i++)db.prepare("INSERT INTO users(name,phone,birth_date,role,sms_opt_in) VALUES('بازیابی صف',?,?,'customer',1)").run('091266600'+String(i).padStart(2,'0'),m.todayISO());
+      const prepare=env.DB.prepare.bind(env.DB);let inject=true;env.DB.prepare=q=>{const stmt=prepare(q);if(q.includes('SET cursor=')&&inject){stmt.run=async()=>{inject=false;throw Error('test checkpoint failure');};}return stmt;};
+      await m.startAdminCampaign(env,m.DEFAULT_SETTINGS,'birthday');db.exec('UPDATE campaign_progress SET until_ms=0');for(let i=0;i<5;i++)await m.resumeAdminCampaign(env);
+      assert.equal(rows().length,8);assert.equal(db.prepare("SELECT COUNT(*) n FROM coupons WHERE reason='birthday'").get().n,4);assert.equal(db.prepare('SELECT status FROM campaign_progress').get().status,'done');assert.equal(db.prepare('SELECT queued FROM campaign_progress').get().queued,4);
+    });
+    await test('churn checkpoint rollback retains correct queued count and throttle on resume',async()=>{
+      reset();await configured({deliveryMode:'admin'});for(let i=0;i<4;i++)db.prepare("INSERT INTO users(name,phone,last_visit_date,role,sms_opt_in) VALUES('یادآوری',?,datetime('now','-90 days'),'customer',1)").run('091277700'+String(i).padStart(2,'0'));const prepare=env.DB.prepare.bind(env.DB);let inject=true;env.DB.prepare=q=>{const stmt=prepare(q);if(q.includes('SET cursor=')&&inject){stmt.run=async()=>{inject=false;throw Error('test churn checkpoint');};}return stmt;};await m.startAdminCampaign(env,m.DEFAULT_SETTINGS,'churn');assert.equal(db.prepare('SELECT COUNT(*) n FROM users WHERE last_churn_sms_at IS NOT NULL').get().n,0);db.exec('UPDATE campaign_progress SET until_ms=0');for(let i=0;i<5;i++)await m.resumeAdminCampaign(env);assert.equal(rows().length,8);assert.equal(db.prepare('SELECT queued FROM campaign_progress').get().queued,4);assert.equal(db.prepare('SELECT COUNT(*) n FROM users WHERE last_churn_sms_at IS NOT NULL').get().n,4);
+    });
+    await test('expired and cancelled messages remain in history but not the current manual work queue',async()=>{
+      reset();await configured({deliveryMode:'admin'});await m.enqueueFallback(env,{...params,type:'welcome'},'admin_handoff');db.exec("UPDATE fallback_jobs SET expires_at=0");assert.equal((await m.fallbackHistory(env)).total,2);assert.equal((await m.fallbackHistory(env)).manualTodo,0);assert.equal((await m.fallbackHistory(env,1,'','','todo')).total,0);
+    });
+    await test('new templates contain no invented churn discount and referral message uses real placeholders',async()=>{
+      assert(!m.DEFAULT_SETTINGS.sms_templates.churn.includes('۱۰٪'));assert(m.DEFAULT_SETTINGS.sms_templates.birthday.includes('{percent}'));assert(m.DEFAULT_SETTINGS.sms_templates.redeem.includes('{code}'));
+    });
+    await test('interrupted correction is visible, second replacement is refused, explicit completion is idempotent',async()=>{
+      reset();const id=customer();const input={userId:id,registeredBy:1,items:[],amount:10000};const original=await m.recordInvoice(env,m.DEFAULT_SETTINGS,{...input,clientRequestId:'orig-review'});const replacement=await m.recordInvoice(env,m.DEFAULT_SETTINGS,{...input,amount:20000,replacesInvoiceId:original.invoiceId,clientRequestId:'new-review',deferReceipt:true});assert(replacement.ok);
+      const second=await m.recordInvoice(env,m.DEFAULT_SETTINGS,{...input,replacesInvoiceId:original.invoiceId,clientRequestId:'duplicate-replacement'});assert.equal(second.ok,false);assert.equal(second.code,'CORRECTION_PENDING_REVIEW');const checks=await request('/api/admin/system/checks');assert.equal(checks.data.data.corrections.length,1);
+      const path='/api/admin/invoices/'+original.invoiceId+'/complete-correction';assert.equal((await post(path,{})).r.status,400);assert.equal((await post(path,{confirm:true},{role:'staff'})).r.status,403);assert.equal((await post(path,{confirm:true})).r.status,200);const again=await post(path,{confirm:true});assert.equal(again.r.status,200);assert(again.data.data.duplicate);assert.equal(db.prepare('SELECT COUNT(*) n FROM invoices WHERE voided_at IS NULL').get().n,1);assert.equal((await request('/api/admin/system/checks')).data.data.corrections.length,0);
+    });
+    await test('void claim and reversal are one transaction even when the reversal fails',async()=>{
+      reset();const id=customer();const sale=await m.recordInvoice(env,m.DEFAULT_SETTINGS,{userId:id,registeredBy:1,items:[],amount:10000,clientRequestId:'void-atomic'});const points=db.prepare('SELECT points FROM users WHERE id=?').get(id).points;const prepare=env.DB.prepare.bind(env.DB);env.DB.prepare=q=>{const statement=prepare(q);if(q.includes('SET points = MAX'))statement.run=async()=>{throw Error('test reversal failure');};return statement;};const r=await post('/api/admin/invoices/'+sale.invoiceId+'/void',{reason:'آزمون تراکنش'});assert.equal(r.r.status,409);assert.equal(db.prepare('SELECT voided_at FROM invoices WHERE id=?').get(sale.invoiceId).voided_at,null);assert.equal(db.prepare('SELECT points FROM users WHERE id=?').get(id).points,points);
+    });
+    await test('durable personnel login limit survives memory-bucket resets',async()=>{
+      reset();const ip='203.0.113.88',phone='09120000000';for(let i=0;i<20;i++){m.resetRateLimit('login:'+ip+':'+phone);const r=await post('/api/auth/login',{phone,password:'wrong-test'},{anonymous:true,ip});assert.equal(r.r.status,401,r.text);}m.resetRateLimit('login:'+ip+':'+phone);const blocked=await post('/api/auth/login',{phone,password:'wrong-test'},{anonymous:true,ip});assert.equal(blocked.r.status,429);assert(blocked.r.headers.get('Retry-After'));
+    });
+    await test('private upgrade backup restores actual users, invoices, coupons and sequences into an empty SQLite DB',async()=>{
+      reset();const id=customer();await m.recordInvoice(env,m.DEFAULT_SETTINGS,{userId:id,registeredBy:1,items:[],amount:12300,clientRequestId:'restore-real'});db.prepare("INSERT INTO coupons(code,user_id,value) VALUES('RESTORE',?,15)").run(id);const backup=await request('/admin/export/backup.json?scope=upgrade');const snapshot=JSON.parse(backup.text);const restored=new DatabaseSync(':memory:');
+      try{restored.exec('PRAGMA foreign_keys=OFF');for(const row of snapshot.schema.filter(s=>s.type==='table'))restored.exec(row.sql);for(const [table,items] of Object.entries(snapshot.data)){for(const item of items){const cols=Object.keys(item);restored.prepare('INSERT INTO "'+table.replaceAll('"','""')+'" ('+cols.map(c=>'"'+c.replaceAll('"','""')+'"').join(',')+') VALUES('+cols.map(()=>'?').join(',')+')').run(...cols.map(k=>item[k]));}}for(const row of snapshot.schema.filter(s=>s.type!=='table'))restored.exec(row.sql);restored.exec('DELETE FROM sqlite_sequence');for(const row of snapshot.sequences)restored.prepare('INSERT INTO sqlite_sequence(name,seq) VALUES(?,?)').run(row.name,row.seq);for(const table of ['users','invoices','coupons','sms_logs'])assert.deepEqual(JSON.parse(JSON.stringify(restored.prepare('SELECT * FROM '+table+' ORDER BY id').all())),JSON.parse(JSON.stringify(db.prepare('SELECT * FROM '+table+' ORDER BY id').all())));assert.deepEqual(restored.prepare('PRAGMA foreign_key_check').all(),[]);}finally{restored.close();}
+    });
+    await test('production schema creates no demo account, public password or sample configuration',async()=>{
+      const sql=await readFile('schema-production.sql','utf8'),production=new DatabaseSync(':memory:');try{production.exec(sql);assert.equal(production.prepare('SELECT COUNT(*) n FROM users').get().n,0);assert.equal(production.prepare('SELECT COUNT(*) n FROM settings').get().n,0);assert(!sql.includes('Admin@'));assert(!sql.includes('Staff@'));assert.equal(production.prepare('SELECT COUNT(*) n FROM fallback_channel_limits').get().n,2);}finally{production.close();}
     });
     console.log(`\n${passed}/${passed} customer workflow checks passed (actual Worker/SQLite/WebCrypto, mocked providers).`);
   }finally{globalThis.fetch=originalFetch;console.warn=originalWarn;db?.close();}

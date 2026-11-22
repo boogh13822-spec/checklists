@@ -4,9 +4,31 @@ import { appShell } from './layout';
 /** Same compact panel is reused in Settings and the dedicated history page. */
 export const fallbackPanel = `
 <section id="fallback" class="glass rounded-3xl p-4 sm:p-5 scroll-mt-24 space-y-4">
-  <div><h2 class="font-bold text-base">پیام‌های ادمین</h2>
-    <p class="hint">یک‌بار مقصد را وصل کنید؛ گزارش‌های مدیریتی و پیامک‌های نیازمند ارسال دستی را جداگانه کنترل کنید.</p></div>
+  <div><h2 class="font-bold text-base">میز پیام‌های مشتری</h2>
+    <p class="hint">۱. دریافت در بله/تلگرام  ←  ۲. کپی متن و شماره  ←  ۳. ارسال دستی و ثبت انجام کار</p></div>
   <p id="fallback-state" class="rounded-xl bg-white/5 p-3 text-xs leading-6" role="status">در حال دریافت تنظیمات…</p>
+    <div class="border-t border-white/10 pt-4 space-y-3">
+    <div class="flex flex-wrap gap-3 items-center justify-between"><h3 class="font-bold text-sm">کارهای ارسال دستی</h3>
+      <button id="fallback-refresh" type="button" class="btn btn-ghost btn-sm">تازه‌سازی</button></div>
+    <label class="label" for="fallback-handoff">نمایش کارها</label><select id="fallback-handoff" class="field"><option value="">همهٔ پیام‌ها و گزارش‌ها</option><option value="todo">نیازمند ارسال دستی به مشتری</option><option value="done">ارسال دستی ثبت‌شده توسط مدیر</option></select>
+    <details class="rounded-xl border border-white/10 p-3"><summary class="cursor-pointer">آماده‌سازی کمپین‌های خودکار</summary><div id="campaign-progress" class="hint" role="status"></div></details>
+    <div id="fallback-stats" class="text-xs text-cream/60" aria-live="polite"></div>
+    <p class="hint">ارسال موفق یعنی تأیید API پیام‌رسان؛ خواندن پیام توسط ادمین یا رسیدن پیامک به مشتری را تأیید نمی‌کند.</p>
+    <div class="flex flex-wrap gap-2">
+      <label class="text-xs">وضعیت<select id="fallback-status" class="field mt-1"><option value="">همه</option><option value="failed">ناموفق</option><option value="pending">در صف</option><option value="processing">در حال ارسال</option><option value="sent">ارسال‌شده</option><option value="skipped">لغوشده</option><option value="expired">منقضی</option></select></label>
+      <label class="text-xs">مقصد<select id="fallback-channel" class="field mt-1"><option value="">هر دو</option><option value="telegram">تلگرام</option><option value="bale">بله</option></select></label>
+    </div>
+    <div id="fallback-history" class="space-y-3" aria-live="polite"></div>
+    <div class="flex gap-3 items-center">
+      <button id="fb-prev" type="button" class="btn btn-ghost btn-sm">قبلی</button><span id="fb-page" class="text-xs"></span><button id="fb-next" type="button" class="btn btn-ghost btn-sm">بعدی</button>
+      <a href="/admin/fallback" class="btn btn-ghost btn-sm">صفحه کامل تاریخچه</a>
+    </div>
+  </div>
+  <details id="fallback-connection" open class="rounded-2xl border border-white/10 p-4"><summary class="font-bold cursor-pointer">اتصال و روش ارسال (یک‌بار تنظیم کنید)</summary><div class="space-y-4 mt-4">
+  <label class="label" for="fallback-mode">روش ارسال پیام‌های مشتری</label>
+  <select id="fallback-mode" class="field"><option value="admin">پیشنهادی: فقط به ادمین در بله و تلگرام؛ ارسال نهایی دستی</option><option value="sms">حالت قبلی: پنل پیامک با مسیر جایگزین</option></select>
+  <button id="fallback-recommend" type="button" class="btn btn-ghost btn-sm">انتخاب حالت پیشنهادی ادمین</button>
+  <p class="hint">در حالت ادمین، حتی با داشتن اعتبار sms.ir هیچ پیامکی خودکار به مشتری نمی‌رود. پس از انتخاب، ذخیره کنید.</p>
   <div class="grid sm:grid-cols-2 gap-3">
     <label class="rounded-2xl border border-white/10 p-4 flex gap-3 items-start">
       <input id="fallback-notify" type="checkbox" role="switch" class="mt-1" />
@@ -58,26 +80,13 @@ export const fallbackPanel = `
     <button id="fallback-reload" type="button" class="btn btn-ghost btn-sm">بازخوانی تنظیمات</button>
     <span id="fallback-dirty" class="text-xs text-amber-300" aria-live="polite"></span>
   </div>
+  </div></details>
   <details class="rounded-2xl border border-white/10 p-4"><summary class="font-bold cursor-pointer text-sm">نوشتن و ارسال پیام دستی به ادمین</summary><div class="space-y-3 mt-4">
     <p class="hint">فقط به مقصدهای ذخیره‌شدهٔ مدیر ارسال می‌شود؛ پیامک به مشتری نیست. رسیدن به API هم تأیید خواندن پیام نیست.</p>
     <fieldset id="fb-manual-fields" class="space-y-3"><label class="label" for="fb-manual-channel">پیام‌رسان</label><select id="fb-manual-channel" class="field"><option value="both">هر دو مقصد ذخیره‌شده</option><option value="telegram">فقط تلگرام</option><option value="bale">فقط بله</option></select><label class="label" for="fb-manual-phone">شمارهٔ مرتبط (اختیاری؛ برای کپی و ارسال دستی SMS)</label><input id="fb-manual-phone" type="tel" class="field" dir="ltr" maxlength="13" /><label class="label" for="fb-manual-text">متن کامل</label><textarea id="fb-manual-text" class="field" rows="5" maxlength="2000"></textarea><p class="hint">حداکثر ۲۰۰۰ کاراکتر؛ متن ناقص ارسال نمی‌شود.</p><label class="flex gap-2 text-xs"><input id="fb-manual-confirm" type="checkbox" /> می‌دانم این پیام به ادمین می‌رسد، نه به مشتری</label></fieldset>
     <button id="fb-manual-send" type="button" class="btn btn-primary btn-sm">ثبت در صف ارسال دستی</button><p id="fb-manual-result" class="hint whitespace-pre-line" role="status" aria-live="polite"></p>
   </div></details>
-  <div class="border-t border-white/10 pt-4 space-y-3">
-    <div class="flex flex-wrap gap-3 items-center justify-between"><h3 class="font-bold text-sm">تاریخچه ارسال</h3>
-      <button id="fallback-refresh" type="button" class="btn btn-ghost btn-sm">تازه‌سازی</button></div>
-    <div id="fallback-stats" class="text-xs text-cream/60" aria-live="polite"></div>
-    <p class="hint">ارسال موفق یعنی تأیید API پیام‌رسان؛ خواندن پیام توسط ادمین یا رسیدن پیامک به مشتری را تأیید نمی‌کند.</p>
-    <div class="flex flex-wrap gap-2">
-      <label class="text-xs">وضعیت<select id="fallback-status" class="field mt-1"><option value="">همه</option><option value="failed">ناموفق</option><option value="pending">در صف</option><option value="processing">در حال ارسال</option><option value="sent">ارسال‌شده</option><option value="skipped">لغوشده</option><option value="expired">منقضی</option></select></label>
-      <label class="text-xs">مقصد<select id="fallback-channel" class="field mt-1"><option value="">هر دو</option><option value="telegram">تلگرام</option><option value="bale">بله</option></select></label>
-    </div>
-    <div id="fallback-history" class="space-y-3" aria-live="polite"></div>
-    <div class="flex gap-3 items-center">
-      <button id="fb-prev" type="button" class="btn btn-ghost btn-sm">قبلی</button><span id="fb-page" class="text-xs"></span><button id="fb-next" type="button" class="btn btn-ghost btn-sm">بعدی</button>
-      <a href="/admin/fallback" class="btn btn-ghost btn-sm">صفحه کامل تاریخچه</a>
-    </div>
-  </div>
+
 </section>`;
 
 export const fallbackScripts = String.raw`
@@ -94,11 +103,11 @@ export const fallbackScripts = String.raw`
   function faDate(value){if(!value)return '—';var d=new Date(value.indexOf('T')<0?value.replace(' ','T')+'Z':value);return isNaN(d.getTime())?'—':d.toLocaleString('fa-IR',{timeZone:'Asia/Tehran'});}
   function report(e){toast(e.message||'ارتباط برقرار نشد؛ دوباره تلاش کنید.','error');}
   function setDirty(value){dirty=value;el('fallback-dirty').textContent=value?'تغییرات ذخیره نشده‌اند.':'';}
-  function state(config){el('fallback-state').textContent=!config.encryptionKeyConfigured?'کلید رمزنگاری تنظیم نیست. در Secrets ورکر FALLBACK_ENCRYPTION_KEY را طبق راهنما تنظیم کنید.':config.primaryActive?'اتصال پیامک اصلی تنظیم شده؛ گزارش مدیریت مستقل است و پیامک جایگزین فقط هنگام شکست ارسال استفاده می‌شود.':'پنل پیامکی خاموش یا ناقص است؛ برای ارسال دستی به ادمین، سوئیچ مربوط را روشن کنید.';}
+  function state(config){el('fallback-state').textContent=config.deliveryMode==='admin'&&config.channels.length?'حالت ادمین فعال است: برنامه فقط در بله/تلگرام به شما پیام می‌دهد؛ ارسال به مشتری با خودتان است. '+(!config.encryptionKeyConfigured?'کلید رمزنگاری را بررسی کنید.':'شماره و متن را جدا کپی کنید و پس از ارسال، انجام کار را ثبت کنید.'):!config.encryptionKeyConfigured?'کلید رمزنگاری تنظیم نیست. در Secrets ورکر FALLBACK_ENCRYPTION_KEY را طبق راهنما تنظیم کنید.':config.primaryActive?'اتصال پیامک اصلی تنظیم شده؛ گزارش مدیریت مستقل است و پیامک جایگزین فقط هنگام شکست ارسال استفاده می‌شود.':'پنل پیامکی خاموش یا ناقص است؛ برای ارسال دستی به ادمین، سوئیچ مربوط را روشن کنید.';}
   function selectedFields(){channels.forEach(function(ch){el('fb-'+ch+'-fields').classList.toggle('hidden',!el('fb-'+ch+'-selected').checked);});}
   async function loadConfig(){
     var c=await api('/api/admin/fallback');lastConfig=c;
-    el('fallback-enabled').checked=c.enabled;el('fallback-notify').checked=!!c.notifyEnabled;
+    if(!ready&&c.deliveryMode==='admin')el('fallback-handoff').value='todo';el('fallback-mode').value=c.deliveryMode||'sms';el('fallback-connection').open=!(c.deliveryMode==='admin'&&c.channels.length);el('fallback-enabled').checked=c.enabled;el('fallback-notify').checked=!!c.notifyEnabled;
     el('fallback-invoices').checked=c.notifyInvoices!==false;el('fallback-actions').checked=c.notifyActions!==false;el('fallback-errors').checked=c.notifyErrors!==false;
     channels.forEach(function(ch){
       var row=c.channels.find(function(x){return x.channel===ch;});
@@ -111,7 +120,7 @@ export const fallbackScripts = String.raw`
     });
     selectedFields();state(c);ready=true;setDirty(false);el('fallback-save').disabled=false;
   }
-  function payload(){return{enabled:el('fallback-enabled').checked,notifyEnabled:el('fallback-notify').checked,notifyInvoices:el('fallback-invoices').checked,notifyActions:el('fallback-actions').checked,notifyErrors:el('fallback-errors').checked,
+  function payload(){return{deliveryMode:el('fallback-mode').value,enabled:el('fallback-enabled').checked,notifyEnabled:el('fallback-notify').checked,notifyInvoices:el('fallback-invoices').checked,notifyActions:el('fallback-actions').checked,notifyErrors:el('fallback-errors').checked,
     channels:channels.filter(function(ch){return el('fb-'+ch+'-selected').checked;}).map(function(ch){return{channel:ch,chatId:el('fb-'+ch+'-chat').value.trim(),token:el('fb-'+ch+'-token').value.trim(),clearToken:el('fb-'+ch+'-clear').checked};})};}
   async function save(){
     if(!ready)throw new Error('ابتدا تنظیمات را بازخوانی کنید.');
@@ -119,16 +128,17 @@ export const fallbackScripts = String.raw`
     if(lastConfig&&lastConfig.channels.some(function(c){return !data.channels.some(function(n){return n.channel===c.channel;});})&&!window.confirm('حذف مقصد، پیام‌های معلق آن را لغو می‌کند. ادامه می‌دهید؟'))throw new Error('حذف مقصد لغو شد.');
     await api('/api/admin/fallback',{method:'PUT',body:data});await loadConfig();
   }
+  async function campaigns(){try{var data=await api('/api/admin/campaigns');el('campaign-progress').textContent=data.items.length?data.items.map(function(row){return({birthday:'تولد',churn:'یادآوری دیدار',weather:'آب‌وهوا'}[row.job]||row.job)+' · '+({running:'در حال آماده‌سازی',paused:'متوقف؛ نیازمند بررسی',done:'آماده‌سازی کامل',expired:'مهلت روز تمام شد'}[row.status]||row.status)+' · '+fa(row.queued)+' پیام آماده'+(row.error?' — '+row.error:'');}).join(' | '):'هنوز کمپینی در حالت ادمین شروع نشده است.';}catch{el('campaign-progress').textContent='وضعیت کمپین دریافت نشد؛ دوباره تازه‌سازی کنید.';}}
   function schedule(delay){clearTimeout(timer);timer=setTimeout(function(){if(!document.hidden)history().catch(report);else schedule(20000);},delay);}
   async function history(){
     if(historyBusy){historyAgain=true;return;}historyBusy=true;
     try{
-      var q=new URLSearchParams({page:String(page),status:el('fallback-status').value,channel:el('fallback-channel').value});
+      var q=new URLSearchParams({page:String(page),status:el('fallback-status').value,channel:el('fallback-channel').value,handoff:el('fallback-handoff').value});
       var data=await api('/api/admin/fallback/history?'+q.toString());
-      if(q.get('page')!==String(page)||q.get('status')!==el('fallback-status').value||q.get('channel')!==el('fallback-channel').value){historyAgain=true;return;}
+      if(q.get('page')!==String(page)||q.get('status')!==el('fallback-status').value||q.get('channel')!==el('fallback-channel').value||q.get('handoff')!==el('fallback-handoff').value){historyAgain=true;return;}
       var maxPage=Math.max(1,Math.ceil(data.total/30));if(page>maxPage){page=maxPage;historyAgain=true;return;}
       var stats=data.stats||{};
-      el('fallback-stats').textContent='آمار کل — در صف: '+fa((stats.pending||0)+(stats.processing||0))+' | ارسال موفق: '+fa(stats.sent)+' | ناموفق: '+fa(stats.failed);
+      el('fallback-stats').textContent='نیازمند اقدام دستی: '+fa(data.manualTodo)+' | در صف ادمین: '+fa((stats.pending||0)+(stats.processing||0))+' | ارسال موفق: '+fa(stats.sent)+' | ناموفق: '+fa(stats.failed);
       var labels={pending:'در صف',processing:'در حال ارسال',sent:'ارسال موفق به مقصد',failed:'ناموفق',skipped:'لغوشده',expired:'مهلت تمام شده'};
       var types={manual:'پیام دستی مدیر',report_error:'هشدار خطای ارسال',report_invoice:'گزارش فاکتور',report_action:'گزارش عملیات',invoice:'پیامک رسید خرید',otp:'کد ورود محرمانه',admin:'تست اتصال',welcome:'خوش‌آمد',birthday:'تولد',churn:'یادآوری حضور',weather:'آب‌وهوا',redeem:'تبدیل امتیاز',referral:'معرفی'};
       lastHistoryItems=data.items;
@@ -142,6 +152,8 @@ export const fallbackScripts = String.raw`
           (phone?'<button type="button" data-copy-phone="'+esc(phone)+'" class="font-mono select-all" dir="ltr" title="کپی شماره">'+esc(phone)+' ⧉</button>':'')+
           (j.type==='otp'?'<p class="text-amber-200">متن و شماره کد ورود در تاریخچه نمایش داده نمی‌شود.</p>':text?'<p class="whitespace-pre-wrap break-words">'+esc(text.slice(0,150))+(text.length>150?'…':'')+'</p>':'<p class="hint">محتوا در دسترس نیست؛ کلید رمزنگاری را بررسی کنید.</p>')+
           (j.type!=='otp'&&text?'<button type="button" class="btn btn-ghost btn-sm" data-copy-message="'+esc(j.id)+'">کپی متن کامل برای ارسال دستی</button>':'')+
+          (j.expires_at<=Date.now()?'<p class="text-amber-200">مهلت این پیام تمام شده است؛ پیش از ارسال، اعتبار محتوا را بررسی کنید.</p>':'')+
+          (j.manual_sent_at?'<p class="text-emerald-300">✓ ارسال دستی توسط مدیر ثبت شد · '+esc(faDate(j.manual_sent_at))+' (اظهار مدیر، نه رسید تحویل)</p>':phone&&text&&j.type!=='otp'&&!j.type.startsWith('report_')&&j.reason!=='test'?'<button type="button" class="btn btn-primary btn-sm" data-manual-done="'+esc(j.id)+'">به مشتری فرستادم؛ ثبت انجام کار</button>':'')+
           (j.error?'<p class="text-amber-200 whitespace-pre-wrap break-words">'+esc(j.error)+'</p>':'')+
           '<details><summary class="cursor-pointer text-cream/50">جزئیات'+(text.length>150?' و متن کامل':'')+'</summary><div class="mt-2 space-y-2">'+
           (text.length>150?'<pre class="whitespace-pre-wrap break-words font-sans">'+esc(text)+'</pre>':'')+
@@ -155,7 +167,7 @@ export const fallbackScripts = String.raw`
   }
   el('fallback-save').addEventListener('click',async function(){if(busy)return;busy=true;lockConfig(true);setLoading(this,true,'در حال ذخیره…');try{await save();toast('تنظیمات ذخیره شد.','success');await history();}catch(e){report(e);}finally{busy=false;lockConfig(false);setLoading(this,false);}});
   el('fallback-reload').addEventListener('click',async function(){if(busy)return;if(dirty&&!window.confirm('تغییرات ذخیره‌نشده کنار گذاشته شوند؟'))return;busy=true;lockConfig(true);try{await loadConfig();}catch(e){report(e);}finally{busy=false;lockConfig(false);}});
-  ['fallback-enabled','fallback-notify','fallback-invoices','fallback-actions','fallback-errors'].forEach(function(id){el(id).addEventListener('change',function(){setDirty(true);});});
+  ['fallback-mode','fallback-enabled','fallback-notify','fallback-invoices','fallback-actions','fallback-errors'].forEach(function(id){el(id).addEventListener('change',function(){setDirty(true);});});
   channels.forEach(function(ch){
     ['selected','chat','token','clear'].forEach(function(key){el('fb-'+ch+'-'+key).addEventListener(key==='chat'||key==='token'?'input':'change',function(){setDirty(true);selectedFields();});});
     el('fb-'+ch+'-reveal').addEventListener('click',function(){var input=el('fb-'+ch+'-token');input.type=input.type==='password'?'text':'password';this.textContent=input.type==='password'?'نمایش':'مخفی';});
@@ -186,25 +198,29 @@ export const fallbackScripts = String.raw`
     catch(error){el('fb-manual-result').textContent=error.message;if(error.status===400||error.status===409)manualSnapshot=null;else el('fb-manual-result').textContent+=' همان دکمه را برای پیگیری همان درخواست بزنید؛ ارسال تازه نسازید.';}
     finally{busy=false;lockConfig(false);el('fb-manual-fields').disabled=!!manualSnapshot;setLoading(button,false);}
   });
+  el('fallback-recommend').addEventListener('click',function(){el('fallback-mode').value='admin';setDirty(true);toast('حالت ادمین انتخاب شد؛ مقصدها را بررسی و ذخیره کنید.','info');});
   el('fallback-history').addEventListener('click',async function(e){
+    var done=e.target.closest('[data-manual-done]');if(done){if(!await confirmAction({title:'ثبت ارسال دستی',message:'آیا متن را خودتان به شمارهٔ مشتری فرستاده‌اید؟ این ثبت به معنی تحویل یا خواندن پیام نیست.',confirmText:'بله، خودم فرستادم'}))return;setLoading(done,true);try{await api('/api/admin/fallback/'+encodeURIComponent(done.dataset.manualDone)+'/forwarded',{method:'POST',body:{confirmSent:true}});toast('انجام کار برای هر دو نسخهٔ پیام ثبت شد.','success');await history();}catch(error){report(error);}finally{setLoading(done,false);}return;}
+
     var messageCopy=e.target.closest('[data-copy-message]');if(messageCopy){var job=lastHistoryItems.find(function(item){return item.id===messageCopy.dataset.copyMessage;});if(job&&job.type!=='otp'&&job.content){try{await navigator.clipboard.writeText(job.content.message);toast('متن کامل کپی شد.','success');}catch(_){window.prompt('متن کامل پیام:',job.content.message);}}return;}
     var copy=e.target.closest('[data-copy-phone]');if(copy){try{await navigator.clipboard.writeText(copy.dataset.copyPhone);toast('شماره کپی شد.','success');}catch(_){window.prompt('شماره را کپی کنید:',copy.dataset.copyPhone);}return;}
     var btn=e.target.closest('[data-retry-id]');if(!btn)return;
     if(!window.confirm(btn.dataset.uncertain==='true'?'ممکن است پیام قبلاً تحویل شده باشد. خطر ارسال تکراری را می‌پذیرید؟':'خطای مقصد را برطرف کرده‌اید و پیام دوباره ارسال شود؟'))return;
     setLoading(btn,true,'در حال ثبت…');try{var r=await api('/api/admin/fallback/'+encodeURIComponent(btn.dataset.retryId)+'/retry',{method:'POST',body:{confirmDuplicateRisk:btn.dataset.uncertain==='true'}});toast(r.message,'success');await history();}catch(error){report(error);}finally{setLoading(btn,false);}
   });
-  ['fallback-status','fallback-channel'].forEach(function(id){el(id).addEventListener('change',function(){page=1;history().catch(report);});});
-  el('fallback-refresh').addEventListener('click',function(){history().catch(report);});
+  ['fallback-status','fallback-channel','fallback-handoff'].forEach(function(id){el(id).addEventListener('change',function(){page=1;history().catch(report);});});
+  el('fallback-refresh').addEventListener('click',function(){history().catch(report);campaigns();});
   el('fb-prev').addEventListener('click',function(){if(page>1)page--;history().catch(report);});el('fb-next').addEventListener('click',function(){page++;history().catch(report);});
   document.addEventListener('sms-settings-saved',function(){api('/api/admin/fallback').then(state).catch(report);});
   window.addEventListener('pagehide',function(){clearTimeout(timer);});
   window.addEventListener('beforeunload',function(e){if(dirty){e.preventDefault();e.returnValue='';}});
-  busy=true;lockConfig(true);loadConfig().catch(function(e){el('fallback-state').textContent='تنظیمات دریافت نشد؛ بازخوانی تنظیمات را بزنید.';report(e);}).finally(function(){busy=false;lockConfig(false);});
+  busy=true;lockConfig(true);loadConfig().then(function(){return history();}).catch(function(e){el('fallback-state').textContent='تنظیمات دریافت نشد؛ بازخوانی تنظیمات را بزنید.';report(e);}).finally(function(){busy=false;lockConfig(false);});
+  campaigns();
   history().catch(function(e){report(e);schedule(20000);});
 })();`;
 
 export function adminFallbackPage(settings: AppSettings, userName: string): string {
-  return appShell({ title:'پیام‌های ادمین',role:'admin',userName,active:'settings',
+  return appShell({ title:'پیام‌های ادمین',role:'admin',userName,active:'messages',
     body:`<div class="max-w-6xl mx-auto p-4 sm:p-6"><a href="/admin/settings" class="btn btn-ghost mb-4">بازگشت به تنظیمات</a>${fallbackPanel}</div>`,
     scripts:fallbackScripts,cafeName:settings.cafe_name });
 }

@@ -137,7 +137,7 @@ import { adminLogsCsv, adminLogsPage, adminReportsPage, reportsCsv } from './ui/
  * ========================================================================== */
 
 const app = new Hono<AppEnv>();
-const APP_BUILD = 'customer-staff-fixes-v7';
+const APP_BUILD = 'admin-handoff-v8';
 
 /**
  * منطقه‌ی زمانی از متغیر محیطی TZ_NAME (پیش‌فرض Asia/Tehran).
@@ -1042,6 +1042,16 @@ async function handleStaffLogin(c: Context<AppEnv>) {
   }
 
   const rateKey = `login:${clientKey(c)}:${phone}`;
+  const {dbRateLimit}=await import('./lib/otp');
+  const durableRate=await dbRateLimit(c.env.DB,'auth:'+rateKey,20,15*60);
+  if(!durableRate){
+    // Old DB recovery remains reachable before rate_limits exists; DB failures fail closed.
+    try{const ready=await c.env.DB.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='rate_limits'").first();
+      if(ready)return reject('کنترل امن ورود موقتاً در دسترس نیست؛ کمی بعد تلاش کنید.',503,'AUTH_DATABASE_UNAVAILABLE');
+    }catch{return reject('دیتابیس موقتاً در دسترس نیست؛ دوباره تلاش کنید.',503,'AUTH_DATABASE_UNAVAILABLE');}
+  }
+  if(durableRate && !durableRate.allowed){c.header('Retry-After',String(durableRate.retryAfter));return reject('تلاش‌های ورود زیاد است؛ ۱۵ دقیقه بعد دوباره تلاش کنید.',429,'RATE_LIMITED');}
+
   const rate = checkRateLimit(rateKey, 8, 15 * 60_000);
   if (!rate.allowed) {
     c.header('Retry-After', String(rate.retryAfter));
@@ -1939,6 +1949,29 @@ app.get('/api/admin/invoices/:id', requireApiRole('admin'), async (c) => {
  *   ۳) اگر مرحلهٔ ۲ شکست بخورد، فاکتور تازه خودکار باطل می‌شود تا هیچ‌وقت
  *      دو فاکتور معتبر برای یک خرید باقی نماند.
  */
+/** Read-only checks; repairing an interrupted correction always requires explicit admin consent. */
+app.get('/api/admin/system/checks',requireApiRole('admin'),async(c)=>{
+  const issues=await c.env.DB.prepare(`SELECT o.id AS original_id,r.id AS replacement_id,o.amount AS old_amount,r.amount AS new_amount
+    FROM invoices r JOIN invoices o ON o.id=r.replaces_invoice_id WHERE o.voided_at IS NULL AND r.voided_at IS NULL ORDER BY r.id LIMIT 20`).all();
+  return ok(c,{corrections:issues.results??[],note:'بررسی فقط خواندنی است؛ هیچ فاکتوری خودکار تغییر نمی‌کند.'});
+});
+app.post('/api/admin/invoices/:id/complete-correction',requireApiRole('admin'),async(c)=>{
+  let body;try{body=await c.req.json();}catch{return fail(c,'درخواست نامعتبر است.',400,'BAD_JSON');}
+  if(body?.confirm!==true)return fail(c,'تکمیل اصلاح ثبت‌شده را تأیید کنید.',400,'CONFIRM_REQUIRED');
+  const id=toPositiveInt(c.req.param('id'),0);
+  const original=await c.env.DB.prepare('SELECT * FROM invoices WHERE id=?').bind(id).first<InvoiceRow>();
+  if(!original)return fail(c,'فاکتور اصلی موجود نیست.',404,'NOT_FOUND');
+  if(original.voided_at)return ok(c,{completed:true,duplicate:true});
+  const replacements=await c.env.DB.prepare('SELECT id FROM invoices WHERE replaces_invoice_id=? AND voided_at IS NULL LIMIT 2').bind(id).all<{id:number}>();
+  if(replacements.results?.length!==1)return fail(c,'تعداد جایگزین‌ها قابل بازیابی خودکار نیست؛ بررسی انسانی لازم است.',409,'MANUAL_REVIEW_REQUIRED');
+  const replacementId=replacements.results[0].id;
+  const result=await voidInvoice(c.env,c.get('settings'),id,c.get('user')!.uid,{reason:'تکمیل اصلاح متوقف‌شده؛ جایگزین #'+replacementId,replacementInvoiceId:replacementId,allowClosedShift:body.allowClosedShift===true});
+  if(!result.ok)return fail(c,result.error,409,result.code);
+  await sendInvoiceReceipt(c.env,c.get('settings'),replacementId);
+  await audit(c,'invoice_correct',{targetType:'invoice',targetId:id,details:'اصلاح نیمه‌کاره با تأیید مدیر تکمیل شد؛ جایگزین #'+replacementId});
+  return ok(c,{completed:true,replacementId});
+});
+
 app.post('/api/admin/invoices/:id/correct', requireApiRole('admin'), async (c) => {
   const user = c.get('user')!;
   const settings = c.get('settings');
@@ -2146,7 +2179,7 @@ app.delete('/api/admin/customers/:id', requireApiRole('admin'), async (c) => {
   if (personnelRole(user)) return fail(c,'این مشتری دسترسی پرسنلی دارد؛ ابتدا دسترسی را از بخش کارکنان بردارید.',409,'CUSTOMER_HAS_STAFF_ACCESS');
 
   // فاکتورها، کدهای تخفیف و لاگ‌های پیامک طبق کلیدهای خارجی مدیریت می‌شوند
-  const removed = await c.env.DB.prepare("DELETE FROM users WHERE id = ? AND role = 'customer' AND staff_role IS NULL")
+  const removed = await c.env.DB.prepare("UPDATE users SET is_active=0,token_version=token_version+1 WHERE id = ? AND role = 'customer' AND staff_role IS NULL")
     .bind(id)
     .run();
   if (!removed.meta?.changes) return fail(c,'وضعیت حساب تغییر کرد؛ دوباره بررسی کنید.',409,'ACCOUNT_CHANGED');
@@ -2154,10 +2187,10 @@ app.delete('/api/admin/customers/:id', requireApiRole('admin'), async (c) => {
   await audit(c, 'customer_delete', {
     targetType: 'customer',
     targetId: id,
-    details: `مشتری «${user.name}» با شماره ${user.phone} حذف شد.`,
+    details: `مشتری «${user.name}» بایگانی شد؛ سوابق مالی محفوظ است.`,
   });
 
-  return ok(c, { deleted: true, id });
+  return ok(c, { deleted: false, archived: true, id });
 });
 
 app.post('/api/admin/sms/test', requireApiRole('admin'), async (c) => {
@@ -2297,6 +2330,15 @@ app.post('/api/admin/fallback/diagnose', requireApiRole('admin'), async (c) => {
 });
 
 /** Explicit manual send to SAVED admin destinations, not an SMS or arbitrary chat. */
+app.post('/api/admin/fallback/:id/forwarded', requireApiRole('admin'), async(c)=>{
+  let body;try{body=await c.req.json();}catch{return fail(c,'درخواست نامعتبر است.',400,'BAD_JSON');}
+  if(body?.confirmSent!==true)return fail(c,'ارسال دستی واقعی به مشتری را تأیید کنید.',400,'CONFIRM_REQUIRED');
+  try{const {markManualSent}=await import('./lib/fallback');await markManualSent(c.env,c.req.param('id'),c.get('user')!.uid);}
+  catch{return fail(c,'این پیام قابل ثبتِ ارسال دستی نیست؛ کد ورود، گزارش یا محتوای ناموجود را نمی‌توان تأیید کرد.',400,'NOT_MANUAL_MESSAGE');}
+  await logAdminAction(c.env.DB,{adminId:c.get('user')!.uid,adminName:c.get('user')!.name,action:'manual_customer_sent',targetType:'message',targetId:c.req.param('id'),details:'اظهار مدیر: متن به مشتری ارسال شد؛ تأیید تحویل یا خواندن نیست.'});
+  return ok(c,{recorded:true});
+});
+
 app.post('/api/admin/fallback/send', requireApiRole('admin'), async (c) => {
   const {dbRateLimit} = await import('./lib/otp');
   const rate=await dbRateLimit(c.env.DB,'fallback:manual:'+c.get('user')!.uid,3,60);
@@ -2357,9 +2399,12 @@ app.post('/api/admin/fallback/:id/retry', requireApiRole('admin'), async (c) => 
   await audit(c, 'fallback_retry', { targetType:'message', targetId:id, details:`تلاش مجدد آگاهانه مدیر (بدون تغییر مالی). نوبت قبلی: ${previous.previousAttempts} تلاش؛ نتیجه: ${(previous.previousError ?? 'نامشخص').slice(0,200)}؛ پذیرش خطر تکرار: ${body?.confirmDuplicateRisk === true ? 'بله' : 'خیر'}.` });
   return ok(c, { message:'دوباره در صف قرار گرفت؛ نتیجه در تاریخچه مشخص می‌شود.' }, 202);
 });
+app.get('/api/admin/campaigns',requireApiRole('admin'),async(c)=>{
+  const rows=await c.env.DB.prepare('SELECT job,day,cursor,queued,scanned,status,error,updated_at FROM campaign_progress ORDER BY job').all();return ok(c,{items:rows.results??[]});
+});
 app.get('/api/admin/fallback/history', requireApiRole('admin'), async (c) => {
   const page = Math.min(10000, Math.max(1, toPositiveInt(c.req.query('page'), 1)));
-  return ok(c, await fallbackHistory(c.env, page, c.req.query('status') ?? '', c.req.query('channel') ?? ''));
+  return ok(c, await fallbackHistory(c.env, page, c.req.query('status') ?? '', c.req.query('channel') ?? '', c.req.query('handoff') ?? ''));
 });
 
 app.get('/api/admin/settings', requireApiRole('admin'), async (c) => {
@@ -2969,6 +3014,8 @@ async function scheduled(
   if (!(await schemaStatus(env.DB)).ready) { console.warn('CRON_PAUSED_SCHEMA_UPGRADE_REQUIRED'); return; }
   if (controller.cron === '* * * * *') {
     const hourBoundary = new Date(controller.scheduledTime).getUTCMinutes() === 0;
+    if(new Date(controller.scheduledTime).getUTCMinutes()%2===1){const {resumeAdminCampaign}=await import('./lib/campaigns');if(await resumeAdminCampaign(env))return;}
+
     ctx.waitUntil((hourBoundary ? processFallbackQueue(env, true) : drainFallbackQueue(env)).catch(() => console.error('fallback cron failed')));
     if (!hourBoundary) return;
   }

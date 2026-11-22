@@ -750,7 +750,16 @@ export async function recordInvoice(
       ),
     ];
 
+    if(input.replacesInvoiceId)list.unshift(env.DB.prepare(`INSERT INTO operation_assertions(valid) SELECT 0 WHERE
+      NOT EXISTS(SELECT 1 FROM invoices WHERE id=? AND voided_at IS NULL) OR
+      EXISTS(SELECT 1 FROM invoices WHERE replaces_invoice_id=? AND voided_at IS NULL)`)
+      .bind(input.replacesInvoiceId,input.replacesInvoiceId));
     if (coupon) {
+      // Revalidate under the same write transaction, not a stale preflight read.
+      list.unshift(env.DB.prepare(`INSERT INTO operation_assertions(valid) SELECT 0 WHERE NOT EXISTS
+        (SELECT 1 FROM coupons WHERE id=? AND is_active=1 AND used_count<max_uses
+          AND (user_id IS NULL OR user_id=?) AND (expires_at IS NULL OR julianday(expires_at)>=julianday('now')))`)
+        .bind(coupon.id,customer.id));
       list.push(
         env.DB.prepare('UPDATE coupons SET used_count = used_count + 1 WHERE id = ?').bind(coupon.id)
       );
@@ -761,9 +770,11 @@ export async function recordInvoice(
   let invoiceId = 0;
   try {
     const results = await env.DB.batch(buildStatements(pointsEarned, visitDay));
-    invoiceId = Number(results[0]?.meta?.last_row_id ?? 0);
+    invoiceId = Number(results[(coupon ? 1 : 0)+(input.replacesInvoiceId ? 1 : 0)]?.meta?.last_row_id ?? 0);
   } catch (error) {
     const message = String(error);
+    if(input.replacesInvoiceId && message.includes('CHECK constraint failed'))return {ok:false,error:'اصلاح قبلی نیمه‌کاره یا فاکتور اصلی تغییر کرده است؛ بررسی مالی را باز کنید.',code:'CORRECTION_PENDING_REVIEW'};
+    if(coupon && message.includes('CHECK constraint failed'))return {ok:false,error:'کد تخفیف هم‌زمان مصرف یا غیرفعال شده است؛ فاکتور ثبت نشد.',code:'COUPON_CONFLICT'};
 
     // دو درخواست هم‌زمان با یک شناسه → یکی ثبت شده است
     if (requestId && message.includes('client_request_id')) {
@@ -782,7 +793,7 @@ export async function recordInvoice(
     if (visitDay && (message.includes('visit_day') || message.includes('ux_invoices_visit_day'))) {
       try {
         const results = await env.DB.batch(buildStatements(0, null));
-        invoiceId = Number(results[0]?.meta?.last_row_id ?? 0);
+        invoiceId = Number(results[(coupon ? 1 : 0)+(input.replacesInvoiceId ? 1 : 0)]?.meta?.last_row_id ?? 0);
         pointsEarned = 0;
         pointsNote = 'امتیاز حضور امروز قبلاً برای این مشتری ثبت شده است.';
         visitDay = null;
@@ -1789,22 +1800,13 @@ export async function voidInvoice(
 
   const nowISO = new Date().toISOString().slice(0, 19).replace('T', ' ');
 
-  // قفل کردن ابطال: فقط اولین درخواست موفق می‌شود
+  // Claim, assertion and reversal commit together or not at all.
   const reason = String(options.reason ?? '').trim().slice(0, 200) || null;
-  const claim = await env.DB.prepare(
-    `UPDATE invoices
-     SET voided_at = ?, voided_by = ?, visit_day = NULL, void_reason = ?
-     WHERE id = ? AND voided_at IS NULL`
-  )
-    .bind(nowISO, adminId, reason, invoiceId)
-    .run();
-
-  if (!claim.meta?.changes) {
-    return { ok: false, error: 'این فاکتور قبلاً ابطال شده است.', code: 'ALREADY_VOID' };
-  }
-
+  const claim=env.DB.prepare(`UPDATE invoices SET voided_at=?,voided_by=?,visit_day=NULL,void_reason=? WHERE id=? AND voided_at IS NULL`)
+    .bind(nowISO,adminId,reason,invoiceId);
   const points = Math.max(0, Math.floor(invoice.points_earned));
-  const statements = [
+  const statements = [claim,
+    env.DB.prepare('INSERT INTO operation_assertions(valid) SELECT 0 WHERE changes()!=1'),
     env.DB.prepare(
       `UPDATE users
        SET points = MAX(0, points - ?),
@@ -1845,18 +1847,8 @@ export async function voidInvoice(
   try {
     await env.DB.batch(statements);
   } catch (error) {
-    console.error('voidInvoice: reversal batch failed, rolling back:', error);
-    try {
-      await env.DB.prepare(
-        `UPDATE invoices
-         SET voided_at = NULL, voided_by = NULL, void_reason = NULL, visit_day = ?
-         WHERE id = ? AND voided_at = ?`
-      )
-        .bind(invoice.visit_day, invoiceId, nowISO)
-        .run();
-    } catch (rollbackError) {
-      console.error('voidInvoice: rollback failed:', rollbackError);
-    }
+    console.error('VOID_TRANSACTION_FAILED');
+    if(String(error).includes('CHECK constraint failed'))return {ok:false,error:'این فاکتور قبلاً ابطال شده است.',code:'ALREADY_VOID'};
     return {
       ok: false,
       error: 'ابطال کامل نشد و هیچ تغییری اعمال نشد. لطفاً دوباره تلاش کنید.',
